@@ -1,0 +1,38 @@
+name: open_ecad
+description: "Open electrical design, with a shared command engine for people and AI."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  ecad_core:
+    path: packages/ecad_core
+  file_selector: ^1.0.3
+  shared_preferences: ^2.5.0
+  http: ^1.3.0
+  pdf: ^3.11.3
+  image: ^4.5.4
+  web: ^1.1.1
+
+dev_dependencies:
+  integration_test:
+    sdk: flutter
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/fonts/
+  fonts:
+    - family: NotoSans
+      fonts:
+        - asset: assets/fonts/NotoSans-Regular.ttf
+        - asset: assets/fonts/NotoSans-SemiBold.ttf
+          weight: 600

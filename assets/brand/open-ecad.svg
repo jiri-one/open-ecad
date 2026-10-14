@@ -1,0 +1,9 @@
+<!-- Original Open ECAD application mark. SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#fff"/>
+  <g fill="none" stroke="#111" stroke-width="30" stroke-linecap="square" stroke-linejoin="round">
+    <rect x="34" y="34" width="444" height="444" rx="68"/>
+    <path d="M34 256H150L275 131M310 256H478"/>
+  </g>
+  <g fill="#111"><circle cx="150" cy="256" r="27"/><circle cx="310" cy="256" r="27"/></g>
+</svg>

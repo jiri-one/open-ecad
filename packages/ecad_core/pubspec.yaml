@@ -1,0 +1,10 @@
+name: ecad_core
+description: Portable project model, atomic command engine, and CLI for Open ECAD.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: '>=3.7.0 <4.0.0'
+dev_dependencies:
+  test: ^1.25.15
+executables:
+  open_ecad: open_ecad

@@ -1,0 +1,7 @@
+# Optional, separately installed requirement of scripts/import_pdf.py only.
+# PyMuPDF is licensed under AGPL-3.0 (or a commercial licence from Artifex), so
+# it is NOT a dependency of the Open ECAD application and is never bundled with
+# it. Install it into a dedicated virtual environment, for example:
+#   python3 -m venv .venv-pdf && .venv-pdf/bin/pip install -r scripts/import_pdf_requirements.txt
+# scripts/import_pdf.sh never installs packages and never uses the network.
+PyMuPDF==1.26.7
