@@ -57,7 +57,11 @@ Map<String, Device> _devices(Sheet sheet) => {
 
 class _MemoryPersistence extends ProjectPersistence {
   @override
-  Future<void> saveAutosave(EcadProject project) async {}
+  Future<void> saveAutosave(
+    EcadProject project, {
+    int? savedRevision,
+    String? fileName,
+  }) async {}
 }
 
 /// Painted unselected wires, as recorded from the canvas painter.

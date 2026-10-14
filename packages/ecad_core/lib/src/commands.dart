@@ -37,6 +37,23 @@ sealed class EcadCommand {
       case 'updateDevice':
         fields({'sheetId', 'device'});
         return UpdateDevice(sheetId(), Device.fromJson(map['device']));
+      case 'updateDevices':
+        fields({'sheetId', 'devices'});
+        final devices =
+            jsonList(
+              map,
+              'devices',
+              max: ProjectLimits.maxDevices,
+            ).map(Device.fromJson).toList();
+        if (devices.isEmpty ||
+            devices.map((device) => device.id).toSet().length !=
+                devices.length) {
+          throw const EcadException(
+            'Update requires distinct device IDs.',
+            code: 'invalid_command',
+          );
+        }
+        return UpdateDevices(sheetId(), devices);
       case 'deleteDevices':
         fields({'sheetId', 'ids'});
         final rawIds = jsonList(map, 'ids', max: ProjectLimits.maxDevices);
@@ -180,6 +197,20 @@ class UpdateDevice extends EcadCommand {
     'type': 'updateDevice',
     'sheetId': sheetId,
     'device': device.toJson(),
+  };
+}
+
+/// Replaces many existing devices in one step, such as a rotated selection.
+class UpdateDevices extends EcadCommand {
+  UpdateDevices(this.sheetId, List<Device> devices)
+    : devices = List.unmodifiable(devices);
+  final String sheetId;
+  final List<Device> devices;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'updateDevices',
+    'sheetId': sheetId,
+    'devices': devices.map((device) => device.toJson()).toList(),
   };
 }
 

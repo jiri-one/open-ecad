@@ -14,6 +14,16 @@ class AutosaveTooLargeException implements Exception {
   const AutosaveTooLargeException();
 }
 
+/// The recovery document with the revision last written to [fileName], if
+/// any. Both travel in one stored record so they cannot describe different
+/// documents.
+class WorkingCopy {
+  const WorkingCopy(this.project, {this.savedRevision, this.fileName});
+  final EcadProject project;
+  final int? savedRevision;
+  final String? fileName;
+}
+
 EcadProject _decodeProject(String source) =>
     ProjectPersistence().decode(source);
 String _encodeProject(EcadProject project) => jsonEncode(project.toJson());
@@ -21,7 +31,7 @@ String _encodeProject(EcadProject project) => jsonEncode(project.toJson());
 /// Portable, versioned project files and a single local recovery copy.
 /// Provider settings contain a URL and model name only; never API credentials.
 class ProjectPersistence {
-  static const autosaveKey = 'open_ecad.autosave.v1';
+  static const autosaveKey = 'open_ecad.autosave.v2';
   static const settingsKey = 'open_ecad.ollama.v1';
   static const maxFileBytes = ProjectLimits.maxFileBytes;
   static const maxAutosaveBytes = 2 * 1024 * 1024;
@@ -107,7 +117,11 @@ class ProjectPersistence {
     extension: extension,
   );
 
-  Future<void> saveAutosave(EcadProject project) {
+  Future<void> saveAutosave(
+    EcadProject project, {
+    int? savedRevision,
+    String? fileName,
+  }) {
     // Preference storage has small quotas on browsers. Do not repeatedly
     // serialize hundreds of thousands of primitives or leave an older recovery
     // document behind while claiming that a large import was saved.
@@ -128,7 +142,11 @@ class ProjectPersistence {
     final json =
         graphicCount > 15000 || payloadChars > maxAutosaveBytes
             ? null
-            : encode(project);
+            : jsonEncode({
+              'project': project.toJson(),
+              if (savedRevision != null) 'savedRevision': savedRevision,
+              if (fileName != null) 'fileName': fileName,
+            });
     final tooLarge =
         json == null || utf8.encode(json).length > maxAutosaveBytes;
     // Serializing writes prevents a slower older revision replacing a new one.
@@ -146,11 +164,29 @@ class ProjectPersistence {
     return next;
   }
 
-  Future<EcadProject?> loadAutosave() async {
+  Future<WorkingCopy?> loadAutosave() async {
     await _autosaveQueue;
     final preferences = await SharedPreferences.getInstance();
     final source = preferences.getString(autosaveKey);
-    return source == null ? null : decode(source);
+    if (source == null) return null;
+    final record = jsonDecode(source);
+    if (record is! Map<String, dynamic>) {
+      throw const FormatException('Pracovní kopie je poškozená.');
+    }
+    final project = EcadProject.fromJson(record['project']);
+    requireValidProject(project);
+    final saved = record['savedRevision'];
+    final fileName = record['fileName'];
+    // An impossible marker is dropped: the copy restores as unsaved, never as
+    // falsely saved.
+    return WorkingCopy(
+      project,
+      savedRevision:
+          saved is int && saved >= 0 && saved <= project.revision
+              ? saved
+              : null,
+      fileName: fileName is String ? fileName : null,
+    );
   }
 
   Future<void> clearAutosave() async {

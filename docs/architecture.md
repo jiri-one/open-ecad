@@ -43,9 +43,11 @@ návratu ke zdánlivě stejným datům. Historie je paměťová a neukládá se 
 
 `AssistantProposal` nese strukturované příkazy, vysvětlení, zdroj a výchozí revizi.
 Náhled používá oddělený engine a plátno se při něm nedá upravovat. Dokument se
-změní až po použití návrhu. Ruční editace nad původním dokumentem zneplatní starý
-návrh. Změna listu nebo projektu zneplatní rozpracovaný požadavek; opožděná síťová
-odpověď se nesmí promítnout do nového kontextu.
+změní až po použití návrhu. Esc náhled zavře, návrh zahodí jen jeho odložení.
+Ruční editace nad původním dokumentem zneplatní starý návrh. Změna listu nebo
+projektu zneplatní rozpracovaný požadavek; opožděná síťová odpověď se nesmí
+promítnout do nového kontextu. Po změně listu zůstane v konverzaci krátká zpráva
+o zrušení požadavku.
 
 Parser funguje bez internetu. Ollama adaptér žádá omezené JSON operace; nevyhodnocuje
 modelový text jako kód. Oba poskytovatelé převádějí záměr na stejné doménové příkazy.
@@ -57,7 +59,10 @@ a `-X1` rezervují pro automatické číslování totéž číslo. Uživatelova 
 označení se nemění. Automatické vložení hledá místo uvnitř pracovní části listu,
 rezervuje rozměry symbolů a přibližné rozměry popisků. Propojenou skupinu bere
 konzervativně jako jeden obdélník. Zaplněný list vyvolá zprávu místo vložení mimo
-výkres; nejde o obecný optimalizátor rozložení ani trasování.
+výkres; nejde o obecný optimalizátor rozložení ani trasování. Ruční duplikace
+výběru kopíruje podle stejných pravidel, včetně vodičů uvnitř výběru a společného
+posunu grafiky. Omezuje ji jen velikost transakce jádra (1000 příkazů), nikoli
+limit 100 změn pro návrh asistenta.
 
 CLI umí tentýž příkazový protokol bez GUI. Příklad obálky:
 
@@ -76,6 +81,10 @@ přístroje a vodiče; výběr pracuje v souřadnicích dokumentu. Tažení ukaz
 a odešle jediný příkaz až při puštění. Omezena je velikost cache rozvržených textů.
 Při velmi malém zoomu se vypustí nečitelné popisky a drobné tečky, geometrie
 přístrojů a vodičů zůstává. Syntetický benchmark zahrnuje i tento režim.
+Přerušovaná čára grafiky se rozloží na čárky jednou a s omezeným počtem kroků.
+Vzor s periodou pod jeden pixel obrazovky, nebo příliš dlouhý pro tento limit,
+se kreslí plnou čarou s průhledností podle podílu čárek. Uložený vzor i exporty
+zůstávají přesné.
 
 Barvy jsou centralizované v `EcadColors` a `CanvasPalette`. Dva kontrastní motivy
 mají čisté černé/bílé plochy i ikony; výběr je čitelný obrysem a inverzí. E-ink
@@ -91,17 +100,26 @@ kontroluje při dekódování i podle integrity grafu. GUI i CLI omezují soubor
 128 MiB. Automatická kopie je jediný dokument v místním úložišti a zápisy
 jsou řazené, aby pomalejší starý zápis nepřepsal novější stav. Je omezená na
 2 MiB a 15 000 grafických objektů; velké importy vyžadují explicitní uložení.
+Ve stejném záznamu nese revizi naposledy uloženou do souboru a jeho název, takže
+obnova neoznačí uloženou práci za neuloženou ani novější změny za uložené.
 Na desktopu probíhá převod PDF v odděleném procesu a JSON kódování/dekódování přes
-`compute`. Ve webovém sestavení `compute` zůstává na hlavním vlákně. Čtení v1
-doplňuje výchozí rozměry listu a prázdnou grafiku, čtení v1 a v2 náhradní typ
-listu. Nové soubory se zapisují jako v3; starší čtečka je tak odmítne jako
-nepodporovaný formát, místo aby hlásila neznámé pole.
+`compute`. Převodník se hledá ve složce `scripts` vedle aplikace, při vývojovém
+spuštění také přímo v pracovní složce, nikdy v jejích nadřazených složkách.
+Proměnné `ECAD_PDF_IMPORTER` a `ECAD_PDF_PYTHON` mají přednost. Python běží
+v režimu UTF-8, aby chybová zpráva převodníku zůstala čitelná. Ve webovém
+sestavení `compute` zůstává na hlavním vlákně. Čtení v1 doplňuje výchozí rozměry
+listu a prázdnou grafiku, čtení v1 a v2 náhradní typ listu. Nové soubory se
+zapisují jako v3; starší čtečka je tak odmítne jako nepodporovaný formát, místo
+aby hlásila neznámé pole.
 
 Explicitní uložení pracuje se snímkem a identitou otevřeného dokumentu. Pozdní
 dokončení ukládání nesmí označit mezitím otevřený projekt za uložený. Web vrací
 soubor ke stažení; desktop používá nativní souborový dialog. PDF/SVG exportují
 výkres podle téhož katalogu vývodů, ale vlastní kreslicí backend je zatím nutné
-udržovat v souladu s plátnem.
+udržovat v souladu s plátnem. Čára nulové tloušťky je v PDF nejtenčí zobrazitelná
+čára a PDF export ji tak zachová. Samostatné SVG ji zapisuje jako jednopixelovou
+čáru s `vector-effect="non-scaling-stroke"`; čárky takové přerušované čáry pak
+odpovídají pixelům zobrazení a s výkresem souhlasí v měřítku 1 : 1.
 
 Flutter hostitelé jsou připravené pro Linux, Windows, macOS a web. Pluginy řeší
 dialogy a preference. Mobilní hostitelé ani ovládání pro telefon zatím nejsou

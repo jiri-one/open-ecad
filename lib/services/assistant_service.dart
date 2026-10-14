@@ -347,6 +347,42 @@ class AssistantService {
     }
   }
 
+  /// Manual duplication with the assistant's cloning rules: new IDs and
+  /// designations, copied internal wires and one offset shared by graphics.
+  /// Only the engine's transaction size bounds it, not [maxCommands].
+  List<EcadCommand> duplicateCommands({
+    required EcadProject project,
+    required String sheetId,
+    required Set<String> deviceIds,
+    required Set<String> graphicIds,
+  }) {
+    final sheet = project.pages.firstWhere((page) => page.id == sheetId);
+    final graphics =
+        sheet.graphics
+            .where((graphic) => graphicIds.contains(graphic.id))
+            .toList();
+    final builder = _CommandBuilder(project, sheet, deviceIds, null);
+    final offset =
+        deviceIds.isEmpty
+            ? const Vec2(20, 20)
+            : builder.duplicate(
+              1,
+              limit: ProjectLimits.maxCommands,
+              reserved: graphics.isEmpty ? 0 : 1,
+            );
+    return [
+      ...builder.commands,
+      if (graphics.isNotEmpty)
+        AddGraphics(sheetId, [
+          for (final graphic in graphics)
+            graphic.copyWith(
+              id: newId('graphic'),
+              position: graphic.position + offset,
+            ),
+        ]),
+    ];
+  }
+
   static AssistantProposal _unsupported(
     EcadProject project,
     String message, {
@@ -497,10 +533,16 @@ class _CommandBuilder {
   static String _designationKey(String label) =>
       label.trim().toUpperCase().replaceFirst(RegExp(r'^-+'), '');
 
+  // Reservations only grow, so a prefix can resume after its last result
+  // instead of rescanning every taken number for each copy.
+  final Map<String, int> _nextNumbers = {};
+
   String _designation(String prefix) {
-    for (var number = 1; number < 100000; number++) {
+    final key = _designationKey(prefix);
+    for (var number = _nextNumbers[key] ?? 1; number < 100000; number++) {
       final candidate = '$prefix$number';
       if (!_reservedDesignations.contains(_designationKey(candidate))) {
+        _nextNumbers[key] = number + 1;
         return candidate;
       }
     }
@@ -756,7 +798,13 @@ class _CommandBuilder {
     );
   }
 
-  void duplicate(int count) {
+  /// Returns the offset of the first copy. [reserved] commands are added by
+  /// the caller within the same [limit].
+  Vec2 duplicate(
+    int count, {
+    int limit = AssistantService.maxCommands,
+    int reserved = 0,
+  }) {
     final selected = _selection;
     final internalWires =
         wires
@@ -766,10 +814,12 @@ class _CommandBuilder {
                   selectedIds.contains(wire.to.deviceId),
             )
             .toList();
-    if ((selected.length + internalWires.length) * count + commands.length >
-        AssistantService.maxCommands) {
-      throw const FormatException(
-        'Kopie překračují limit 100 změn. Snižte počet kopií nebo výběr.',
+    if ((selected.length + internalWires.length) * count +
+            commands.length +
+            reserved >
+        limit) {
+      throw FormatException(
+        'Kopie překračují limit $limit změn. Snižte počet kopií nebo výběr.',
       );
     }
     final minX = selected.map((device) => device.position.x).reduce(math.min);
@@ -817,6 +867,7 @@ class _CommandBuilder {
         wires.add(clone);
       }
     }
+    return Vec2(spacing, 0);
   }
 
   Device _copy(

@@ -6,6 +6,9 @@ import 'graphics.dart';
 /// Shared format limits. Project files are data, never executable instructions.
 abstract final class ProjectLimits {
   static const maxPages = 1024;
+
+  /// A sheet may come from any page of a much longer source document.
+  static const maxSourcePage = 1000000;
   static const maxDevices = 20000;
   static const maxWires = 40000;
   static const maxWaypoints = 256;
@@ -400,7 +403,7 @@ class Sheet {
     final sourcePage =
         map['sourcePage'] == null
             ? null
-            : jsonInteger(map, 'sourcePage', max: ProjectLimits.maxPages);
+            : jsonInteger(map, 'sourcePage', max: ProjectLimits.maxSourcePage);
     if (width <= 0 || height <= 0) {
       throw const EcadException(
         'Sheet width and height must be positive.',

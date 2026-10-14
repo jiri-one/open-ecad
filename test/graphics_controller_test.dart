@@ -49,7 +49,11 @@ class _PdfPersistence extends ProjectPersistence {
   @override
   Future<EcadProject?> importPdf() => result.future;
   @override
-  Future<void> saveAutosave(EcadProject project) async {}
+  Future<void> saveAutosave(
+    EcadProject project, {
+    int? savedRevision,
+    String? fileName,
+  }) async {}
 }
 
 class _DelayedStartup extends ProjectPersistence {
@@ -57,7 +61,7 @@ class _DelayedStartup extends ProjectPersistence {
   @override
   Future<AiProviderSettings?> loadAiSettings() => settings.future;
   @override
-  Future<EcadProject?> loadAutosave() async => _project();
+  Future<WorkingCopy?> loadAutosave() async => WorkingCopy(_project());
 }
 
 void main() {
@@ -99,6 +103,134 @@ void main() {
       expect(app.sheet.graphics.every((g) => g.rotation == 0), isTrue);
     },
   );
+
+  test('more devices than one transaction holds rotate in one step', () {
+    final terminals = [
+      for (var i = 0; i < 1001; i++)
+        Device(
+          id: 'terminal$i',
+          kind: DeviceKind.terminal,
+          designation: '-X${i + 1}',
+          position: Vec2(40.0 + (i % 40) * 30, 60.0 + (i ~/ 40) * 50),
+        ),
+    ];
+    final project = _project().copyWith(
+      pages: [
+        _project().pages.single.copyWith(
+          devices: terminals,
+          wires: [
+            Wire(
+              id: 'bridge',
+              from: const TerminalRef(deviceId: 'terminal0', portId: 'out'),
+              to: const TerminalRef(deviceId: 'terminal1', portId: 'out'),
+            ),
+          ],
+        ),
+      ],
+    );
+    final app = EditorController(initialProject: project);
+    addTearDown(app.dispose);
+    app.selectAll();
+    final selection = {...app.selectedIds};
+    expect(selection, hasLength(1002));
+    app.rotateSelection();
+    expect(app.status, 'Výběr otočen o 90°');
+    expect(app.sheet.devices.every((d) => d.rotation == 90), isTrue);
+    expect(app.sheet.graphics.single.rotation, 90);
+    expect(app.sheet.wires.single.id, 'bridge');
+    expect(app.selectedIds, selection);
+    app.undo();
+    expect(app.sheet.devices.every((d) => d.rotation == 0), isTrue);
+    expect(app.sheet.graphics.single.rotation, 0);
+    expect(app.canUndo, isFalse);
+    expect(app.selectedIds, selection);
+  });
+
+  test('manual duplicate is limited by the engine, not the assistant', () {
+    Device terminal(int i) => Device(
+      id: 'terminal$i',
+      kind: DeviceKind.terminal,
+      designation: '-X${i + 1}',
+      position: Vec2(40.0 + (i % 20) * 50, 150.0 + (i ~/ 20) * 80),
+    );
+    final chain = [
+      for (var i = 0; i < 59; i++)
+        Wire(
+          id: 'link$i',
+          from: TerminalRef(deviceId: 'terminal$i', portId: 'out'),
+          to: TerminalRef(deviceId: 'terminal${i + 1}', portId: 'in'),
+          waypoints: i == 0 ? const [Vec2(40, 200)] : const [],
+        ),
+      Wire(
+        id: 'outside',
+        from: const TerminalRef(deviceId: 'terminal59', portId: 'out'),
+        to: const TerminalRef(deviceId: 'terminal60', portId: 'in'),
+      ),
+    ];
+    final project = _project().copyWith(
+      pages: [
+        _project().pages.single.copyWith(
+          devices: [for (var i = 0; i < 61; i++) terminal(i)],
+          wires: chain,
+        ),
+      ],
+    );
+    final app = EditorController(initialProject: project);
+    addTearDown(app.dispose);
+    app.select({for (var i = 0; i < 60; i++) 'terminal$i', 'text'});
+    final assistantLimit = app.assistant.propose(
+      'Duplikuj výběr',
+      project: app.project,
+      sheetId: app.activeSheetId,
+      selectedDeviceIds: app.selectedDevices.map((d) => d.id).toSet(),
+    );
+    expect(assistantLimit.supported, isFalse);
+    expect(assistantLimit.message, contains('limit 100 změn'));
+
+    app.duplicateSelection();
+    expect(app.status, 'Výběr duplikován');
+    final copies = app.sheet.devices.skip(61).toList();
+    expect(copies, hasLength(60));
+    final offset = copies.first.position - terminal(0).position;
+    expect(offset.x, greaterThan(0));
+    final copyIds = {for (final device in copies) device.id};
+    final newWires = app.sheet.wires.skip(chain.length).toList();
+    expect(newWires, hasLength(59));
+    for (final wire in newWires) {
+      expect(copyIds, containsAll([wire.from.deviceId, wire.to.deviceId]));
+    }
+    expect(newWires.first.waypoints.single, const Vec2(40, 200) + offset);
+    expect(
+      app.sheet.graphics.last.position - app.sheet.graphics.first.position,
+      offset,
+    );
+    final designations = app.project.pages
+        .expand((page) => page.devices)
+        .map((device) => device.designation);
+    expect(designations.toSet(), hasLength(designations.length));
+    app.undo();
+    expect(app.sheet.devices, hasLength(61));
+    expect(app.sheet.wires, hasLength(chain.length));
+    expect(app.sheet.graphics, hasLength(1));
+
+    final revision = app.project.revision;
+    final many = EditorController(
+      initialProject: project.copyWith(
+        pages: [
+          project.pages.single.copyWith(
+            devices: [for (var i = 0; i < 1001; i++) terminal(i)],
+            wires: const [],
+          ),
+        ],
+      ),
+    );
+    addTearDown(many.dispose);
+    many.selectAll();
+    many.duplicateSelection();
+    expect(many.status, contains('limit 1000 změn'));
+    expect(many.sheet.devices, hasLength(1001));
+    expect(app.project.revision, revision);
+  });
 
   test(
     'mixed selection moves, duplicates, rotates and deletes in atomic undo steps',
@@ -216,7 +348,7 @@ void main() {
       );
       expect(await persistence.loadAutosave(), isNull);
       await persistence.saveAutosave(_project());
-      expect((await persistence.loadAutosave())!.name, 'Import');
+      expect((await persistence.loadAutosave())!.project.name, 'Import');
     },
   );
 }

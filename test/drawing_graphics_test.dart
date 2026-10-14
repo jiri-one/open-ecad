@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:ecad_core/ecad_core.dart';
@@ -184,6 +185,119 @@ void main() {
     },
   );
 
+  DrawingElement dashedLine(
+    List<double> dash, {
+    double length = 90,
+    double width = 2,
+    int cap = 0,
+    int subpaths = 1,
+  }) => DrawingElement(
+    id: 'dashed',
+    kind: DrawingKind.path,
+    position: const Vec2(3, 10),
+    width: length,
+    height: subpaths - 1,
+    stroke: '#000000',
+    strokeWidth: width,
+    lineCap: cap,
+    dash: dash,
+    path: [
+      for (var i = 0; i < subpaths; i++) ...[
+        PathSegment(verb: PathVerb.moveTo, points: [Vec2(0, i.toDouble())]),
+        PathSegment(verb: PathVerb.lineTo, points: [Vec2(length, i * 1.0)]),
+      ],
+    ],
+  );
+
+  /// Red channel of row [y] after painting at [scale], as the canvas does.
+  Future<List<int>> paintedRow(
+    DrawingElement element, {
+    double scale = 1,
+    double? displayScale,
+    int y = 10,
+  }) async {
+    final visual = DrawingVisual(element);
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder)..drawColor(Colors.white, BlendMode.src);
+    canvas.scale(scale);
+    visual.paint(
+      canvas,
+      ink: Colors.black,
+      paper: Colors.white,
+      displayScale: displayScale ?? scale,
+    );
+    final picture = recorder.endRecording();
+    final width = (100 * scale).ceil();
+    final image = await picture.toImage(width, (20 * scale).ceil());
+    final pixels = (await image.toByteData())!;
+    final row = [
+      for (var x = 0; x < width; x++) pixels.getUint8((y * width + x) * 4),
+    ];
+    image.dispose();
+    picture.dispose();
+    visual.dispose();
+    return row;
+  }
+
+  test('ordinary dashes and zero-length round dots stay visible', () async {
+    final dashes = await paintedRow(dashedLine([6, 3]));
+    for (final x in [4, 13, 22]) {
+      expect(dashes[x], lessThan(64), reason: 'dash at $x');
+    }
+    for (final x in [10, 19, 28]) {
+      expect(dashes[x], greaterThan(192), reason: 'gap at $x');
+    }
+    final dots = await paintedRow(dashedLine([0, 6], width: 3, cap: 1));
+    for (final x in [3, 9, 15]) {
+      expect(dots[x], lessThan(128), reason: 'dot at $x');
+    }
+    for (final x in [6, 12, 18]) {
+      expect(dots[x], greaterThan(192), reason: 'between dots at $x');
+    }
+  });
+
+  test('dash periods below a screen pixel draw their average ink', () async {
+    final element = dashedLine([0.5, 0.5], width: 1);
+    final resolved = await paintedRow(element, scale: 4, y: 40);
+    expect(resolved.sublist(12, 60).reduce(math.min), lessThan(64));
+    expect(resolved.sublist(12, 60).reduce(math.max), greaterThan(192));
+    final collapsed = await paintedRow(
+      element,
+      scale: 4,
+      displayScale: .5,
+      y: 40,
+    );
+    for (final value in collapsed.sublist(12, 360)) {
+      expect(value, inInclusiveRange(96, 160));
+    }
+    final tiny = await paintedRow(dashedLine([.001, .001], width: 4));
+    expect(tiny.sublist(4, 92).every((v) => v > 96 && v < 160), isTrue);
+    expect(dashedLine([.001, .001]).dash, [.001, .001]);
+  });
+
+  test('tiny, stalled, long and many-subpath dash patterns finish', () {
+    for (final element in [
+      dashedLine([1e-9, 1e-9], length: 1e6),
+      dashedLine([1e-300, 1], length: 2000, cap: 2),
+      dashedLine([0, 1e-12], length: 1e6, cap: 1),
+      dashedLine([1e-6, 0, 0, 1e-6], length: 500, subpaths: 4000),
+      dashedLine([5, 5], length: 1, subpaths: 10000),
+    ]) {
+      final visual = DrawingVisual(element);
+      for (final scale in [.15, 1.0, 3.5]) {
+        final recorder = ui.PictureRecorder();
+        visual.paint(
+          Canvas(recorder),
+          ink: Colors.black,
+          paper: Colors.white,
+          displayScale: scale,
+        );
+        recorder.endRecording().dispose();
+      }
+      visual.dispose();
+    }
+  }, timeout: const Timeout(Duration(seconds: 60)));
+
   test(
     'path picking and marquee distinguish strokes, fills, curves and rotation',
     () {
@@ -314,6 +428,62 @@ void main() {
       }
     },
   );
+
+  test('zero-width strokes stay hairlines in SVG and PDF exports', () async {
+    DrawingElement stroke(String id, double width, double y) => DrawingElement(
+      id: id,
+      kind: DrawingKind.path,
+      position: Vec2(10, y),
+      width: 100,
+      height: 0,
+      stroke: '#000000',
+      strokeWidth: width,
+      path: [
+        PathSegment(verb: PathVerb.moveTo, points: [const Vec2(0, 0)]),
+        PathSegment(verb: PathVerb.lineTo, points: [const Vec2(100, 0)]),
+      ],
+    );
+    final project = EcadProject(
+      id: 'hairlines',
+      name: 'Hairlines',
+      pages: [
+        Sheet(
+          id: 'page',
+          name: 'Page',
+          number: '1',
+          width: 140,
+          height: 60,
+          showFrame: false,
+          graphics: [stroke('hairline', 0, 20), stroke('thin', .00315, 40)],
+        ),
+      ],
+    );
+    final exporter = ProjectExportService();
+    final paths = RegExp(r'<path [^>]*/>').allMatches(exporter.svg(project));
+    final [hairline, thin] = [for (final path in paths) path[0]!];
+    expect(hairline, contains('stroke-width="1"'));
+    expect(hairline, contains('vector-effect="non-scaling-stroke"'));
+    expect(thin, contains('stroke-width="0.00315"'));
+    expect(thin, isNot(contains('vector-effect')));
+    expect(project.pages.single.graphics.first.strokeWidth, 0);
+
+    final bytes = await exporter.pdf(project);
+    final text = latin1.decode(bytes);
+    final content = StringBuffer();
+    for (final match in RegExp(r'(?<!end)stream\r?\n').allMatches(text)) {
+      final data = bytes.sublist(
+        match.end,
+        text.indexOf('endstream', match.end),
+      );
+      try {
+        content.write(latin1.decode(zlib.decode(data)));
+      } on FormatException {
+        content.write(latin1.decode(data));
+      }
+    }
+    expect(content.toString(), matches(RegExp(r'(^|\s)0 w\s+S')));
+    expect(content.toString(), contains('0.00315 w'));
+  });
 
   test(
     'PDF normalizes RGB and grayscale PNGs without changing source image data',

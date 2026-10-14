@@ -110,7 +110,7 @@ class ProjectExportService {
               : PdfPageFormat(sheet.width, sheet.height);
       final sheetSvg =
           '<svg xmlns="http://www.w3.org/2000/svg" width="${_n(sheet.width)}" height="${_n(sheet.height)}" viewBox="0 0 ${_n(sheet.width)} ${_n(sheet.height)}">'
-          '${_sheetContent(project, sheet, project.pages.indexOf(sheet) + 1, measureText: measure, pdfImages: pdfImages)}</svg>';
+          '${_sheetContent(project, sheet, project.pages.indexOf(sheet) + 1, measureText: measure, pdfImages: pdfImages, pdf: true)}</svg>';
       document.addPage(
         pw.Page(
           pageFormat: format,
@@ -188,6 +188,7 @@ class ProjectExportService {
     int pageNumber, {
     _TextMeasure Function(String, bool, double)? measureText,
     Map<String, String> pdfImages = const {},
+    bool pdf = false,
   }) {
     final devices = {for (final device in sheet.devices) device.id: device};
     final routes = [
@@ -252,7 +253,12 @@ class ProjectExportService {
 
     for (final graphic in sheet.graphics) {
       buffer.write(
-        _graphicSvg(graphic, measureText: measureText, pdfImages: pdfImages),
+        _graphicSvg(
+          graphic,
+          measureText: measureText,
+          pdfImages: pdfImages,
+          pdf: pdf,
+        ),
       );
     }
 
@@ -348,6 +354,7 @@ class ProjectExportService {
     DrawingElement element, {
     _TextMeasure Function(String, bool, double)? measureText,
     Map<String, String> pdfImages = const {},
+    bool pdf = false,
   }) {
     final buffer =
         StringBuffer()..writeln(
@@ -368,7 +375,7 @@ class ProjectExportService {
             .join(' ');
         buffer.writeln(
           '<path d="$path" fill="${element.fill ?? 'none'}" '
-          'stroke="${element.stroke ?? 'none'}" stroke-width="${_n(element.strokeWidth)}" '
+          'stroke="${element.stroke ?? 'none'}" ${_strokeWidth(element.strokeWidth, pdf: pdf)} '
           'stroke-linecap="${['butt', 'round', 'square'][element.lineCap]}" '
           'stroke-linejoin="${['miter', 'round', 'bevel'][element.lineJoin]}" '
           'fill-rule="${element.evenOdd ? 'evenodd' : 'nonzero'}"'
@@ -594,6 +601,13 @@ class ProjectExportService {
     if (line.isNotEmpty) lines.add(line);
     return lines;
   }
+
+  /// Width 0 is the thinnest visible line in PDF, which the PDF writer keeps.
+  /// SVG would not draw it, so standalone SVG uses one screen pixel instead.
+  static String _strokeWidth(double width, {required bool pdf}) =>
+      width == 0 && !pdf
+          ? 'stroke-width="1" vector-effect="non-scaling-stroke"'
+          : 'stroke-width="${_n(width)}"';
 
   static String _clip(String text, int length) =>
       text.length <= length ? text : '${text.substring(0, length - 1)}…';

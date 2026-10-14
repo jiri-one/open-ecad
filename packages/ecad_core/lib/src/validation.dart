@@ -156,10 +156,11 @@ List<Diagnostic> validateProject(EcadProject project) {
       );
     }
     if (sheet.sourcePage != null &&
-        (sheet.sourcePage! < 1 || sheet.sourcePage! > ProjectLimits.maxPages)) {
+        (sheet.sourcePage! < 1 ||
+            sheet.sourcePage! > ProjectLimits.maxSourcePage)) {
       add(
         'invalid_metadata',
-        'Source page must be between 1 and ${ProjectLimits.maxPages}.',
+        'Source page must be between 1 and ${ProjectLimits.maxSourcePage}.',
         sheetId: sheet.id,
       );
     }

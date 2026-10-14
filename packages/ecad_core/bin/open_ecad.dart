@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:ecad_core/ecad_core.dart';
 
@@ -23,18 +24,33 @@ Future<void> main(List<String> arguments) async {
   try {
     exitCode = await _run(arguments);
   } on EcadException catch (error) {
-    stderr.writeln('${error.code}: ${error.message}');
+    stderr.writeln(_plain('${error.code}: ${error.message}'));
     exitCode = 2;
   } on FormatException catch (error) {
-    stderr.writeln('invalid_json: ${error.message}');
+    stderr.writeln(_plain('invalid_json: ${error.message}'));
     exitCode = 2;
   } on FileSystemException catch (error) {
     stderr.writeln(
-      'file_error: ${error.message}${error.path == null ? '' : ' (${error.path})'}',
+      _plain(
+        'file_error: ${error.message}${error.path == null ? '' : ' (${error.path})'}',
+      ),
     );
     exitCode = 2;
   }
 }
+
+/// Messages quote names and IDs from untrusted files. Raw control characters
+/// could retitle, recolor or clear the terminal, or forge output lines.
+String _plain(String text) => text.replaceAllMapped(
+  RegExp(r'[\x00-\x1f\x7f-\x9f]'),
+  (match) => '\\x${match[0]!.codeUnitAt(0).toRadixString(16).padLeft(2, '0')}',
+);
+
+/// JSON escapes C0 controls only; some terminals also act on DEL and C1.
+String _terminalJson(String json) => json.replaceAllMapped(
+  RegExp(r'[\x7f-\x9f]'),
+  (match) => '\\u00${match[0]!.codeUnitAt(0).toRadixString(16)}',
+);
 
 Future<int> _run(List<String> arguments) async {
   if (arguments.isEmpty ||
@@ -62,20 +78,26 @@ Future<int> _run(List<String> arguments) async {
               .length;
       if (jsonOutput) {
         stdout.writeln(
-          const JsonEncoder.withIndent('  ').convert({
-            'valid': errors == 0,
-            'revision': project.revision,
-            'scope':
-                'Document integrity and connectivity; not electrical safety or compliance.',
-            'diagnostics': diagnostics.map((d) => d.toJson()).toList(),
-          }),
+          _terminalJson(
+            const JsonEncoder.withIndent('  ').convert({
+              'valid': errors == 0,
+              'revision': project.revision,
+              'scope':
+                  'Document integrity and connectivity; not electrical safety or compliance.',
+              'diagnostics': diagnostics.map((d) => d.toJson()).toList(),
+            }),
+          ),
         );
       } else {
         stdout.writeln(
-          '${project.name}: ${project.pages.length} sheets, revision ${project.revision}',
+          _plain(
+            '${project.name}: ${project.pages.length} sheets, revision ${project.revision}',
+          ),
         );
         for (final diagnostic in diagnostics) {
-          stdout.writeln('${diagnostic.severity.name}: ${diagnostic.message}');
+          stdout.writeln(
+            _plain('${diagnostic.severity.name}: ${diagnostic.message}'),
+          );
         }
         stdout.writeln(
           '$errors structural errors. Validation does not certify electrical safety or compliance.',
@@ -151,16 +173,17 @@ int _usageError() {
 Future<Object?> _readJson(String path) async {
   List<int> bytes;
   if (path == '-') {
-    bytes = <int>[];
+    final input = BytesBuilder(copy: false);
     await for (final chunk in stdin) {
-      if (bytes.length + chunk.length > ProjectLimits.maxFileBytes) {
+      if (input.length + chunk.length > ProjectLimits.maxFileBytes) {
         throw const EcadException(
           'Input exceeds the 128 MiB file limit.',
           code: 'limit_exceeded',
         );
       }
-      bytes.addAll(chunk);
+      input.add(chunk);
     }
+    bytes = input.takeBytes();
   } else {
     final file = File(path);
     if (await file.length() > ProjectLimits.maxFileBytes) {
@@ -181,8 +204,9 @@ Future<Object?> _readJson(String path) async {
 }
 
 Future<void> _writeJson(String path, Object? data) async {
+  final json = jsonEncode(data);
   // Large drawings remain within the same input byte budget when saved.
-  final encoded = utf8.encode('${jsonEncode(data)}\n');
+  final encoded = utf8.encode('${path == '-' ? _terminalJson(json) : json}\n');
   if (encoded.length > ProjectLimits.maxFileBytes) {
     throw const EcadException(
       'Output exceeds the 128 MiB file limit.',
@@ -194,7 +218,7 @@ Future<void> _writeJson(String path, Object? data) async {
     return;
   }
   // Write to a sibling file so an interrupted save cannot truncate a project.
-  final destination = File(path).absolute;
+  final destination = await _saveTarget(path);
   final temporary = File('${destination.path}.${newId('save')}.tmp');
   try {
     await temporary.writeAsBytes(encoded, flush: true);
@@ -202,4 +226,20 @@ Future<void> _writeJson(String path, Object? data) async {
   } finally {
     if (await temporary.exists()) await temporary.delete();
   }
+}
+
+/// Renaming over a symbolic link would replace the link and leave its target
+/// unchanged, so the target is replaced instead, in its own directory.
+Future<File> _saveTarget(String path) async {
+  final file = File(path).absolute;
+  final type = await FileSystemEntity.type(file.path, followLinks: false);
+  if (type != FileSystemEntityType.link) return file;
+  // Creating a missing target through a dangling link could write anywhere.
+  if (!await file.exists()) {
+    throw FileSystemException(
+      'Output is a symbolic link without an existing target file',
+      path,
+    );
+  }
+  return File(await file.resolveSymbolicLinks());
 }

@@ -26,6 +26,8 @@ class DrawingVisual {
   List<(Offset, Offset)> _strokeSegments = const [];
   TextPainter? _textPainter;
   Color? _textColor;
+  // Built on the first paint and reused while panning and zooming.
+  late final _DashedStroke _dashed = _DashedStroke(path!, element);
 
   bool hitTest(Offset point, double tolerance) {
     if (element.opacity == 0) return false;
@@ -152,7 +154,7 @@ class DrawingVisual {
           if (element.dash.isEmpty) {
             canvas.drawPath(path!, paint);
           } else {
-            _paintDashed(canvas, path!, paint, element.dash);
+            _dashed.paint(canvas, path!, paint, displayScale);
           }
         }
       case DrawingKind.text:
@@ -318,31 +320,101 @@ class DrawingVisual {
     }
     return result;
   }
+}
 
-  static void _paintDashed(
-    Canvas canvas,
-    Path path,
-    Paint paint,
-    List<double> dash,
-  ) {
+/// Dash geometry in local units, built once with a bounded number of steps.
+/// A pattern too fine for the screen, or too long for the bound, is drawn
+/// solid at the opacity of its ink coverage, as a PDF viewer averages it.
+class _DashedStroke {
+  _DashedStroke(Path source, DrawingElement element)
+    : _width = element.strokeWidth,
+      _caps = element.lineCap != StrokeCap.butt.index {
+    final dash = element.dash;
     final pattern = dash.length.isOdd ? [...dash, ...dash] : dash;
-    if (pattern.every((length) => length <= 0)) {
-      canvas.drawPath(path, paint);
-      return;
+    var period = 0.0;
+    var ink = 0.0;
+    for (final (index, length) in pattern.indexed) {
+      if (!length.isFinite || length < 0) return;
+      period += length;
+      if (index.isEven) ink += length;
     }
-    for (final metric in path.computeMetrics()) {
+    // Like SVG, an unusable pattern leaves the stroke solid.
+    if (!(period > 0) || !period.isFinite) return;
+    _period = period;
+    _ink = ink;
+    _onCount = pattern.length ~/ 2;
+    _dashes = _build(source, pattern);
+  }
+
+  /// Bounds the pattern steps of one element, including empty subpaths.
+  static const maxSteps = 1 << 15;
+
+  final double _width;
+  final bool _caps;
+  double _period = 0;
+  double _ink = 0;
+  int _onCount = 0;
+  Path? _dashes;
+
+  Path? _build(Path source, List<double> pattern) {
+    final metrics = source.computeMetrics().toList();
+    var steps = 0.0;
+    for (final metric in metrics) {
+      steps += ((metric.length / _period).ceilToDouble() + 1) * pattern.length;
+      if (steps > maxSteps) return null;
+    }
+    final result = Path();
+    var remaining = maxSteps;
+    for (final metric in metrics) {
       var position = 0.0;
-      var index = 0;
-      while (position < metric.length) {
-        final length = pattern[index % pattern.length];
-        final end = math.min(position + length, metric.length);
-        if (index.isEven && end > position) {
-          canvas.drawPath(metric.extractPath(position, end), paint);
+      for (var index = 0; position < metric.length; index++) {
+        // Rounding cannot stall the walk beyond the precomputed bound.
+        if (--remaining < 0) return null;
+        final on = index.isEven;
+        final end = math.min(
+          position + pattern[index % pattern.length],
+          metric.length,
+        );
+        if (on && end > position) {
+          result.addPath(metric.extractPath(position, end), Offset.zero);
+        } else if (on && _caps) {
+          // A zero-length dash is a dot under round and square caps. A short
+          // segment gives the cap the direction of the path.
+          final tangent = metric.getTangentForOffset(position);
+          if (tangent != null) {
+            final half = tangent.vector * 5e-4;
+            result
+              ..moveTo(
+                tangent.position.dx - half.dx,
+                tangent.position.dy - half.dy,
+              )
+              ..lineTo(
+                tangent.position.dx + half.dx,
+                tangent.position.dy + half.dy,
+              );
+          }
         }
         position = end;
-        index++;
       }
     }
+    return result;
+  }
+
+  void paint(Canvas canvas, Path source, Paint paint, double displayScale) {
+    final dashes = _dashes;
+    if (dashes != null && _period * displayScale >= 1) {
+      canvas.drawPath(dashes, paint);
+      return;
+    }
+    var coverage = 1.0;
+    if (_period > 0) {
+      final caps = _caps ? math.max(_width, 1 / displayScale) : 0.0;
+      coverage = math.min(1.0, (_ink + _onCount * caps) / _period);
+    }
+    canvas.drawPath(
+      source,
+      paint..color = paint.color.withValues(alpha: paint.color.a * coverage),
+    );
   }
 }
 

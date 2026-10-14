@@ -420,6 +420,7 @@ class _AssistantPanelState extends State<AssistantPanel> {
     AddDevice(:final device) =>
       'Vložit ${device.designation} · ${SymbolCatalog.definitionFor(device.kind).label}',
     UpdateDevice(:final device) => 'Upravit ${device.designation}',
+    UpdateDevices() => 'Upravit přístroje',
     AddWire() => 'Propojit připojovací body',
     DeleteWire() => 'Odstranit vodič',
     AddSheet(:final sheet) => 'Přidat list ${sheet.name}',

@@ -108,12 +108,14 @@ class EditorController extends ChangeNotifier {
       if (!_isCurrentDocument(generation) || project.revision != revision) {
         return;
       }
-      if (restored != null && restored.pages.isNotEmpty) {
-        _engine = ProjectEngine(restored);
+      if (restored != null && restored.project.pages.isNotEmpty) {
+        final document = restored.project;
+        _engine = ProjectEngine(document);
         _documentGeneration++;
-        activeSheetId = restored.pages.first.id;
-        showGrid = restored.pages.first.showFrame;
-        _savedRevision = -1;
+        activeSheetId = document.pages.first.id;
+        showGrid = document.pages.first.showFrame;
+        _savedRevision = restored.savedRevision ?? -1;
+        fileName = restored.fileName;
         status = 'Obnovena místní pracovní kopie';
         autosaveStatus = 'Obnoveno z tohoto zařízení';
       }
@@ -169,12 +171,8 @@ class EditorController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void cancelTool() {
-    proposal = null;
-    showingProposal = false;
-    _proposalPreview = null;
-    setMode(CanvasMode.select);
-  }
+  /// A pending proposal survives; only [discardProposal] drops it.
+  void cancelTool() => setMode(CanvasMode.select);
 
   void toggleGrid() {
     showGrid = !showGrid;
@@ -183,6 +181,14 @@ class EditorController extends ChangeNotifier {
 
   void setSheet(String id) {
     if (activeSheetId == id) return;
+    if (busy) {
+      conversation.add(
+        const ConversationEntry(
+          'Požadavek byl zrušen přepnutím listu. Zadejte ho znovu.',
+          detail: 'Návrh nebyl použit',
+        ),
+      );
+    }
     _requestId++;
     busy = false;
     proposal = null;
@@ -233,17 +239,25 @@ class EditorController extends ChangeNotifier {
     });
     diagnostics = [];
     diagnosticsVisible = false;
+    _scheduleAutosave();
+    notifyListeners();
+  }
+
+  void _scheduleAutosave() {
     _autosaveTimer?.cancel();
     autosaveStatus = 'Ukládání pracovní kopie…';
     _autosaveTimer = Timer(const Duration(milliseconds: 400), _autosave);
-    notifyListeners();
   }
 
   Future<void> _autosave() async {
     final snapshot = project;
     final generation = _documentGeneration;
     try {
-      await persistence.saveAutosave(snapshot);
+      await persistence.saveAutosave(
+        snapshot,
+        savedRevision: _savedRevision < 0 ? null : _savedRevision,
+        fileName: fileName,
+      );
       if (!_isCurrentDocument(generation) ||
           snapshot.revision != project.revision) {
         return;
@@ -345,12 +359,13 @@ class EditorController extends ChangeNotifier {
 
   void rotateSelection() {
     final commands = <EcadCommand>[
-      ...selectedDevices.map(
-        (d) => UpdateDevice(
+      if (selectedDevices.isNotEmpty)
+        UpdateDevices(
           activeSheetId,
-          d.copyWith(rotation: (d.rotation + 90) % 360),
+          selectedDevices
+              .map((d) => d.copyWith(rotation: (d.rotation + 90) % 360))
+              .toList(),
         ),
-      ),
       if (selectedGraphics.isNotEmpty)
         UpdateGraphics(
           activeSheetId,
@@ -362,7 +377,7 @@ class EditorController extends ChangeNotifier {
     if (commands.isNotEmpty) execute(commands, 'Výběr otočen o 90°');
   }
 
-  void updateDevice(Device device) => execute([
+  bool updateDevice(Device device) => execute([
     UpdateDevice(activeSheetId, device),
   ], 'Vlastnosti přístroje upraveny');
   void renameProject(String name) {
@@ -406,39 +421,21 @@ class EditorController extends ChangeNotifier {
   }
 
   void duplicateSelection() {
-    if (selectedIds.isEmpty) return;
-    final commands = <EcadCommand>[];
-    var offset = const Vec2(20, 20);
-    if (selectedDevices.isNotEmpty) {
-      final result = assistant.propose(
-        'duplikuj výběr',
+    if (selectedDevices.isEmpty && selectedGraphics.isEmpty) return;
+    final List<EcadCommand> commands;
+    try {
+      commands = assistant.duplicateCommands(
         project: project,
         sheetId: activeSheetId,
-        selectedDeviceIds: selectedDevices.map((d) => d.id).toSet(),
+        deviceIds: selectedDevices.map((d) => d.id).toSet(),
+        graphicIds: selectedGraphics.map((g) => g.id).toSet(),
       );
-      if (result.commands.isEmpty) {
-        status = result.message;
-        notifyListeners();
-        return;
-      }
-      commands.addAll(result.commands);
-      // The assistant preserves selected devices in sheet order. Use its
-      // actual translation for graphics so a mixed selection stays together.
-      offset =
-          result.commands.whereType<AddDevice>().first.device.position -
-          selectedDevices.first.position;
+    } on FormatException catch (error) {
+      status = error.message;
+      notifyListeners();
+      return;
     }
-    final copies =
-        selectedGraphics
-            .map(
-              (g) => g.copyWith(
-                id: newId('graphic'),
-                position: g.position + offset,
-              ),
-            )
-            .toList();
-    if (copies.isNotEmpty) commands.add(AddGraphics(activeSheetId, copies));
-    if (commands.isNotEmpty) execute(commands, 'Výběr duplikován');
+    execute(commands, 'Výběr duplikován');
   }
 
   void newProject({bool demo = false}) {
@@ -540,6 +537,11 @@ class EditorController extends ChangeNotifier {
             project.revision == snapshot.revision
                 ? 'Projekt uložen'
                 : 'Uložena dřívější verze; novější změny nejsou uložené';
+        // Complete the recovery record before returning: an immediate close
+        // cancels timers and must not lose the saved revision or file name.
+        _autosaveTimer?.cancel();
+        autosaveStatus = 'Ukládání pracovní kopie…';
+        await _autosave();
       }
     } catch (error) {
       if (_isCurrentDocument(generation)) {

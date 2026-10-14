@@ -23,7 +23,9 @@ Routing is designed for the editor's 90-degree turns; other rotation angles
 in external documents use best-effort geometry.
 Each sheet also has
 `width`, `height`, `showFrame`, an optional 1-based `sourcePage`, and a `graphics`
-collection. Graphics remain separate from electrical devices and connections.
+collection. `sourcePage` is the page number in the original document, so it may
+exceed the sheet count; it is limited to 1,000,000.
+Graphics remain separate from electrical devices and connections.
 Imported drawing paths and text do not establish electrical connectivity.
 
 A sheet `type` is `multiLine`, `singleLine`, `cabinetLayout`, or `form`. Saving
@@ -83,6 +85,10 @@ dart analyze
 From a package depending on `ecad_core`, use `dart run ecad_core:open_ecad`.
 One input may be `-` for stdin; output defaults to stdout. Named output files
 are saved through a sibling temporary file and renamed after a successful edit.
+When the output is a symbolic link, its final target is replaced in the target's
+directory and the link is kept. A link without an existing target file is
+rejected. Plain-text messages show control characters from project data as
+escapes such as `\x1b`; JSON output escapes DEL and C1 controls as well.
 
 `commands.json` accepts an array or a transaction envelope:
 
@@ -102,15 +108,22 @@ are saved through a sibling temporary file and renamed after a successful edit.
 The engine rejects stale revisions and commits a whole command batch only after
 its final document passes structural validation. Undo and redo also increment
 the revision; a previously prepared proposal becomes stale even after undo.
-Supported types: `addDevice`, `moveDevices`, `updateDevice`, `deleteDevices`,
-`addWire`, `deleteWire`, `addSheet`, `renameSheet`, `setSheetType`,
-`renameProject`, `addGraphics`, `updateGraphic`, `updateGraphics`,
-`moveGraphics`, `deleteGraphics`.
+Supported types: `addDevice`, `moveDevices`, `updateDevice`, `updateDevices`,
+`deleteDevices`, `addWire`, `deleteWire`, `addSheet`, `renameSheet`,
+`setSheetType`, `renameProject`, `addGraphics`, `updateGraphic`,
+`updateGraphics`, `moveGraphics`, `deleteGraphics`.
+Commands apply in order, each seeing the result of the previous ones. A batch
+copies each sheet collection it edits once and validates the result once, so
+many small commands cost about as much as one bulk command.
+`updateDevices` accepts `sheetId` and a nonempty `devices` array of complete
+replacements with distinct existing IDs, such as a rotated selection.
 Deleting devices removes their attached wires in the same transaction.
-`moveDevices` and `updateDevice` also adjust the manual waypoints next to a
-moved or rotated terminal, in the same revision. Other bends are kept when
-possible. Unsafe bends are dropped, falling back to an automatic route if needed
-to avoid a connected symbol or reach a terminal from the correct side.
+`moveDevices`, `updateDevice` and `updateDevices` also adjust the manual
+waypoints next to a moved or rotated terminal, in the same revision. Devices
+changed by one command move together, so a wire between two of them is adjusted
+once. Other bends are kept when possible. Unsafe bends are dropped, falling back
+to an automatic route if needed to avoid a connected symbol or reach a terminal
+from the correct side.
 `setSheetType` accepts `sheetId` and `sheetType`, for example
 `{"type": "setSheetType", "sheetId": "sheet_power", "sheetType": "singleLine"}`.
 
@@ -134,16 +147,19 @@ Drawing, device, wire, sheet, and project IDs share one unique namespace.
 Directly constructed Dart objects receive the same structural checks as decoded
 drawing data, and drawing diagnostics identify their `graphicId` and `sheetId`.
 
-Format limits support large drawing sets: 1024 sheets, 500,000 drawing elements,
-10,000 segments per path, and 4,000,000 total path segments. Each text element is
-limited to 65,536 characters. PNGs are limited to 16 MiB each and approximately
-64 MiB total decoded payload, dimensions at most 16,384 pixels per side, and
+Format limits support large drawing sets: 1024 sheets, source page numbers up to
+1,000,000, 500,000 drawing elements, 10,000 segments per path, and 4,000,000
+total path segments. Each text element is limited to 65,536 characters.
+PNGs are limited to 16 MiB each and approximately 64 MiB total decoded payload,
+dimensions at most 16,384 pixels per side, and
 64 million pixels per image. Core validation checks base64, the PNG signature,
 and IHDR bounds; renderers decode pixels and report corrupt image contents.
 CLI input and output are limited to 128 MiB and saved as compact JSON. Existing
 device/wire limits remain 20,000 devices, 40,000 wires, and 256 wire waypoints.
-Graphic validation is cached on immutable elements so edits avoid rescanning
-unchanged path geometry or repeatedly decoding unchanged image payloads.
+Graphic validation is cached on immutable elements, so unchanged elements are
+not checked again. A `copyWith` copy that keeps the same image payload reuses its
+PNG check, so moving or restyling an image does not decode it again; the copy's
+geometry and style are always checked.
 
 Warnings include duplicate designations, duplicate connections, and unused
 terminals. Warnings allow documents in progress and intentional drawing

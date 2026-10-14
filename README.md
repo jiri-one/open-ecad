@@ -57,6 +57,7 @@ tohoto prototypu; pracovní plocha se ověřuje od šířky 1024 px.
 - Otevřený verzovaný JSON formát `.oecad`, otevření/uložení, místní pracovní kopie
   a obnova po opětovném spuštění. Explicitní uložení zapisuje soubor; automatická
   kopie obsahuje poslední projekt na daném zařízení, po přibližně 400 ms klidu.
+  Obnova zachová i stav uložení do souboru.
 - Vektorový PDF export všech listů a SVG export aktuálního listu, s českými texty.
 - [Místní import PDF](docs/pdf-import.md) jako editovatelné vektory, texty a obrázky
   se skutečnými rozměry listů. Kreslení čar, obdélníků a textů, úpravy vlastností,
@@ -120,7 +121,7 @@ navíc podléhá pravidlům pro CORS a HTTP/HTTPS; povolení konkrétního půvo
 | L / B / T | Kreslit čáru / obdélník / text |
 | R / Delete | Otočit / odstranit výběr |
 | F | Přizpůsobit celý list oknu |
-| Esc | Ukončit vkládání, spojování nebo náhled |
+| Esc | Ukončit vkládání, spojování nebo náhled; návrh asistenta zůstane k použití |
 | Kolečko | Zoom kolem ukazatele |
 | Prostřední/pravé tlačítko, případně mezerník + tažení | Posun plochy |
 | Enter / Shift + Enter v asistentovi | Odeslat / nový řádek |

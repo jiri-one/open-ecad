@@ -355,6 +355,48 @@ void main() {
       },
     );
 
+    test('source pages are bounded separately from the sheet count', () {
+      final sheet = _project([]).pages.single;
+      for (final page in [
+        ProjectLimits.maxPages + 476,
+        ProjectLimits.maxSourcePage,
+      ]) {
+        final project = _project(
+          [],
+        ).copyWith(pages: [sheet.copyWith(sourcePage: page)]);
+        final decoded = EcadProject.fromJson(
+          jsonDecode(jsonEncode(project.toJson())),
+        );
+        expect(validateProject(decoded), isEmpty);
+        expect(ProjectEngine(decoded).project.pages.single.sourcePage, page);
+      }
+      final beyond = sheet.copyWith(
+        sourcePage: ProjectLimits.maxSourcePage + 1,
+      );
+      expect(
+        () => Sheet.fromJson(beyond.toJson()),
+        throwsA(_error('invalid_schema')),
+      );
+      expect(
+        () => ProjectEngine(_project([]).copyWith(pages: [beyond])),
+        throwsA(_error('invalid_metadata')),
+      );
+      final tooMany = _project([]).copyWith(
+        pages: [
+          for (var i = 0; i <= ProjectLimits.maxPages; i++)
+            sheet.copyWith(id: 'page_$i', number: '$i', sourcePage: i + 1),
+        ],
+      );
+      expect(
+        () => EcadProject.fromJson(tooMany.toJson()),
+        throwsA(_error('limit_exceeded')),
+      );
+      expect(
+        () => ProjectEngine(tooMany),
+        throwsA(_error('invalid_page_count')),
+      );
+    });
+
     test(
       'PNG is embedded, bounded, and has a valid signature and dimensions',
       () {
@@ -398,6 +440,56 @@ void main() {
         );
       },
     );
+
+    test('copies reuse a checked image payload, never their geometry', () {
+      final image = _image();
+      requireValidDrawingElement(image);
+      expect(
+        () => requireValidDrawingElement(
+          image.copyWith(position: const Vec2(10, 10), opacity: 0.5),
+        ),
+        returnsNormally,
+      );
+      for (final (copy, code) in <(DrawingElement, String)>[
+        (
+          image.copyWith(position: const Vec2(double.nan, 0)),
+          'invalid_geometry',
+        ),
+        (image.copyWith(width: 0), 'invalid_geometry'),
+        (image.copyWith(opacity: 2), 'invalid_geometry'),
+        (image.copyWith(stroke: 'red'), 'invalid_schema'),
+        (image.copyWith(kind: DrawingKind.text), 'invalid_schema'),
+        (image.copyWith(imageData: 'not base64'), 'invalid_image'),
+        (image.copyWith(imageData: 'AAAA'), 'invalid_image'),
+      ]) {
+        expect(() => requireValidDrawingElement(copy), throwsA(_error(code)));
+      }
+      // A rejected payload stays rejected in copies; a new one is checked.
+      final truncated = base64Encode(base64Decode(_pixelPng).sublist(0, 8));
+      final corrupt = _image().copyWith(imageData: truncated);
+      for (final copy in [corrupt, corrupt.copyWith(position: Vec2.zero)]) {
+        expect(
+          () => requireValidDrawingElement(copy),
+          throwsA(_error('invalid_image')),
+        );
+      }
+      expect(
+        () =>
+            requireValidDrawingElement(corrupt.copyWith(imageData: _pixelPng)),
+        returnsNormally,
+      );
+      final engine = ProjectEngine(_project([image]));
+      engine.execute([
+        MoveGraphics('drawing_sheet', {'image': const Vec2(5, 5)}),
+        UpdateGraphic('drawing_sheet', image.copyWith(opacity: 0.25)),
+      ]);
+      expect(
+        () => engine.execute([
+          UpdateGraphic('drawing_sheet', image.copyWith(imageData: truncated)),
+        ]),
+        throwsA(_error('invalid_image')),
+      );
+    });
 
     test(
       'graphics share the project-wide ID namespace and diagnostics locate them',

@@ -218,14 +218,16 @@ class _DeviceInspectorState extends State<_DeviceInspector> {
       setState(() => error = 'Vyplňte označení a platné souřadnice.');
       return;
     }
-    widget.controller.updateDevice(
+    if (!widget.controller.updateDevice(
       widget.device.copyWith(
         designation: designation.text.trim(),
         description: description.text.trim(),
         rating: rating.text.trim(),
         position: Vec2(px, py),
       ),
-    );
+    )) {
+      setState(() => error = widget.controller.status);
+    }
   }
 
   @override

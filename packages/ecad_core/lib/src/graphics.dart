@@ -113,6 +113,11 @@ class DrawingElement {
   // avoids scanning every path or decoding embedded images on each edit.
   late final EcadException? _validationError = _drawingValidationError(this);
 
+  // The PNG check reads only the payload, so copies that keep the same payload
+  // string share it. Geometry and style of each copy are checked anew.
+  _PngCheck? _png;
+  _PngCheck get _pngCheck => _png ??= _PngCheck(imageData);
+
   DrawingElement copyWith({
     String? id,
     DrawingKind? kind,
@@ -133,27 +138,34 @@ class DrawingElement {
     double? fontSize,
     bool? bold,
     String? imageData,
-  }) => DrawingElement(
-    id: id ?? this.id,
-    kind: kind ?? this.kind,
-    position: position ?? this.position,
-    width: width ?? this.width,
-    height: height ?? this.height,
-    rotation: rotation ?? this.rotation,
-    path: path ?? this.path,
-    stroke: identical(stroke, _unchanged) ? this.stroke : stroke as String?,
-    fill: identical(fill, _unchanged) ? this.fill : fill as String?,
-    strokeWidth: strokeWidth ?? this.strokeWidth,
-    lineCap: lineCap ?? this.lineCap,
-    lineJoin: lineJoin ?? this.lineJoin,
-    evenOdd: evenOdd ?? this.evenOdd,
-    opacity: opacity ?? this.opacity,
-    dash: dash ?? this.dash,
-    text: text ?? this.text,
-    fontSize: fontSize ?? this.fontSize,
-    bold: bold ?? this.bold,
-    imageData: imageData ?? this.imageData,
-  );
+  }) {
+    final copy = DrawingElement(
+      id: id ?? this.id,
+      kind: kind ?? this.kind,
+      position: position ?? this.position,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      rotation: rotation ?? this.rotation,
+      path: path ?? this.path,
+      stroke: identical(stroke, _unchanged) ? this.stroke : stroke as String?,
+      fill: identical(fill, _unchanged) ? this.fill : fill as String?,
+      strokeWidth: strokeWidth ?? this.strokeWidth,
+      lineCap: lineCap ?? this.lineCap,
+      lineJoin: lineJoin ?? this.lineJoin,
+      evenOdd: evenOdd ?? this.evenOdd,
+      opacity: opacity ?? this.opacity,
+      dash: dash ?? this.dash,
+      text: text ?? this.text,
+      fontSize: fontSize ?? this.fontSize,
+      bold: bold ?? this.bold,
+      imageData: imageData ?? this.imageData,
+    );
+    if (this.imageData.isNotEmpty &&
+        identical(copy.imageData, this.imageData)) {
+      copy._png = _pngCheck;
+    }
+    return copy;
+  }
 
   Map<String, Object?> toJson() => {
     'id': id,
@@ -343,10 +355,14 @@ EcadException? _drawingValidationError(DrawingElement element) {
       }
     }
   }
-  if (element.kind == DrawingKind.image) {
-    return _pngValidationError(element.imageData);
-  }
+  if (element.kind == DrawingKind.image) return element._pngCheck.error;
   return null;
+}
+
+class _PngCheck {
+  _PngCheck(this._data);
+  final String _data;
+  late final EcadException? error = _pngValidationError(_data);
 }
 
 EcadException? _pngValidationError(String data) {

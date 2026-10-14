@@ -9,6 +9,7 @@ import 'package:open_ecad/app/theme.dart';
 import 'package:open_ecad/app/workspace.dart';
 import 'package:open_ecad/editor/schematic_canvas.dart';
 import 'package:open_ecad/widgets/components.dart';
+import 'package:open_ecad/widgets/properties_panel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<EditorController> mountWorkspace(WidgetTester tester) async {
@@ -81,6 +82,75 @@ void main() {
     expect(changed.rating, '230 V');
     expect(changed.position.x, 400.25);
     expect(changed.position.y, 150.75);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(milliseconds: 500));
+  });
+
+  testWidgets('device inspector shows rejected edits beside its fields', (
+    tester,
+  ) async {
+    final app = await mountWorkspace(tester);
+    final device = app.sheet.devices.first;
+    app.select({device.id});
+    app.setPanel(SidePanel.properties);
+    await tester.pumpAndSettle();
+    Finder inline(String text) => find.descendant(
+      of: find.byType(PropertiesPanel),
+      matching: find.text(text),
+    );
+    Future<void> apply() async {
+      await tester.ensureVisible(find.text('Použít vlastnosti'));
+      await tester.tap(find.text('Použít vlastnosti'));
+      await tester.pumpAndSettle();
+    }
+
+    await tester.enterText(fieldWithLabel('Označení'), 'Q' * 65);
+    await apply();
+    expect(app.project.revision, 0);
+    expect(app.status, contains('EcadException'));
+    expect(inline(app.status), findsOneWidget);
+
+    await app.sendPrompt('Vlož svorku');
+    await tester.pumpAndSettle();
+    expect(app.showingProposal, isTrue);
+    app.setPanel(SidePanel.properties);
+    await tester.pumpAndSettle();
+    await tester.enterText(fieldWithLabel('Parametry'), '16 A');
+    await apply();
+    expect(app.selectedDevices.single.rating, device.rating);
+    expect(inline(app.status), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(milliseconds: 500));
+  });
+
+  testWidgets('Escape closes the proposal preview and keeps the proposal', (
+    tester,
+  ) async {
+    final app = await mountWorkspace(tester);
+    final originalCount = app.sheet.devices.length;
+    final prompt = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.hintText == 'Co chcete ve schématu změnit?',
+    );
+    await tester.tap(prompt);
+    await tester.enterText(prompt, 'Vlož svorku');
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(app.showingProposal, isTrue);
+    await tester.tapAt(
+      tester.getTopLeft(find.byType(SchematicCanvas)) + const Offset(8, 8),
+    );
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(app.showingProposal, isFalse);
+    expect(app.proposalIsCurrent, isTrue);
+    expect(find.text('Náhled ve výkresu'), findsOneWidget);
+    await tester.ensureVisible(find.text('Použít změny'));
+    await tester.tap(find.text('Použít změny'));
+    await tester.pumpAndSettle();
+    expect(app.sheet.devices, hasLength(originalCount + 1));
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(milliseconds: 500));
   });

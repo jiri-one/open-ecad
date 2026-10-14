@@ -73,7 +73,11 @@ identifikaci zdroje SHA-256 a upozornění na nepřevedené vlastnosti.
 - Obecné PDF s maskami, složitým ořezáváním nebo jinými nepodporovanými prvky
   vyžaduje kontrolu zprávy a vizuální srovnání. Naskenované PDF zůstane obrázkem;
   tento převodník neobsahuje OCR ani rozpoznávání symbolů.
+- Obrázky s krytím pod 50 % nemusí PyMuPDF vrátit ani započítat do zprávy;
+  průhledné prvky proto ověřte vizuálně. Vložené JPEG 2000 může knihovna dekódovat
+  ještě před kontrolou rozměrů, takže tyto kontroly neomezují celkovou spotřebu RAM.
 - Limit dokumentu je 1 024 listů, 500 000 grafických objektů a 128 MiB souboru.
+  Z delšího PDF lze přes `--pages` vybrat až 1 024 stránek s čísly do 1 000 000.
   Dokument i historie úprav jsou v paměti. Velké importy vyžadují dostatek RAM;
   úvodní načtení a export mohou trvat déle.
 - Automatická pracovní kopie v nastavení je jen pro malé projekty do 2 MiB

@@ -583,9 +583,37 @@ void main() {
         persistence.saveAutosave(project),
         persistence.saveAutosave(latest),
       ]);
-      expect((await persistence.loadAutosave())?.toJson(), latest.toJson());
+      expect(
+        (await persistence.loadAutosave())?.project.toJson(),
+        latest.toJson(),
+      );
       await persistence.clearAutosave();
       expect(await persistence.loadAutosave(), isNull);
+    });
+
+    test('working copy keeps the file state of its own revision', () async {
+      final persistence = ProjectPersistence();
+      final edited = project.copyWith(revision: 3);
+      await persistence.saveAutosave(
+        edited,
+        savedRevision: 2,
+        fileName: 'Dílna.oecad',
+      );
+      final restored = (await persistence.loadAutosave())!;
+      expect(restored.project.toJson(), edited.toJson());
+      expect(restored.savedRevision, 2);
+      expect(restored.fileName, 'Dílna.oecad');
+      await persistence.saveAutosave(edited.copyWith(revision: 1));
+      final unsaved = (await persistence.loadAutosave())!;
+      expect(unsaved.savedRevision, isNull);
+      expect(unsaved.fileName, isNull);
+      SharedPreferences.setMockInitialValues({
+        ProjectPersistence.autosaveKey: jsonEncode({
+          'project': edited.toJson(),
+          'savedRevision': 4,
+        }),
+      });
+      expect((await persistence.loadAutosave())!.savedRevision, isNull);
     });
   });
 

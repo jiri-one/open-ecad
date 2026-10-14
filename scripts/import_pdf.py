@@ -61,6 +61,12 @@ WARNING_TEXT = {
         'by a single cap style.'),
     'dashPhase': 'Dash phase offsets are not represented and were dropped.',
     'dashInvalid': 'Unusable dash patterns were imported as solid lines.',
+    'dashClamped': (
+        'Dash lengths beyond the supported range were shortened to its '
+        'limit.'),
+    'strokeWidthClamped': (
+        'Stroke widths outside the supported range were clamped; negative '
+        'widths became hairlines.'),
     'pathSplit': 'Stroked paths over the segment limit were split.',
     'pathTooLong': (
         'Filled paths over the segment limit cannot be split and were '
@@ -103,6 +109,7 @@ class UserError(Exception):
 @dataclass(frozen=True)
 class Limits:
     max_pages: int = 1024
+    max_source_page: int = 1000000
     max_graphics: int = 500000
     max_path_segments: int = 10000
     max_total_path_segments: int = 4000000
@@ -116,9 +123,15 @@ class Limits:
     max_image_bytes: int = 16 * 1024 * 1024
     max_total_image_bytes: int = 64 * 1024 * 1024
 
+    @property
+    def max_total_image_chars(self) -> int:
+        # The core limits the total base64 text, which pads every image.
+        return (self.max_total_image_bytes + 2) // 3 * 4
+
     def to_json(self) -> dict:
         return {
             'maxPages': self.max_pages,
+            'maxSourcePage': self.max_source_page,
             'maxGraphics': self.max_graphics,
             'maxPathSegments': self.max_path_segments,
             'maxTotalPathSegments': self.max_total_path_segments,
@@ -131,6 +144,7 @@ class Limits:
             'maxSheetNumberLength': self.max_number,
             'maxImageBytes': self.max_image_bytes,
             'maxTotalImageBytes': self.max_total_image_bytes,
+            'maxTotalImageBase64Chars': self.max_total_image_chars,
         }
 
 
@@ -160,6 +174,11 @@ def _num(value: float):
     return rounded
 
 
+def _in_range(limit: float, *values: float) -> bool:
+    # The core bounds the rounded numbers that _num serializes.
+    return all(math.isfinite(v) and abs(round(v, 4)) <= limit for v in values)
+
+
 def _utf16_len(text: str) -> int:
     return sum(2 if ord(c) > 0xFFFF else 1 for c in text)
 
@@ -177,7 +196,8 @@ _CONTROL_RE = re.compile('[\x00-\x1f\x7f-\x9f  ]')
 
 
 def _clean_label(text: str, limit: int) -> str:
-    text = _CONTROL_RE.sub(' ', text or '')
+    # The app's trim() also removes U+FEFF, so a name of only that is empty.
+    text = _CONTROL_RE.sub(' ', (text or '').replace('\ufeff', ''))
     text = re.sub(r' {2,}', ' ', text).strip()
     return _truncate_utf16(text, limit)
 
@@ -214,35 +234,57 @@ def _parse_dashes(text) -> tuple[list[float], float]:
     return values, phase
 
 
+def _page_number(digits: str, limits: Limits) -> int:
+    # int() refuses thousands of digits; such numbers are out of range anyway.
+    digits = digits.lstrip('0') or '0'
+    if len(digits) > len(str(limits.max_source_page)) \
+            or int(digits) > limits.max_source_page:
+        raise UserError(
+            f'Page numbers above {limits.max_source_page} are not supported.')
+    return int(digits)
+
+
 def parse_pages(spec: str | None, page_count: int, limits: Limits) -> list[int]:
     """Return sorted unique 1-based page numbers; raises UserError."""
     if spec is None:
-        selected = list(range(1, page_count + 1))
+        ranges = [(1, page_count)]
     else:
-        selected_set: set[int] = set()
         if not spec.strip():
             raise UserError('--pages must not be empty.')
+        ranges = []
         for part in spec.split(','):
             part = part.strip()
-            match = re.fullmatch(r'(\d+)(?:\s*-\s*(\d+))?', part)
+            match = re.fullmatch(r'(\d+)(?:\s*-\s*(\d+))?', part, re.ASCII)
             if not match:
                 raise UserError(
                     f'Invalid page selection "{part}"; use e.g. 1,3-5.')
-            first = int(match.group(1))
-            last = int(match.group(2)) if match.group(2) else first
+            first = _page_number(match.group(1), limits)
+            last = _page_number(match.group(2), limits) \
+                if match.group(2) else first
             if first < 1 or last < first:
                 raise UserError(f'Invalid page range "{part}".')
-            if last > page_count:
-                raise UserError(
-                    f'Page {last} is outside the document '
-                    f'(1-{page_count}).')
-            selected_set.update(range(first, last + 1))
-        selected = sorted(selected_set)
-    if len(selected) > limits.max_pages:
-        raise UserError(
-            f'{len(selected)} pages selected; the limit is {limits.max_pages}. '
+            ranges.append((first, last))
+
+    def too_many(count: int) -> UserError:
+        return UserError(
+            f'{count} pages selected; the limit is {limits.max_pages}. '
             'Use --pages to import a subset.')
-    return selected
+
+    selected: set[int] = set()
+    for first, last in ranges:
+        if last > page_count:
+            raise UserError(
+                f'Page {last} is outside the document (1-{page_count}).')
+        # Checked before expanding, so a huge range cannot exhaust memory.
+        if last - first >= limits.max_pages:
+            raise too_many(last - first + 1)
+        selected.update(range(first, last + 1))
+        if len(selected) > limits.max_pages:
+            raise too_many(len(selected))
+    if max(selected, default=0) > limits.max_source_page:
+        raise UserError(
+            f'Page numbers above {limits.max_source_page} are not supported.')
+    return sorted(selected)
 
 
 # --------------------------------------------------------------------------
@@ -410,6 +452,7 @@ class _Context:
         self.total_graphics = 0
         self.total_segments = 0
         self.total_image_bytes = 0
+        self.total_image_chars = 0
         self.fonts: dict[str, int] = {}
         self.image_cache: dict = {}
 
@@ -510,26 +553,38 @@ def _absolute_segments(items, close_path, matrix: _Matrix):
 
 
 def _split_segments(segments, cap):
-    """Split a stroke-only path into chunks of at most `cap` segments."""
+    """Split a stroke-only path into chunks of at most `cap` segments.
+
+    A chunk that resumes a subpath starts with an inserted move, and Z would
+    close to that move; it becomes an explicit line to the original start.
+    """
+    if cap < 2:
+        raise ValueError('A chunk needs room for a move and a segment.')
     chunks = []
     chunk: list = []
-    current = None
-    start = None
+    current = start = None
+    resumed = False
     for verb, points in segments:
-        need_move = verb != 'M' and not chunk
-        if len(chunk) + (2 if need_move else 1) > cap:
+        if verb == 'M':
+            if len(chunk) + 2 > cap:  # never end a chunk with a bare move
+                chunks.append(chunk)
+                chunk = []
+            chunk.append((verb, points))
+            current = start = points[0]
+            resumed = False
+            continue
+        if len(chunk) >= cap:
             chunks.append(chunk)
             chunk = []
-            need_move = verb != 'M'
-        if need_move and current is not None:
+        if verb == 'Z' and (resumed or not chunk):
+            if current == start:
+                continue
+            verb, points = 'L', [start]
+        if not chunk:
             chunk.append(('M', [current]))
+            resumed = True
         chunk.append((verb, points))
-        if verb == 'M':
-            current = start = points[0]
-        elif verb == 'Z':
-            current = start
-        else:
-            current = points[-1]
+        current = start if verb == 'Z' else points[-1]
     if chunk:
         chunks.append(chunk)
     return chunks
@@ -545,13 +600,15 @@ def _path_graphic(gid, segments, stroke, fill, stroke_width, opacity, dash,
             ys.append(y)
     if not xs:
         return None
+    if not all(map(math.isfinite, xs + ys)):
+        return 'range'
     left, top = min(xs), min(ys)
     right, bottom = max(xs), max(ys)
-    position = (round(left, 4), round(top, 4))
-    if max(abs(position[0]), abs(position[1]), abs(right), abs(bottom)) \
-            > max_coord or not all(map(math.isfinite, xs + ys)):
+    px, py = round(left, 4), round(top, 4)
+    # Sizes and points relative to the position are bounded as well.
+    if not _in_range(max_coord, px, py, right, bottom, right - left,
+                     bottom - top, right - px, bottom - py):
         return 'range'
-    px, py = position
     path = []
     for verb, points in segments:
         entry = {'verb': verb}
@@ -595,7 +652,8 @@ def _text_graphics(span, matrix: _Matrix, new_id, stats: PageStats,
     dx, dy = matrix.vector(*span['dir'])
     norm = math.hypot(dx, dy)
     size = float(span['size'])
-    if norm < 1e-9 or not size > 0 or not math.isfinite(size):
+    font_size = _num(size) if math.isfinite(size) else 0
+    if not 1e-9 <= norm < math.inf or not font_size > 0:
         stats.warn('degenerateText')
         return []
     angle = math.degrees(math.atan2(dy, dx))
@@ -676,7 +734,7 @@ def _text_graphics(span, matrix: _Matrix, new_id, stats: PageStats,
             length = size * 0.5 * len(chunk)
         px = first[1] + ux * above
         py = first[2] + uy * above
-        if max(abs(px), abs(py), abs(length)) > ctx.limits.max_coordinate:
+        if not _in_range(ctx.limits.max_coordinate, px, py, length, size):
             stats.bump(stats.unsupported, 'textOutOfRange')
             stats.warn('coordinateOutOfRange')
             continue
@@ -685,7 +743,7 @@ def _text_graphics(span, matrix: _Matrix, new_id, stats: PageStats,
             'kind': 'text',
             'position': {'x': _num(px), 'y': _num(py)},
             'width': _num(max(length, 0.0001)),
-            'height': _num(max(size, 0.0001)),
+            'height': font_size,
         }
         if round(rotation, 4) % 360 != 0:
             graphic['rotation'] = _num(rotation)
@@ -693,8 +751,8 @@ def _text_graphics(span, matrix: _Matrix, new_id, stats: PageStats,
         if _opacity(span.get('opacity')) != 1:
             graphic['opacity'] = _num(_opacity(span.get('opacity')))
         graphic['text'] = text
-        if round(size, 4) != 12:
-            graphic['fontSize'] = _num(size)
+        if font_size != 12:
+            graphic['fontSize'] = font_size
         if bold:
             graphic['bold'] = True
         result.append(graphic)
@@ -714,10 +772,83 @@ def _flip_rows(pix, mu):
     return mu.Pixmap(pix.colorspace, pix.width, pix.height, flipped, pix.alpha)
 
 
+def _oversized(width, height) -> bool:
+    return (width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION
+            or width * height > MAX_IMAGE_PIXELS)
+
+
+def _declared_size(doc, xref):
+    size = []
+    for key in ('Width', 'Height'):
+        try:
+            kind, value = doc.xref_get_key(xref, key)
+            if kind == 'xref':
+                value = doc.xref_object(int(value.split()[0]), compressed=True)
+            size.append(float(value))
+        except Exception:
+            return None
+    return size
+
+
+def _image_placements(doc, page, images, mu) -> list[dict]:
+    """page.get_image_info(xrefs=True) without decoding oversized images.
+
+    PyMuPDF finds xrefs by hashing the decoded pixels of every placed and
+    every listed image; here oversized ones are only marked.
+    """
+    lib = mu.mupdf
+    textpage = page.get_textpage(flags=mu.TEXT_PRESERVE_IMAGES)
+    placements = textpage.extractIMGINFO()
+    blocks = list(textpage.this)
+    whole = lib.FzIrect(mu.FZ_MIN_INF_RECT, mu.FZ_MIN_INF_RECT,
+                        mu.FZ_MAX_INF_RECT, mu.FZ_MAX_INF_RECT)
+
+    def xref_digests() -> dict:
+        result = {}
+        known: dict = {}
+        for entry in images:  # (xref, smask, width, height, ...)
+            xref = entry[0]
+            if xref not in known:
+                known[xref] = None
+                if not _oversized(entry[2], entry[3]):
+                    try:
+                        known[xref] = mu.Pixmap(doc, xref).digest
+                    except Exception:
+                        pass
+            if known[xref] is not None:
+                result[known[xref]] = xref  # the last one wins, as in PyMuPDF
+        return result
+
+    digests = None
+    for info in placements:
+        info['xref'] = 0
+        if _oversized(info['width'], info['height']):
+            info['oversized'] = True
+            continue
+        if digests is None:
+            digests = xref_digests()
+        try:
+            image = blocks[info['number']].i_image()
+            pix, _, _ = lib.fz_get_pixmap_from_image(
+                image, whole, lib.FzMatrix(image.w(), 0, 0, image.h(), 0, 0))
+            info['xref'] = digests.get(bytes(lib.fz_md5_pixmap2(pix)), 0)
+        except Exception:
+            info['unreadable'] = True
+    return placements
+
+
 def _image_graphic(doc, page, info, smask_by_xref, matrix, new_id, stats,
                    ctx: _Context):
     mu = ctx.mu
     limits = ctx.limits
+    if info.get('oversized'):
+        stats.warn('imageTooLarge')
+        stats.bump(stats.unsupported, 'oversizedImages')
+        return None
+    if info.get('unreadable'):
+        stats.warn('imageUnreadable')
+        stats.bump(stats.unsupported, 'unreadableImages')
+        return None
     xref = info.get('xref') or 0
     if not xref:
         stats.warn('inlineImage')
@@ -738,7 +869,11 @@ def _image_graphic(doc, page, info, smask_by_xref, matrix, new_id, stats,
         stats.warn('imageMirrored')
     width = math.hypot(xx, xy)
     height = math.hypot(yx, yy)
-    if not (width > 0 and height > 0):
+    if not _in_range(limits.max_coordinate, ox, oy, width, height):
+        stats.warn('coordinateOutOfRange')
+        stats.bump(stats.unsupported, 'imageOutOfRange')
+        return None
+    if not (_num(width) > 0 and _num(height) > 0):
         stats.bump(stats.unsupported, 'degenerateImages')
         return None
     if abs(xx * yx + xy * yy) > 1e-3 * width * height:
@@ -748,14 +883,17 @@ def _image_graphic(doc, page, info, smask_by_xref, matrix, new_id, stats,
     if abs(rotation - snapped) < 1e-3:
         rotation = snapped
     rotation %= 360.0
-    if max(abs(ox), abs(oy), width, height) > limits.max_coordinate:
-        stats.warn('coordinateOutOfRange')
-        stats.bump(stats.unsupported, 'imageOutOfRange')
-        return None
 
     key = (xref, flipped)
     encoded = ctx.image_cache.get(key)
     if encoded is None:
+        smask = smask_by_xref.get(xref, 0)
+        # Decoding allocates the declared size, so check it beforehand.
+        declared = [_declared_size(doc, x) for x in (xref, smask) if x]
+        if any(size and _oversized(*size) for size in declared):
+            stats.warn('imageTooLarge')
+            stats.bump(stats.unsupported, 'oversizedImages')
+            return None
         try:
             pix = mu.Pixmap(doc, xref)
             if pix.colorspace is None or pix.colorspace.n not in (1, 3):
@@ -763,7 +901,6 @@ def _image_graphic(doc, page, info, smask_by_xref, matrix, new_id, stats,
                 pix = mu.Pixmap(mu.csRGB, pix)
                 if alpha and not pix.alpha:
                     pix = mu.Pixmap(pix, 1)
-            smask = smask_by_xref.get(xref, 0)
             if smask and not pix.alpha:
                 mask = mu.Pixmap(doc, smask)
                 if (mask.width, mask.height) != (pix.width, pix.height):
@@ -793,11 +930,12 @@ def _image_graphic(doc, page, info, smask_by_xref, matrix, new_id, stats,
             ctx.image_cache.pop(next(iter(ctx.image_cache)))
         ctx.image_cache[key] = encoded
     data, size = encoded
-    if ctx.total_image_bytes + size > limits.max_total_image_bytes:
+    if ctx.total_image_chars + len(data) > limits.max_total_image_chars:
         stats.warn('imageTooLarge')
         stats.bump(stats.unsupported, 'imagesOverTotalLimit')
         return None
     ctx.total_image_bytes += size
+    ctx.total_image_chars += len(data)
     graphic = {
         'id': new_id(),
         'kind': 'image',
@@ -1005,8 +1143,8 @@ def _convert_page(doc, page, number: int, name: str, page_id: str,
     limits = ctx.limits
     rect = page.rect
     width, height = float(rect.width), float(rect.height)
-    if not (0 < width <= limits.max_coordinate
-            and 0 < height <= limits.max_coordinate):
+    if not (_in_range(limits.max_coordinate, width, height)
+            and _num(width) > 0 and _num(height) > 0):
         raise UserError(f'Page {number} has an unsupported size.')
     stats = PageStats(
         source_page=number, page_id=page_id, name=name, number=str(number),
@@ -1039,13 +1177,15 @@ def _convert_page(doc, page, number: int, name: str, page_id: str,
 
     drawings = page.get_drawings(extended=True)
     traces = page.get_texttrace()
-    image_infos = page.get_image_info(xrefs=True)
-    smask_by_xref = {}
     try:
-        for entry in page.get_images(full=True):
-            smask_by_xref[entry[0]] = entry[1]
+        images = page.get_images(full=True)
     except Exception:
-        pass
+        images = []
+    smask_by_xref = {entry[0]: entry[1] for entry in images}
+    image_slots = [(i, b[0], b[1]) for i, b in enumerate(bboxlog)
+                   if b[0] in ('fill-image', 'fill-imgmask')]
+    image_infos = _image_placements(doc, page, images, mu) \
+        if image_slots else []
 
     # Build the painter-ordered event list.
     events = []  # (seqno, order, kind, payload)
@@ -1082,8 +1222,6 @@ def _convert_page(doc, page, number: int, name: str, page_id: str,
         stats.source_text_spans += 1
         events.append((trace['seqno'], 1, 'text', trace))
 
-    image_slots = [(i, b[0], b[1]) for i, b in enumerate(bboxlog)
-                   if b[0] in ('fill-image', 'fill-imgmask')]
     used_slots: set[int] = set()
     for info in image_infos:
         bbox = info.get('bbox')
@@ -1183,25 +1321,38 @@ def _convert_page(doc, page, number: int, name: str, page_id: str,
             continue
         stroke_opacity = _opacity(d.get('stroke_opacity'))
         fill_opacity = _opacity(d.get('fill_opacity'))
-        width_value = float(d.get('width') or 0) if stroke else 1.0
+        width_value = 1.0
         dash: list[float] = []
         line_cap = 0
         line_join = 0
         if stroke:
+            # The core accepts widths from 0 (a hairline) to the limit.
+            width_value = float(d.get('width') or 0)
+            if not 0 <= width_value <= limits.max_coordinate:
+                width_value = limits.max_coordinate if width_value > 0 else 0.0
+                stats.warn('strokeWidthClamped')
             dash_values, phase = _parse_dashes(d.get('dashes'))
             if dash_values:
-                if (len(dash_values) > MAX_DASH_VALUES
-                        or any(v < 0 or not math.isfinite(v)
-                               for v in dash_values)
-                        or not any(v > 0 for v in dash_values)):
+                usable = len(dash_values) <= MAX_DASH_VALUES and all(
+                    0 <= v < math.inf for v in dash_values)
+                if usable and max(dash_values) > limits.max_coordinate:
+                    # Only a path longer than the limit shows the difference.
+                    dash_values = [min(v, limits.max_coordinate)
+                                   for v in dash_values]
+                    stats.warn('dashClamped')
+                rounded = [_num(v) for v in dash_values] if usable else []
+                if not any(v > 0 for v in rounded):
                     stats.warn('dashInvalid')
                 else:
-                    dash = dash_values
+                    dash = rounded
                     if phase:
                         stats.warn('dashPhase')
             caps = d.get('lineCap') or (0,)
             line_cap = int(max(caps))
-            line_join = int(d.get('lineJoin') or 0)
+            # PyMuPDF multiplies the join style by the transform scale; any
+            # other positive value is most likely a scaled round join.
+            join = float(d.get('lineJoin') or 0)
+            line_join = int(join) if join in (0, 1, 2) else int(join > 0)
             if len(set(caps)) > 1:
                 stats.warn('mixedLineCaps')
 
@@ -1486,7 +1637,8 @@ def _build_report(mu, source, digest, source_size, page_count, selected, doc,
             'pages': len(page_stats), 'devices': 0, 'wires': 0,
         },
         'totals': {**totals, 'devices': 0, 'wires': 0,
-                   'imagePngBytes': ctx.total_image_bytes},
+                   'imagePngBytes': ctx.total_image_bytes,
+                   'imageBase64Chars': ctx.total_image_chars},
         'limits': limits.to_json(),
         'ignored': dict(sorted(ignored.items())),
         'fonts': dict(sorted(ctx.fonts.items())),

@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:open_ecad/app/controller.dart';
+import 'package:open_ecad/editor/schematic_canvas.dart';
 import 'package:open_ecad/services/ecad_services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _ControlledPersistence extends ProjectPersistence {
   Completer<String?>? saveResult;
@@ -27,7 +29,11 @@ class _ControlledPersistence extends ProjectPersistence {
   }
 
   @override
-  Future<void> saveAutosave(EcadProject project) {
+  Future<void> saveAutosave(
+    EcadProject project, {
+    int? savedRevision,
+    String? fileName,
+  }) {
     autosavedProjects.add(project);
     return autosaveResult?.future ?? Future.value();
   }
@@ -39,9 +45,7 @@ class _ControlledPersistence extends ProjectPersistence {
 }
 
 class _DelayedAssistant extends AssistantService {
-  final response = Completer<AssistantProposal>();
-  EcadProject? requestedProject;
-  String? requestedSheet;
+  final _pending = <(EcadProject, Completer<AssistantProposal>)>[];
 
   @override
   Future<AssistantProposal> proposeWithOllama(
@@ -52,25 +56,40 @@ class _DelayedAssistant extends AssistantService {
     Set<String> selectedDeviceIds = const {},
     Vec2? insertionPoint,
   }) {
-    requestedProject = project;
-    requestedSheet = sheetId;
+    final response = Completer<AssistantProposal>();
+    _pending.add((project, response));
     return response.future;
   }
 
-  void complete({AssistantAction action = AssistantAction.none}) {
+  /// Answers the oldest request that is still waiting.
+  void complete({
+    AssistantAction action = AssistantAction.none,
+    String message = 'Delayed model response',
+  }) {
+    final (project, response) = _pending.removeAt(0);
     response.complete(
       AssistantProposal(
         label: 'Delayed proposal',
-        message: 'Delayed model response',
+        message: message,
         commands:
             action == AssistantAction.none
                 ? [const RenameProject('Model name')]
                 : [],
-        baseRevision: requestedProject!.revision,
+        baseRevision: project.revision,
         action: action,
         source: AssistantSource.ollama,
       ),
     );
+  }
+}
+
+class _FilePersistence extends ProjectPersistence {
+  Completer<void>? saveGate;
+
+  @override
+  Future<String?> save(EcadProject project) async {
+    await saveGate?.future;
+    return 'Rozvaděč A.oecad';
   }
 }
 
@@ -259,6 +278,82 @@ void main() {
     });
   });
 
+  group('restoring the working copy', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    Future<void> autosave(WidgetTester tester) async {
+      await tester.pump(const Duration(milliseconds: 401));
+      await tester.pump();
+    }
+
+    Future<EditorController> restart(EditorController previous) async {
+      previous.dispose();
+      final app = EditorController(persistence: _FilePersistence());
+      addTearDown(app.dispose);
+      await app.initialize();
+      expect(app.status, 'Obnovena místní pracovní kopie');
+      return app;
+    }
+
+    testWidgets('an immediate restart after save preserves its file state', (
+      tester,
+    ) async {
+      final first = EditorController(persistence: _FilePersistence());
+      await first.initialize();
+      first.renameProject('Rozvaděč A');
+      await autosave(tester);
+      await first.saveProject();
+      final second = await restart(first);
+      expect(second.project.name, 'Rozvaděč A');
+      expect(second.dirty, isFalse);
+      expect(second.fileName, 'Rozvaděč A.oecad');
+    });
+
+    testWidgets('edits after a save restore as unsaved', (tester) async {
+      final first = EditorController(persistence: _FilePersistence());
+      await first.initialize();
+      await first.saveProject();
+      first.renameProject('Změna po uložení');
+      await autosave(tester);
+      final second = await restart(first);
+      expect(second.project.name, 'Změna po uložení');
+      expect(second.dirty, isTrue);
+      expect(second.fileName, 'Rozvaděč A.oecad');
+    });
+
+    testWidgets('a save finishing after newer edits does not cover them', (
+      tester,
+    ) async {
+      final persistence = _FilePersistence()..saveGate = Completer<void>();
+      final first = EditorController(persistence: persistence);
+      await first.initialize();
+      final saving = first.saveProject();
+      first.renameProject('Během ukládání');
+      persistence.saveGate!.complete();
+      await saving;
+      expect(first.dirty, isTrue);
+      final second = await restart(first);
+      expect(second.project.name, 'Během ukládání');
+      expect(second.dirty, isTrue);
+    });
+
+    testWidgets('a replacement does not inherit the previous file state', (
+      tester,
+    ) async {
+      final first = EditorController(persistence: _FilePersistence());
+      await first.initialize();
+      first.renameProject('Původní');
+      await first.saveProject();
+      await autosave(tester);
+      first.newProject(demo: true);
+      await autosave(tester);
+      final second = await restart(first);
+      expect(second.project.toJson(), DemoProject.create().toJson());
+      expect(second.dirty, isTrue);
+      expect(second.fileName, isNull);
+    });
+  });
+
   test(
     'manual insertion reserves designation aliases globally and shares K numbering',
     () {
@@ -336,7 +431,33 @@ void main() {
       );
     }
 
-    test('switching sheets invalidates a pending AI response', () async {
+    test(
+      'switching sheets cancels a pending AI request with a visible notice',
+      () async {
+        final assistant = _DelayedAssistant();
+        final app = EditorController(
+          persistence: _ControlledPersistence(),
+          assistant: assistant,
+        );
+        addTearDown(app.dispose);
+        await app.configureAi(const AiProviderSettings(), enabled: true);
+        final request = app.sendPrompt('Add a device');
+        app.setSheet('sheet_control');
+        expect(app.busy, isFalse);
+        expect(app.conversation.map((entry) => entry.text), [
+          'Add a device',
+          contains('zrušen přepnutím listu'),
+        ]);
+        assistant.complete(message: 'Late answer');
+        await request;
+        expect(app.activeSheetId, 'sheet_control');
+        expect(app.proposal, isNull);
+        expect(app.conversation, hasLength(2));
+        expect(app.busy, isFalse);
+      },
+    );
+
+    test('a cancelled request cannot finish a newer request', () async {
       final assistant = _DelayedAssistant();
       final app = EditorController(
         persistence: _ControlledPersistence(),
@@ -344,14 +465,43 @@ void main() {
       );
       addTearDown(app.dispose);
       await app.configureAi(const AiProviderSettings(), enabled: true);
-      final request = app.sendPrompt('Add a device');
+      final cancelled = app.sendPrompt('First request');
       app.setSheet('sheet_control');
-      assistant.complete();
-      await request;
-      expect(app.activeSheetId, 'sheet_control');
+      final current = app.sendPrompt('Second request');
+      assistant.complete(message: 'Answer for the old sheet');
+      await cancelled;
+      expect(app.busy, isTrue);
       expect(app.proposal, isNull);
-      expect(app.conversation, hasLength(1));
+      expect(app.conversation.last.text, 'Second request');
+      assistant.complete(message: 'Answer for this sheet');
+      await current;
       expect(app.busy, isFalse);
+      expect(app.proposal, isNotNull);
+      expect(
+        app.conversation.map((entry) => entry.text),
+        isNot(contains('Answer for the old sheet')),
+      );
+      expect(app.conversation.last.text, 'Answer for this sheet');
+    });
+
+    test('Escape closes a preview without discarding the proposal', () async {
+      final app = EditorController(persistence: _ControlledPersistence());
+      addTearDown(app.dispose);
+      final devices = app.sheet.devices.length;
+      await app.sendPrompt('Vlož svorku');
+      expect(app.showingProposal, isTrue);
+      app.cancelTool();
+      expect(app.showingProposal, isFalse);
+      expect(app.proposalIsCurrent, isTrue);
+      expect(app.mode, CanvasMode.select);
+      app.toggleProposalPreview();
+      expect(app.showingProposal, isTrue);
+      app.applyProposal();
+      expect(app.sheet.devices, hasLength(devices + 1));
+      await app.sendPrompt('Vlož svorku');
+      app.cancelTool();
+      app.discardProposal();
+      expect(app.proposal, isNull);
     });
 
     test(
