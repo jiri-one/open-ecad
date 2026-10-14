@@ -189,7 +189,11 @@ class ProjectExportService {
     _TextMeasure Function(String, bool, double)? measureText,
     Map<String, String> pdfImages = const {},
   }) {
-    final bounds = _bounds(sheet);
+    final devices = {for (final device in sheet.devices) device.id: device};
+    final routes = [
+      for (final wire in sheet.wires) WireRouter.path(wire, devices),
+    ];
+    final bounds = _bounds(sheet, routes);
     const drawingLeft = 65.0;
     const drawingTop = 114.0;
     const drawingWidth = 970.0;
@@ -232,7 +236,7 @@ class ProjectExportService {
           '<rect x="32" y="32" width="1036" height="716" fill="none" stroke="#6b7c91" stroke-width="1"/>',
         )
         ..writeln(
-          '<text x="52" y="57" font-size="10" fill="#64748b" letter-spacing="1.4">ELEKTRICKÉ SCHÉMA</text>',
+          '<text x="52" y="57" font-size="10" fill="#64748b" letter-spacing="1.4">${_xml(sheet.type.label.toUpperCase())}</text>',
         )
         ..writeln(
           '<text x="52" y="81" font-size="17" font-weight="600">${_xml(_clip(sheet.name, 86))}</text>',
@@ -252,9 +256,8 @@ class ProjectExportService {
       );
     }
 
-    final devices = {for (final device in sheet.devices) device.id: device};
-    for (final wire in sheet.wires) {
-      final points = _wirePoints(wire, devices);
+    for (final points in routes) {
+      if (points.length < 2) continue;
       buffer.writeln(
         '<polyline points="${points.map((point) => '${_n(point.x)},${_n(point.y)}').join(' ')}" '
         'fill="none" stroke="#26374d" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>',
@@ -439,7 +442,7 @@ class ProjectExportService {
     return result;
   }
 
-  _Bounds _bounds(Sheet sheet) {
+  _Bounds _bounds(Sheet sheet, List<List<Vec2>> routes) {
     if (sheet.devices.isEmpty) return const _Bounds(0, 0, 1, 1);
     var left = double.infinity;
     var top = double.infinity;
@@ -488,40 +491,12 @@ class ProjectExportService {
             math.max(halfHeight + 4, 26.0 + descriptionLines.length * 13),
       );
     }
-    for (final wire in sheet.wires) {
-      for (final point in wire.waypoints) {
+    for (final route in routes) {
+      for (final point in route) {
         include(point.x, point.y);
       }
     }
     return _Bounds(left, top, right - left, bottom - top);
-  }
-
-  static List<Vec2> _wirePoints(Wire wire, Map<String, Device> devices) {
-    final from = SymbolCatalog.worldPortPosition(
-      devices[wire.from.deviceId]!,
-      wire.from.portId,
-    );
-    final to = SymbolCatalog.worldPortPosition(
-      devices[wire.to.deviceId]!,
-      wire.to.portId,
-    );
-    if (wire.waypoints.isNotEmpty) {
-      final points = <Vec2>[from];
-      for (final next in [...wire.waypoints, to]) {
-        final previous = points.last;
-        if ((previous.x - next.x).abs() > .01 &&
-            (previous.y - next.y).abs() > .01) {
-          points.add(Vec2(previous.x, next.y));
-        }
-        points.add(next);
-      }
-      return points;
-    }
-    if ((from.x - to.x).abs() < .01 || (from.y - to.y).abs() < .01) {
-      return [from, to];
-    }
-    final midY = ((from.y + to.y) / 20).round() * 10.0;
-    return [from, Vec2(from.x, midY), Vec2(to.x, midY), to];
   }
 
   /// Centered glyph fragment. Port endpoints match [SymbolCatalog] exactly.
@@ -533,31 +508,65 @@ class ProjectExportService {
       '<circle cx="0" cy="-4" r="21" fill="#ffffff"/><path d="M0 17 V26 ${dcSupply ? 'M-8 -10 H8 M0 -18 V-2 M-8 6 H8' : 'M-12 -4 C-8 -14 -4 -14 0 -4 S8 6 12 -4'}"/>',
     DeviceKind.breaker =>
       '<path d="M0 -32 V-17 M0 17 V32 M0 -17 L16 10 M-7 -16 H7 M-7 17 H7 M-12 -10 H-5 V3 H-12 Z"/>',
+    DeviceKind.threePoleBreaker || DeviceKind.threePoleDisconnector =>
+      '<path d="${_switchPoles(const [-20, 0, 20], breaker: kind == DeviceKind.threePoleBreaker)}"/>'
+          '<path d="M-14 -2.5 H26" stroke-dasharray="3 3"/>',
+    DeviceKind.disconnector =>
+      '<path d="${_switchPoles(const [0], breaker: false)}"/>',
+    DeviceKind.fuse =>
+      '<rect x="-6" y="-14" width="12" height="28" fill="#ffffff"/><path d="M0 -30 V30"/>',
     DeviceKind.contactor =>
       '<path d="M0 -32 V-16 M0 16 V32 M0 -16 L16 11 M-6 -16 H6 M-6 16 H6"/><path d="M-15 -14 V15" stroke-dasharray="3 3"/>',
     DeviceKind.motor =>
       '<path d="M0 -33 V-27 M27 0 H33"/><circle cx="0" cy="0" r="27" fill="#ffffff"/><text x="0" y="3" text-anchor="middle" fill="#26374d" stroke="none" font-size="23" font-weight="600">M</text><text x="0" y="18" text-anchor="middle" fill="#26374d" stroke="none" font-size="10">3~</text>',
+    DeviceKind.transformer =>
+      '<path d="M-10 -40 V-19.5 M10 -40 V-19.5 M-10 19.5 V40 M10 19.5 V40"/><circle cx="0" cy="-9" r="14.5" fill="#ffffff" stroke="none"/><circle cx="0" cy="9" r="14.5" fill="#ffffff" stroke="none"/><circle cx="0" cy="-9" r="14.5"/><circle cx="0" cy="9" r="14.5"/>',
+    DeviceKind.currentTransformer =>
+      '<circle cx="0" cy="0" r="14.5" fill="#ffffff"/><path d="M0 -30 V30 M-20 -10 H-10.5 M-20 10 H-10.5"/>',
     DeviceKind.terminal =>
       '<path d="M0 -16 V-7 M0 7 V16"/><circle cx="0" cy="0" r="7" fill="#ffffff"/>',
     DeviceKind.earth => '<path d="M0 -18 V0 M-18 0 H18 M-12 6 H12 M-6 12 H6"/>',
     DeviceKind.contactNo =>
       '<path d="M0 -30 V-14 M0 14 V30 M0 -14 L15 10"/><circle cx="0" cy="-14" r="2" fill="#ffffff"/><circle cx="0" cy="14" r="2" fill="#ffffff"/>',
+    DeviceKind.contactNc =>
+      '<path d="M0 -30 V-14 M0 14 V30 M0 14 H14 M0 -14 L16 18"/><circle cx="0" cy="-14" r="2" fill="#ffffff"/><circle cx="0" cy="14" r="2" fill="#ffffff"/>',
+    DeviceKind.pushbuttonNo =>
+      '<path d="M0 -30 V-14 M0 14 V30 M0 -14 L15 10 M-11 -8 H-14 V4 H-11"/><path d="M-14 -2 H7.5" stroke-dasharray="3 3"/><circle cx="0" cy="-14" r="2" fill="#ffffff"/><circle cx="0" cy="14" r="2" fill="#ffffff"/>',
     DeviceKind.coil =>
       '<path d="M0 -27 V-15 M0 15 V27"/><rect x="-21" y="-15" width="42" height="30" fill="#ffffff"/>',
     DeviceKind.lamp =>
       '<path d="M0 -28 V-19 M0 19 V28"/><circle cx="0" cy="0" r="19" fill="#ffffff"/><path d="M-13 -13 L13 13 M13 -13 L-13 13"/>',
+    DeviceKind.ammeter || DeviceKind.voltmeter =>
+      '<path d="M0 -30 V-15 M0 15 V30"/><circle cx="0" cy="0" r="15" fill="#ffffff"/><text x="0" y="6.5" text-anchor="middle" fill="#26374d" stroke="none" font-size="18">${kind == DeviceKind.ammeter ? 'A' : 'V'}</text>',
   };
+
+  /// Lead ends must stay on the ±32 terminals of [SymbolCatalog] switches.
+  static String _switchPoles(List<int> poles, {required bool breaker}) => [
+    for (final x in poles)
+      'M$x -32 V-16 M$x 16 V32 M$x -16 L${x + 12} 11 '
+          '${breaker ? 'M${x - 3} 13 L${x + 3} 19 M${x - 3} 19 L${x + 3} 13' : 'M${x - 6} 16 H${x + 6}'}',
+  ].join(' ');
 
   static String _kindName(DeviceKind kind) => switch (kind) {
     DeviceKind.supply => 'Napájení',
     DeviceKind.breaker => 'Jistič',
+    DeviceKind.threePoleBreaker => 'Třípólový jistič',
+    DeviceKind.fuse => 'Pojistka',
+    DeviceKind.disconnector => 'Odpojovač',
+    DeviceKind.threePoleDisconnector => 'Třípólový odpojovač',
     DeviceKind.contactor => 'Stykač',
     DeviceKind.motor => 'Motor',
+    DeviceKind.transformer => 'Transformátor',
+    DeviceKind.currentTransformer => 'Transformátor proudu',
     DeviceKind.terminal => 'Svorka',
     DeviceKind.earth => 'Ochranné uzemnění',
     DeviceKind.contactNo => 'Spínací kontakt',
+    DeviceKind.contactNc => 'Rozpínací kontakt',
+    DeviceKind.pushbuttonNo => 'Spínací tlačítko',
     DeviceKind.coil => 'Cívka',
     DeviceKind.lamp => 'Kontrolka',
+    DeviceKind.ammeter => 'Ampérmetr',
+    DeviceKind.voltmeter => 'Voltmetr',
   };
 
   static List<String> _wrap(String text, int width) {

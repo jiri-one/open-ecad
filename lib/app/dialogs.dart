@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../editor/schematic_canvas.dart';
 import '../services/ecad_services.dart';
 import '../widgets/components.dart';
+import '../widgets/sheet_types.dart';
 import 'controller.dart';
 import 'theme.dart';
 
@@ -50,6 +51,128 @@ Future<String?> editNameDialog(
   // Text fields may stay mounted until the dialog route transition completes.
   Future<void>.delayed(const Duration(milliseconds: 400), input.dispose);
   return result;
+}
+
+class NewSheetRequest {
+  const NewSheetRequest(this.type, this.name, {this.formStarter = false});
+  final SheetType type;
+  final String name;
+  final bool formStarter;
+}
+
+Future<NewSheetRequest?> showNewSheetDialog(
+  BuildContext context, {
+  SheetType initialType = SheetType.multiLine,
+}) => showDialog<NewSheetRequest>(
+  context: context,
+  builder: (context) => _NewSheetDialog(initialType),
+);
+
+class _NewSheetDialog extends StatefulWidget {
+  const _NewSheetDialog(this.initialType);
+  final SheetType initialType;
+  @override
+  State<_NewSheetDialog> createState() => _NewSheetDialogState();
+}
+
+class _NewSheetDialogState extends State<_NewSheetDialog> {
+  late SheetType type = widget.initialType;
+  late final name = TextEditingController(text: defaultSheetName(type))
+    ..selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: defaultSheetName(type).length,
+    );
+  bool formStarter = true;
+
+  @override
+  void dispose() {
+    name.dispose();
+    super.dispose();
+  }
+
+  void selectType(SheetType value) {
+    setState(() {
+      // A name the user typed is kept; only the suggested name follows type.
+      if (name.text.trim().isEmpty || name.text == defaultSheetName(type)) {
+        name.value = TextEditingValue(
+          text: defaultSheetName(value),
+          selection: TextSelection(
+            baseOffset: 0,
+            extentOffset: defaultSheetName(value).length,
+          ),
+        );
+      }
+      type = value;
+    });
+  }
+
+  void submit() {
+    if (name.text.trim().isEmpty) return;
+    Navigator.pop(
+      context,
+      NewSheetRequest(
+        type,
+        name.text.trim(),
+        formStarter: type == SheetType.form && formStarter,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Nový list'),
+    content: SizedBox(
+      width: 420,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'TYP LISTU',
+              style: TextStyle(
+                fontSize: 10,
+                letterSpacing: 1.1,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 10),
+            SheetTypeSelector(value: type, onChanged: selectType),
+            const SizedBox(height: 14),
+            TextField(
+              controller: name,
+              autofocus: true,
+              cursorOpacityAnimates: false,
+              decoration: const InputDecoration(labelText: 'Název listu'),
+              onSubmitted: (_) => submit(),
+            ),
+            if (type == SheetType.form)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: formStarter,
+                onChanged:
+                    (value) => setState(() => formStarter = value ?? false),
+                title: const Text(
+                  'Vložit prázdnou tabulku',
+                  style: TextStyle(fontSize: 12),
+                ),
+                subtitle: const Text(
+                  'Obecné záhlaví a řádky k ručnímu vyplnění, bez údajů z projektu.',
+                  style: TextStyle(fontSize: 10),
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Zrušit'),
+      ),
+      FilledButton(onPressed: submit, child: const Text('Vytvořit list')),
+    ],
+  );
 }
 
 Future<bool> confirmReplaceProject(
@@ -219,6 +342,7 @@ Future<void> showCommandPalette(
   EditorController app, {
   required VoidCallback openProject,
   required VoidCallback focusAssistant,
+  required ValueChanged<SheetType> addSheet,
 }) async {
   final commands = <PaletteCommand>[
     PaletteCommand(
@@ -264,7 +388,23 @@ Future<void> showCommandPalette(
       shortcut: 'Ctrl Z',
     ),
     PaletteCommand('Obnovit změnu', Icons.redo, app.redo, shortcut: 'Ctrl Y'),
-    PaletteCommand('Přidat nový list', Icons.note_add_outlined, app.addSheet),
+    PaletteCommand(
+      'Přidat nový list…',
+      Icons.note_add_outlined,
+      () => addSheet(app.sheet.type),
+    ),
+    for (final type in SheetType.values) ...[
+      PaletteCommand(
+        'Nový list · ${type.label}…',
+        sheetTypeIcon(type),
+        () => addSheet(type),
+      ),
+      PaletteCommand(
+        'Typ aktuálního listu: ${type.label}',
+        sheetTypeIcon(type),
+        () => app.setSheetType(type),
+      ),
+    ],
     PaletteCommand(
       'Zkontrolovat projekt',
       Icons.fact_check_outlined,
@@ -308,28 +448,6 @@ class _CommandPalette extends StatefulWidget {
 
 class _CommandPaletteState extends State<_CommandPalette> {
   String query = '';
-  String _normalize(String value) {
-    var result = value.toLowerCase();
-    const accents = {
-      'á': 'a',
-      'č': 'c',
-      'ď': 'd',
-      'é': 'e',
-      'ě': 'e',
-      'í': 'i',
-      'ň': 'n',
-      'ó': 'o',
-      'ř': 'r',
-      'š': 's',
-      'ť': 't',
-      'ú': 'u',
-      'ů': 'u',
-      'ý': 'y',
-      'ž': 'z',
-    };
-    accents.forEach((key, value) => result = result.replaceAll(key, value));
-    return result;
-  }
 
   void run(PaletteCommand command) {
     Navigator.pop(context);
@@ -340,7 +458,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
   Widget build(BuildContext context) {
     final results =
         widget.commands
-            .where((c) => _normalize(c.title).contains(_normalize(query)))
+            .where((c) => foldForSearch(c.title).contains(foldForSearch(query)))
             .toList();
     final c = EcadColors.of(context);
     return Dialog(

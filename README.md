@@ -39,11 +39,21 @@ tohoto prototypu; pracovní plocha se ověřuje od šířky 1024 px.
 
 ## Co funguje
 
-- Vícelistový projekt, devět původních vektorových symbolů, mřížka, výběr,
-  hromadné přesouvání, otáčení, duplikace a editace vlastností.
+- Vícelistový projekt, devatenáct původních vektorových symbolů, mřížka, výběr,
+  hromadné přesouvání, otáčení, duplikace a editace vlastností. Knihovna obsahuje
+  mimo jiné pojistku, odpojovač, rozpínací kontakt, spínací tlačítko,
+  transformátor, transformátor proudu, ampérmetr, voltmetr a třípólový jistič či
+  odpojovač se samostatně připojitelnými póly 1–6. Jde o obecné značky bez nároku
+  na shodu s normami.
 - Spoje mezi skutečnými vývody; při přesunu nebo otočení sledují přístroj.
   Vodič vzniká kliknutím na první a druhý připojovací bod v režimu **Propojit**.
 - Undo/redo, pojmenování listů a projektu, kontrola struktury a nepřipojených bodů.
+- Typy listů **vícepólové schéma**, **jednopólové schéma (1P)**, **výstavba
+  rozvaděče** a **formulář**. Typ se volí při vytvoření listu, mění se ve
+  vlastnostech listu nebo v nabídce seznamu listů a ukládá se do souboru.
+  Seznam listů typ zobrazuje i vyhledává, záhlaví výkresu i exportu ho uvádí.
+  Formulář může začít prázdnou tabulkou k ručnímu vyplnění; kusovník ani
+  rozmístění přístrojů ve skříni se automaticky negenerují.
 - Otevřený verzovaný JSON formát `.oecad`, otevření/uložení, místní pracovní kopie
   a obnova po opětovném spuštění. Explicitní uložení zapisuje soubor; automatická
   kopie obsahuje poslední projekt na daném zařízení, po přibližně 400 ms klidu.
@@ -72,6 +82,8 @@ angličtiny, nikoli jazykový model. Vyzkoušet lze například:
 Přidej motorový vývod
 Vlož svorku
 Přidej jistič QF2
+Přidej třípólový jistič
+Přidej pojistku F3
 Duplikuj výběr 3×
 Přejmenuj výběr na KM2
 Smaž výběr
@@ -145,10 +157,15 @@ místně, macOS zatím nemá potvrzené sestavení.
 ## Rozsah první verze
 
 Toto je funkční výchozí editor, ne hotová náhrada EPLANu. Chybí například editor
-vlastních symbolů, databáze výrobků, vícepólové modely, vazby mezi listy, svorkovnice,
+vlastních symbolů, databáze výrobků, obecné vícepólové modely (zatím jen třípólový
+jistič a odpojovač), vazby mezi listy, svorkovnice,
 kusovníky, číslování vodičů, DXF a sémantický import QElectroTech/EPLAN. Grafický
-import z PDF je popsaný výše. Vodiče mají základní
-ortogonální trasu; překážkám se automaticky nevyhýbají. Souřadnice jsou jednotky
+import z PDF je popsaný výše. Vodiče mají ortogonální trasu, která vychází
+z vývodu směrem ven a obchází obě připojené značky; jiným přístrojům se
+automaticky nevyhýbá. Při překrytí připojených značek nemusí jít průchodu
+značkou zabránit. Trasování počítá s otáčením po 90°; jiné úhly v externě
+vytvořeném souboru nemusí dodržet směr napojení nebo obejít připojenou značku.
+Souřadnice jsou jednotky
 výkresu, zatím bez fyzikálního měřítka pro konstrukční rozměry.
 
 Kontrola ověřuje konzistenci dat a konektivitu, neposuzuje dimenzování, jištění ani
@@ -156,7 +173,7 @@ soulad elektroinstalace s normami. Obnova ukládá jeden pracovní dokument, ne 
 undo ani chat. Pracovní kopie je omezena na malé dokumenty do 2 MiB a 15 000
 grafických objektů; velké importy vyžadují ruční uložení do souboru. Používá se
 paměťový dokument a celoprojektová validace; rozsáhlé importy mohou blokovat UI.
-Formát v2 čte i starší soubory v1.
+Formát se v této rané fázi může měnit bez zachování zpětné kompatibility.
 
 ## Licence
 

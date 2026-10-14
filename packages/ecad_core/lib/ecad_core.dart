@@ -7,4 +7,6 @@ export 'src/demo.dart';
 export 'src/engine.dart';
 export 'src/graphics.dart';
 export 'src/model.dart';
+export 'src/routing.dart';
+export 'src/sheet_templates.dart';
 export 'src/validation.dart';

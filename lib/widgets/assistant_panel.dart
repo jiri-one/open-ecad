@@ -431,6 +431,7 @@ class _AssistantPanelState extends State<AssistantPanel> {
     MoveGraphics() => 'Přesunout grafiku',
     DeleteGraphics() => 'Odstranit grafiku',
     RenameSheet(:final name) => 'Přejmenovat list na $name',
+    SetSheetType(:final sheetType) => 'Změnit typ listu: ${sheetType.label}',
     RenameProject(:final name) => 'Přejmenovat projekt na $name',
   };
 }

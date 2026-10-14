@@ -5,6 +5,7 @@ import '../app/theme.dart';
 import '../editor/schematic_canvas.dart';
 import 'components.dart';
 import 'graphic_inspector.dart';
+import 'sheet_types.dart';
 
 class PropertiesPanel extends StatelessWidget {
   const PropertiesPanel({super.key, required this.controller});
@@ -50,6 +51,14 @@ class PropertiesPanel extends StatelessWidget {
           _info('Vodiče', '${controller.sheet.wires.length}'),
           _info('Grafika', '${controller.sheet.graphics.length}'),
           _info('Mřížka', '10 jednotek'),
+          const SizedBox(height: 10),
+          const Text('Typ listu', style: TextStyle(fontSize: 11)),
+          const SizedBox(height: 8),
+          SheetTypeSelector(
+            value: controller.sheet.type,
+            onChanged:
+                controller.showingProposal ? null : controller.setSheetType,
+          ),
           const SizedBox(height: 20),
           Text(
             'Shift + kliknutí rozšíří výběr. Tažením prázdnou plochou vyberete více přístrojů.',

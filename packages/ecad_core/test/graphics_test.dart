@@ -64,12 +64,13 @@ EcadProject _project(List<DrawingElement> graphics) => EcadProject(
 
 void main() {
   group('versioned native drawing format', () {
-    test('loads v1 and writes v2 with legacy canvas defaults', () {
+    test('loads v1 and writes v3 with legacy canvas defaults', () {
       final old = DemoProject.create().toJson();
       old['formatVersion'] = 1;
       for (final raw in old['pages']! as List) {
         final page = raw as Map<String, Object?>;
         for (final field in [
+          'type',
           'width',
           'height',
           'showFrame',
@@ -86,7 +87,8 @@ void main() {
       expect(engine.project.pages.first.showFrame, isTrue);
       expect(engine.project.pages.first.sourcePage, isNull);
       expect(engine.project.pages.first.graphics, isEmpty);
-      expect(engine.project.toJson()['formatVersion'], 2);
+      expect(engine.project.pages.first.type, SheetType.legacyDefault);
+      expect(engine.project.toJson()['formatVersion'], 3);
       expect(engine.project.pages.first.devices, isNotEmpty);
       expect(engine.project.pages.first.wires, isNotEmpty);
     });

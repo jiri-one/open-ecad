@@ -150,7 +150,8 @@ class PrimitiveTests(ConverterTestCase):
         project, report, out, report_path = self.convert(pdf)
 
         self.assertEqual(project['format'], 'open-ecad')
-        self.assertEqual(project['formatVersion'], 2)
+        self.assertEqual(project['formatVersion'], 3)
+        self.assertEqual(report['output']['formatVersion'], 3)
         self.assertEqual(project['revision'], 0)
         self.assertEqual(project['description'],
                          'PDF graphic import; connectivity not reconstructed')
@@ -829,6 +830,75 @@ class LimitTests(ConverterTestCase):
         for bad in ('', ' ', '0', '5', '2-1', 'a', '1,,2', '-1', '1-', '1.5'):
             with self.assertRaises(import_pdf.UserError, msg=bad):
                 import_pdf.parse_pages(bad, 4, limits)
+
+
+class SheetTypeClassifierTests(unittest.TestCase):
+    def assertTypes(self, expected, titles):
+        for title in titles:
+            self.assertEqual(import_pdf.classify_sheet_type(title), expected,
+                             title)
+
+    def test_generic_title_words(self):
+        self.assertTypes('cabinetLayout', [
+            'Výstavba rozvaděče', 'VÝSTAVBA ROZVADĚČŮ', 'Rozmístění přístrojů',
+            'Montážní deska B', 'Cabinet layout', 'Panel layout – door',
+            'Schaltschrankaufbau'])
+        self.assertTypes('singleLine', [
+            'Jednopólové schéma napájení', 'Přívod dílny - 1P',
+            'Rozvodnice – 1P', 'Zásuvkové okruhy (1P)', 'Single-line diagram',
+            'Übersicht einpolig'])
+        self.assertTypes('multiLine', [
+            'Vícepólové schéma', 'Multi-line schematic', 'Multiline',
+            'Mehrpoliger Stromlaufplan'])
+        self.assertTypes('form', [
+            'Formulář', 'Kusovník', 'Seznam svorek', 'Obsah', 'Titulní list',
+            'Bill of materials', 'Table of contents', 'Stückliste'])
+
+    def test_ambiguous_or_untyped_titles_are_not_guessed(self):
+        self.assertTypes(None, [
+            '', 'Page 4', 'Ovládání ventilátoru', 'Schéma zapojení',
+            'Jistič 1P', 'Q-1P', 'Obsahuje rezervu', 'Jednopólové a '
+            'vícepólové schéma', 'Seznam a výstavba rozvaděče',
+            'Kusovník – 1P'])
+
+
+class SheetTypeImportTests(ConverterTestCase):
+    def titled_pdf(self, titles):
+        doc = pymupdf.open()
+        for index, _ in enumerate(titles):
+            doc.new_page(width=200, height=100).insert_text(
+                (20, 50), f'Strana {index + 1}', fontsize=10)
+        doc.set_toc([[1, 'Listy', 1]] + [
+            [2, title, index + 1] for index, title in enumerate(titles)])
+        target = self.path('typed.pdf')
+        doc.save(target)
+        doc.close()
+        return target
+
+    def test_types_only_confidently_named_pages(self):
+        pdf = self.titled_pdf([
+            'Rozmístění přístrojů', 'Přívod dílny - 1P', 'Ovládání čerpadla',
+            'Seznam svorek', 'Seznam a výstavba rozvaděče'])
+        project, report, _, _ = self.convert(pdf)
+        self.assertEqual([page.get('type') for page in project['pages']],
+                         ['cabinetLayout', 'singleLine', None, 'form', None])
+        self.assertEqual([page['sheetType'] for page in report['pages']],
+                         ['cabinetLayout', 'singleLine', None, 'form', None])
+        self.assertEqual(report['sheetTypes'], {
+            'source': 'bookmarkTitle',
+            'classified': {'cabinetLayout': 1, 'form': 1, 'singleLine': 1},
+            'unclassified': 2,
+        })
+        # Graphics are unaffected by the page type.
+        self.assertEqual([len(page['graphics']) for page in project['pages']],
+                         [1] * 5)
+
+    def test_pages_without_bookmarks_stay_untyped(self):
+        pdf = self.single_page_pdf('0 0 m 10 10 l S')
+        project, report, _, _ = self.convert(pdf)
+        self.assertNotIn('type', project['pages'][0])
+        self.assertEqual(report['sheetTypes']['classified'], {})
+        self.assertEqual(report['sheetTypes']['unclassified'], 1)
 
 
 @unittest.skipUnless(shutil.which('bash'), 'bash is required')

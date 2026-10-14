@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'commands.dart';
 import 'model.dart';
+import 'routing.dart';
 import 'validation.dart';
 
 class _HistoryEntry {
@@ -123,33 +124,31 @@ class ProjectEngine {
       case MoveDevices():
         return _editSheet(project, command.sheetId, (sheet) {
           _requireDevices(sheet, command.positions.keys.toSet());
-          return sheet.copyWith(
-            devices:
-                sheet.devices
-                    .map(
-                      (device) =>
-                          command.positions.containsKey(device.id)
-                              ? device.copyWith(
-                                position: command.positions[device.id],
-                              )
-                              : device,
-                    )
-                    .toList(),
+          return _withDevices(
+            sheet,
+            sheet.devices
+                .map(
+                  (device) =>
+                      command.positions.containsKey(device.id)
+                          ? device.copyWith(
+                            position: command.positions[device.id],
+                          )
+                          : device,
+                )
+                .toList(),
           );
         });
       case UpdateDevice():
         return _editSheet(project, command.sheetId, (sheet) {
           _requireDevices(sheet, {command.device.id});
-          return sheet.copyWith(
-            devices:
-                sheet.devices
-                    .map(
-                      (device) =>
-                          device.id == command.device.id
-                              ? command.device
-                              : device,
-                    )
-                    .toList(),
+          return _withDevices(
+            sheet,
+            sheet.devices
+                .map(
+                  (device) =>
+                      device.id == command.device.id ? command.device : device,
+                )
+                .toList(),
           );
         });
       case DeleteDevices():
@@ -280,6 +279,12 @@ class ProjectEngine {
           command.sheetId,
           (sheet) => sheet.copyWith(name: command.name),
         );
+      case SetSheetType():
+        return _editSheet(
+          project,
+          command.sheetId,
+          (sheet) => sheet.copyWith(type: command.sheetType),
+        );
     }
   }
 
@@ -298,6 +303,27 @@ class ProjectEngine {
     final pages = [...project.pages];
     pages[index] = edit(pages[index]);
     return project.copyWith(pages: pages);
+  }
+
+  /// Manual bends of attached wires follow the devices in the same revision,
+  /// so the editor preview, undo and exports all see one geometry.
+  static Sheet _withDevices(Sheet sheet, List<Device> devices) {
+    final before = {for (final device in sheet.devices) device.id: device};
+    final after = {for (final device in devices) device.id: device};
+    final changed = {
+      for (final device in devices)
+        if (!identical(before[device.id], device)) device.id,
+    };
+    return sheet.copyWith(
+      devices: devices,
+      wires: [
+        for (final wire in sheet.wires)
+          changed.contains(wire.from.deviceId) ||
+                  changed.contains(wire.to.deviceId)
+              ? WireRouter.follow(wire, before, after)
+              : wire,
+      ],
+    );
   }
 
   static void _requireDevices(Sheet sheet, Set<String> ids) {

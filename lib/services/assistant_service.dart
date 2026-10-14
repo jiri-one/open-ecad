@@ -138,8 +138,9 @@ class AssistantService {
         final kind = _kindFromText(normalized);
         if (kind == null) return _unsupported(project, _help);
         final designation =
+            // B, C and D are left out: "B16" is a breaker curve and rating.
             RegExp(
-              r'\b(?:QF|KM|PE|FU|M|X|K|H|L|Q|S|A|U)\d+(?:[.:_-]\d+)*\b',
+              r'\b(?:QF|QS|KM|PE|FU|SB|TA|TV|PA|PV|M|X|K|H|L|Q|S|A|U|F|T|P)\d+(?:[.:_-]\d+)*\b',
               caseSensitive: false,
             ).firstMatch(prompt)?.group(0)?.toUpperCase();
         actions.add({
@@ -376,12 +377,31 @@ class AssistantService {
   static bool _hasOtherScope(String text) =>
       RegExp(r'\b(?:project|projekt|sheet|list)[a-z0-9]*\b').hasMatch(text);
 
+  static const _threePole =
+      r'(?:three.?(?:pole|phase)|3.?(?:pol|phase|faz)|tripol|trifaz|\b3p\b)';
+
+  // Specific phrases come first: "rozpínací kontakt" must not become the
+  // generic "kontakt", nor "třípólový jistič" the single-pole "jistič".
   static DeviceKind? _kindFromText(String text) {
     for (final entry
         in <DeviceKind, String>{
+          DeviceKind.contactNc:
+              r'normally.closed|\bnc\b|break.contact|rozpinac',
+          DeviceKind.pushbuttonNo: r'push.?button|tlacitk',
           DeviceKind.contactNo: r'normally.open|no.contact|kontakt',
           DeviceKind.contactor: r'contactor|stykac',
+          DeviceKind.threePoleBreaker:
+              '^(?=.*$_threePole)(?=.*(?:breaker|jistic))',
+          DeviceKind.threePoleDisconnector:
+              '^(?=.*$_threePole)(?=.*(?:disconnector|isolator|odpojovac|odpinac))',
           DeviceKind.breaker: r'breaker|jistic',
+          DeviceKind.disconnector: r'disconnector|isolator|odpojovac|odpinac',
+          DeviceKind.fuse: r'fuse|pojistk',
+          DeviceKind.currentTransformer:
+              r'current.transformer|transformator.proudu|proudov\w* transformator|\bct\b',
+          DeviceKind.transformer: r'transformer|transformator|trafo',
+          DeviceKind.ammeter: r'ammeter|ampermetr',
+          DeviceKind.voltmeter: r'voltmeter|voltmetr',
           DeviceKind.terminal: r'terminal|svork',
           DeviceKind.supply: r'supply|source|napajeni|privod|zdroj',
           DeviceKind.earth: r'earth|ground|uzemneni|ochranny',

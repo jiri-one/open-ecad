@@ -730,7 +730,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
         final selected =
             _drag == _DragKind.marquee ? _marqueeSelection : widget.selectedIds;
         return Semantics(
-          label: 'Elektrické schéma, ${widget.sheet.name}',
+          label: '${widget.sheet.type.label}, ${widget.sheet.name}',
           hint:
               widget.readOnly
                   ? 'Náhled pouze ke čtení. Kliknutím vyberte přístroj. '
@@ -905,38 +905,35 @@ class _Scene {
     }
   }
 
+  /// Applies the same waypoint adjustment as the committed move, so the
+  /// preview cannot differ from the document after the drag ends.
   List<Offset> route(Wire wire, Map<String, Vec2> positions) {
     final from = devices[wire.from.deviceId];
     final to = devices[wire.to.deviceId];
     if (from == null || to == null) return [];
-    final start = _portPosition(from, wire.from.portId, positions);
-    final end = _portPosition(to, wire.to.portId, positions);
-    return _orthogonalRoute(start, end, wire.waypoints.map(_offset).toList());
+    final before = {from.id: from, to.id: to};
+    final after = {
+      for (final device in [from, to])
+        device.id:
+            positions.containsKey(device.id)
+                ? device.copyWith(position: positions[device.id])
+                : device,
+    };
+    return WireRouter.path(
+      WireRouter.follow(wire, before, after),
+      after,
+    ).map(_offset).toList();
   }
-}
 
-List<Offset> _orthogonalRoute(
-  Offset start,
-  Offset end, [
-  List<Offset> waypoints = const [],
-]) {
-  if (waypoints.isNotEmpty) {
-    final result = <Offset>[start];
-    for (final next in [...waypoints, end]) {
-      final previous = result.last;
-      if ((previous.dx - next.dx).abs() > 0.01 &&
-          (previous.dy - next.dy).abs() > 0.01) {
-        result.add(Offset(previous.dx, next.dy));
-      }
-      result.add(next);
-    }
-    return result;
+  WireTerminal? terminal(TerminalRef reference, Map<String, Vec2> positions) {
+    final device = devices[reference.deviceId];
+    if (device == null) return null;
+    final preview = positions[device.id];
+    return WireRouter.terminal(
+      preview == null ? device : device.copyWith(position: preview),
+      reference.portId,
+    );
   }
-  if ((start.dx - end.dx).abs() < 0.01 || (start.dy - end.dy).abs() < 0.01) {
-    return [start, end];
-  }
-  final middle = ((start.dy + end.dy) / 20).round() * 10.0;
-  return [start, Offset(start.dx, middle), Offset(end.dx, middle), end];
 }
 
 extension on double {
@@ -1096,17 +1093,16 @@ class _SchematicPainter extends CustomPainter {
     }
 
     if (wireStart != null && pointerWorld != null) {
-      final device = scene.devices[wireStart!.deviceId];
-      if (device != null) {
-        final from = _portPosition(device, wireStart!.portId, previewPositions);
-        var to = pointerWorld!;
-        if (hoverPort != null) {
-          final target = scene.devices[hoverPort!.deviceId];
-          if (target != null) {
-            to = _portPosition(target, hoverPort!.portId, previewPositions);
-          }
-        }
-        final path = _pathFromPoints(_orthogonalRoute(from, to));
+      final from = scene.terminal(wireStart!, previewPositions);
+      if (from != null) {
+        final to =
+            (hoverPort == null
+                ? null
+                : scene.terminal(hoverPort!, previewPositions)) ??
+            WireTerminal(Vec2(pointerWorld!.dx, pointerWorld!.dy));
+        final path = _pathFromPoints(
+          WireRouter.route(from, to).map(_offset).toList(),
+        );
         _drawDashedPath(
           canvas,
           path,
@@ -1265,7 +1261,7 @@ class _SchematicPainter extends CustomPainter {
     );
     _label(
       canvas,
-      'ELEKTRICKÉ SCHÉMA',
+      scene.sheet.type.label.toUpperCase(),
       const Offset(62, 52),
       size: 8,
       letterSpacing: 1.6,
@@ -1282,7 +1278,7 @@ class _SchematicPainter extends CustomPainter {
     );
     _label(
       canvas,
-      '${scene.sheet.number}  /  SCHÉMA',
+      'LIST  ${scene.sheet.number}',
       const Offset(837, 57),
       size: 8,
       letterSpacing: 0.9,
@@ -1747,13 +1743,23 @@ class SymbolPreview extends StatelessWidget {
 String _deviceLabel(DeviceKind kind) => switch (kind) {
   DeviceKind.supply => 'Napájení',
   DeviceKind.breaker => 'Jistič',
+  DeviceKind.threePoleBreaker => 'Třípólový jistič',
+  DeviceKind.fuse => 'Pojistka',
+  DeviceKind.disconnector => 'Odpojovač',
+  DeviceKind.threePoleDisconnector => 'Třípólový odpojovač',
   DeviceKind.contactor => 'Stykač',
   DeviceKind.motor => 'Motor',
+  DeviceKind.transformer => 'Transformátor',
+  DeviceKind.currentTransformer => 'Transformátor proudu',
   DeviceKind.terminal => 'Svorka',
   DeviceKind.earth => 'Ochranné uzemnění',
   DeviceKind.contactNo => 'Spínací kontakt',
+  DeviceKind.contactNc => 'Rozpínací kontakt',
+  DeviceKind.pushbuttonNo => 'Spínací tlačítko',
   DeviceKind.coil => 'Cívka relé',
   DeviceKind.lamp => 'Kontrolka',
+  DeviceKind.ammeter => 'Ampérmetr',
+  DeviceKind.voltmeter => 'Voltmetr',
 };
 
 class _SymbolPreviewPainter extends CustomPainter {
@@ -1822,6 +1828,43 @@ void _paintSymbol(
     weight: FontWeight.w500,
   );
 
+  // Same anchoring as SVG text-anchor="middle" with y on the baseline, so
+  // exports place the glyph where the canvas shows it.
+  void centeredText(String text, double size, double baseline) {
+    final painter = _TextLayouts.get(text, ink, size, FontWeight.w500, 0);
+    painter.paint(
+      canvas,
+      Offset(
+        -painter.width / 2,
+        baseline -
+            painter.computeDistanceToActualBaseline(TextBaseline.alphabetic),
+      ),
+    );
+  }
+
+  void dashed(Offset from, Offset to) => _drawDashedPath(
+    canvas,
+    Path()
+      ..moveTo(from.dx, from.dy)
+      ..lineTo(to.dx, to.dy),
+    stroke,
+    dashLength: 3,
+    gapLength: 3,
+  );
+
+  void switchPole(Offset input, Offset output, {required bool breaker}) {
+    final x = input.dx;
+    line(input, Offset(x, -16));
+    line(Offset(x, 16), output);
+    line(Offset(x, -16), Offset(x + 12, 11));
+    if (breaker) {
+      line(Offset(x - 3, 13), Offset(x + 3, 19));
+      line(Offset(x - 3, 19), Offset(x + 3, 13));
+    } else {
+      line(Offset(x - 6, 16), Offset(x + 6, 16));
+    }
+  }
+
   switch (kind) {
     case DeviceKind.supply:
       line(const Offset(0, 17), port('out'));
@@ -1847,6 +1890,26 @@ void _paintSymbol(
       line(const Offset(-7, -16), const Offset(7, -16));
       line(const Offset(-7, 17), const Offset(7, 17));
       canvas.drawRect(const Rect.fromLTRB(-12, -10, -5, 3), stroke);
+    case DeviceKind.threePoleBreaker || DeviceKind.threePoleDisconnector:
+      for (final (input, output) in const [
+        ('1', '2'),
+        ('3', '4'),
+        ('5', '6'),
+      ]) {
+        switchPole(
+          port(input),
+          port(output),
+          breaker: kind == DeviceKind.threePoleBreaker,
+        );
+      }
+      dashed(Offset(port('1').dx + 6, -2.5), Offset(port('5').dx + 6, -2.5));
+    case DeviceKind.disconnector:
+      switchPole(port('in'), port('out'), breaker: false);
+    case DeviceKind.fuse:
+      const body = Rect.fromLTRB(-6, -14, 6, 14);
+      canvas.drawRect(body, fill);
+      canvas.drawRect(body, stroke);
+      line(port('in'), port('out'));
     case DeviceKind.contactor:
       const top = Offset(0, -16);
       const bottom = Offset(0, 16);
@@ -1872,6 +1935,28 @@ void _paintSymbol(
       line(top, const Offset(15, 10));
       circle(2, top);
       circle(2, bottom);
+    case DeviceKind.contactNc:
+      const top = Offset(0, -14);
+      const bottom = Offset(0, 14);
+      line(port('in'), top);
+      line(bottom, port('out'));
+      line(bottom, const Offset(14, 14));
+      // A closed blade crosses the end of the fixed contact.
+      line(top, const Offset(16, 18));
+      circle(2, top);
+      circle(2, bottom);
+    case DeviceKind.pushbuttonNo:
+      const top = Offset(0, -14);
+      const bottom = Offset(0, 14);
+      line(port('in'), top);
+      line(bottom, port('out'));
+      line(top, const Offset(15, 10));
+      line(const Offset(-11, -8), const Offset(-14, -8));
+      line(const Offset(-14, -8), const Offset(-14, 4));
+      line(const Offset(-14, 4), const Offset(-11, 4));
+      dashed(const Offset(-14, -2), const Offset(7.5, -2));
+      circle(2, top);
+      circle(2, bottom);
     case DeviceKind.motor:
       line(port('in'), const Offset(0, -27));
       line(const Offset(27, 0), port('pe'));
@@ -1880,6 +1965,25 @@ void _paintSymbol(
         symbolText('M', 23, const Offset(-10, -22));
         symbolText('3~', 10, const Offset(-6, 6));
       }
+    case DeviceKind.transformer:
+      // Leads end on the circles: 10² + 10.5² = 14.5².
+      line(port('1u1'), const Offset(-10, -19.5));
+      line(port('1u2'), const Offset(10, -19.5));
+      line(const Offset(-10, 19.5), port('2u1'));
+      line(const Offset(10, 19.5), port('2u2'));
+      // Fill both windings first so both outlines stay visible in the overlap.
+      for (final center in const [Offset(0, -9), Offset(0, 9)]) {
+        canvas.drawCircle(center, 14.5, fill);
+      }
+      for (final center in const [Offset(0, -9), Offset(0, 9)]) {
+        canvas.drawCircle(center, 14.5, stroke);
+      }
+    case DeviceKind.currentTransformer:
+      circle(14.5);
+      // The primary conductor stays visible through the core.
+      line(port('p1'), port('p2'));
+      line(port('s1'), const Offset(-10.5, -10));
+      line(port('s2'), const Offset(-10.5, 10));
     case DeviceKind.terminal:
       line(port('in'), const Offset(0, -7));
       line(const Offset(0, 7), port('out'));
@@ -1901,5 +2005,12 @@ void _paintSymbol(
       circle(19);
       line(const Offset(-13, -13), const Offset(13, 13));
       line(const Offset(13, -13), const Offset(-13, 13));
+    case DeviceKind.ammeter || DeviceKind.voltmeter:
+      line(port('in'), const Offset(0, -15));
+      line(const Offset(0, 15), port('out'));
+      circle(15);
+      if (showText) {
+        centeredText(kind == DeviceKind.ammeter ? 'A' : 'V', 18, 6.5);
+      }
   }
 }

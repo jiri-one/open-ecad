@@ -131,6 +131,9 @@ sealed class EcadCommand {
       case 'renameSheet':
         fields({'sheetId', 'name'});
         return RenameSheet(sheetId(), jsonString(map, 'name', max: 200));
+      case 'setSheetType':
+        fields({'sheetId', 'sheetType'});
+        return SetSheetType(sheetId(), jsonSheetType(map, 'sheetType'));
       case 'renameProject':
         fields({'name'});
         return RenameProject(jsonString(map, 'name', max: 200));
@@ -299,6 +302,18 @@ class RenameSheet extends EcadCommand {
     'type': 'renameSheet',
     'sheetId': sheetId,
     'name': name,
+  };
+}
+
+class SetSheetType extends EcadCommand {
+  const SetSheetType(this.sheetId, this.sheetType);
+  final String sheetId;
+  final SheetType sheetType;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'setSheetType',
+    'sheetId': sheetId,
+    'sheetType': sheetType.name,
   };
 }
 

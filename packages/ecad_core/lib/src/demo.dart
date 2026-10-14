@@ -16,6 +16,7 @@ abstract final class DemoProject {
         id: 'sheet_power',
         name: 'Napájení motoru',
         number: '01',
+        type: SheetType.singleLine,
         devices: const [
           Device(
             id: 'dev_supply',

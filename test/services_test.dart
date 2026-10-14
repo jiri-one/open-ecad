@@ -550,7 +550,7 @@ void main() {
     test('round-trips complete, versioned project documents', () {
       final persistence = ProjectPersistence();
       final encoded = persistence.encode(project);
-      expect(jsonDecode(encoded)['formatVersion'], 2);
+      expect(jsonDecode(encoded)['formatVersion'], 3);
       expect(persistence.decode(encoded).toJson(), project.toJson());
       final invalid = project.toJson()..['formatVersion'] = 900;
       expect(

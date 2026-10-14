@@ -3,10 +3,11 @@
 """Offline PDF -> Open ECAD graphics converter.
 
 Converts the visible vector paths, text and raster images of selected PDF pages
-into native Open ECAD (format version 2) page graphics. The import is purely
+into native Open ECAD (format version 3) page graphics. The import is purely
 graphical: no devices or wires are created and electrical connectivity is NOT
-reconstructed. Nothing is executed, fetched or uploaded; PDF JavaScript, links
-and bookmarks are only counted, never evaluated.
+reconstructed. Nothing is executed, fetched or uploaded; PDF JavaScript and
+links are counted, never evaluated. Bookmark titles supply page names and
+optional sheet-type hints.
 
 This optional converter depends on PyMuPDF (AGPL-3.0), which is installed
 separately; see scripts/import_pdf_requirements.txt.
@@ -24,12 +25,13 @@ import re
 import stat
 import sys
 import tempfile
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
 PINNED_PYMUPDF = '1.26.7'
 TOOL_VERSION = 1
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 DESCRIPTION = 'PDF graphic import; connectivity not reconstructed'
 MAX_DASH_VALUES = 64
 MAX_IMAGE_DIMENSION = 16384
@@ -344,6 +346,7 @@ class PageStats:
     number: str
     width: float
     height: float
+    sheet_type: str | None = None
     rotation: int = 0
     paths: int = 0
     texts: int = 0
@@ -373,6 +376,7 @@ class PageStats:
             'pageId': self.page_id,
             'name': self.name,
             'number': self.number,
+            'sheetType': self.sheet_type,
             'width': _num(self.width),
             'height': _num(self.height),
             'rotation': self.rotation,
@@ -945,6 +949,41 @@ def _page_names(doc) -> tuple[dict[int, str], int]:
 
 
 # --------------------------------------------------------------------------
+# Sheet type from the page title
+# --------------------------------------------------------------------------
+
+# Common Czech, English and German page-type words, matched on titles folded
+# to lowercase ASCII. A bare "1P" is a device rating, so only a separated
+# trailing "- 1P" or "(1P)" counts as the single-line title convention.
+_SHEET_TYPE_PATTERNS = {
+    'cabinetLayout': re.compile(
+        r'\b(?:vystavba rozvadec\w*|rozmisteni pristroju|montazni desk\w*'
+        r'|(?:cabinet|panel|enclosure) layout|mounting plate'
+        r'|schaltschrankaufbau|montageplatte)\b'),
+    'singleLine': re.compile(
+        r'\b(?:jednopolov\w*|single[ -]line|one[ -]line diagram|einpolig\w*)\b'
+        r'|\s[-\u2013\u2014]\s*1p$|\(1p\)$'),
+    'multiLine': re.compile(
+        r'\b(?:vicepolov\w*|multi[ -]?line|mehrpolig\w*)\b'),
+    'form': re.compile(
+        r'\b(?:formular\w*|kusovnik\w*|seznam\w*|obsah|titulni (?:list|strana)'
+        r'|rozpisk\w*|table of contents|bill of materials|parts list'
+        r'|cable list|terminal (?:list|diagram)|title page|cover sheet'
+        r'|stuckliste|inhaltsverzeichnis|deckblatt)\b'),
+}
+
+
+def classify_sheet_type(title: str) -> str | None:
+    """Ambiguous or untyped titles keep the editor default, not a guess."""
+    decomposed = unicodedata.normalize('NFKD', title.casefold())
+    folded = ' '.join(''.join(
+        c for c in decomposed if not unicodedata.combining(c)).split())
+    matches = [kind for kind, pattern in _SHEET_TYPE_PATTERNS.items()
+               if pattern.search(folded)]
+    return matches[0] if len(matches) == 1 else None
+
+
+# --------------------------------------------------------------------------
 # Page conversion
 # --------------------------------------------------------------------------
 
@@ -960,8 +999,8 @@ def _page_matrix(page) -> _Matrix:
 
 
 def _convert_page(doc, page, number: int, name: str, page_id: str,
-                  ctx: _Context, out: _HashingWriter, first_page: bool
-                  ) -> PageStats:
+                  ctx: _Context, out: _HashingWriter, first_page: bool,
+                  sheet_type: str | None = None) -> PageStats:
     mu = ctx.mu
     limits = ctx.limits
     rect = page.rect
@@ -971,7 +1010,8 @@ def _convert_page(doc, page, number: int, name: str, page_id: str,
         raise UserError(f'Page {number} has an unsupported size.')
     stats = PageStats(
         source_page=number, page_id=page_id, name=name, number=str(number),
-        width=width, height=height, rotation=int(page.rotation))
+        width=width, height=height, sheet_type=sheet_type,
+        rotation=int(page.rotation))
     matrix = _page_matrix(page)
     if page.rotation:
         stats.warn('pageRotation')
@@ -1085,11 +1125,13 @@ def _convert_page(doc, page, number: int, name: str, page_id: str,
     clipped_objects = 0
 
     out.write(('' if first_page else ',') + '{')
-    head = {
-        'id': page_id, 'name': name, 'number': str(number),
+    head = {'id': page_id, 'name': name, 'number': str(number)}
+    if sheet_type:
+        head['type'] = sheet_type
+    head.update({
         'width': _num(width), 'height': _num(height), 'showFrame': False,
         'sourcePage': number,
-    }
+    })
     out.write(json.dumps(head, separators=(',', ':'), ensure_ascii=True)[1:-1])
     out.write(',"devices":[],"wires":[],"graphics":[')
     first_graphic = True
@@ -1306,13 +1348,13 @@ def _convert_document(mu, doc, source, output, report_target, pages_spec,
         for position, number in enumerate(selected):
             page = doc[number - 1]
             fallback = f'Page {number}'
-            name = _clean_label(names.get(number, ''), limits.max_sheet_name) \
-                or fallback
+            title = _clean_label(names.get(number, ''), limits.max_sheet_name)
+            name = title or fallback
             page_id = f'page_{number:03d}'
             try:
                 stats = _convert_page(
                     doc, page, number, name, page_id, ctx, writer,
-                    position == 0)
+                    position == 0, classify_sheet_type(title))
             except UserError:
                 raise
             except Exception as error:
@@ -1391,6 +1433,10 @@ def _build_report(mu, source, digest, source_size, page_count, selected, doc,
             entry['count'] += count
             if len(entry['pages']) < 50:
                 entry['pages'].append(stats.source_page)
+    typed: dict[str, int] = {}
+    for stats in page_stats:
+        if stats.sheet_type:
+            typed[stats.sheet_type] = typed.get(stats.sheet_type, 0) + 1
     used_names = sum(1 for s in page_stats if s.source_page in names)
     ignored.setdefault('linkAnnotations', 0)
     ignored.setdefault('javaScriptActions', 0)
@@ -1414,9 +1460,16 @@ def _build_report(mu, source, digest, source_size, page_count, selected, doc,
             'editable drawing graphics only.',
             'No devices or wires were created; electrical connectivity was '
             'not reconstructed and must not be assumed.',
-            'PDF JavaScript, links and bookmark trees were not executed, '
-            'followed or imported; they are only counted.',
+            'PDF JavaScript and links were counted, never executed or '
+            'followed. Bookmark titles supplied page names.',
+            'Sheet types were inferred only from generic words in bookmark '
+            'page titles; untyped pages use the editor default.',
         ],
+        'sheetTypes': {
+            'source': 'bookmarkTitle',
+            'classified': dict(sorted(typed.items())),
+            'unclassified': len(page_stats) - sum(typed.values()),
+        },
         'source': {
             'fileName': source.name,
             'sha256': digest,

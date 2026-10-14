@@ -41,6 +41,17 @@ class SymbolDefinition {
 /// Original, deliberately small symbol vocabulary for an illustrative editor.
 /// These are generic symbols, without a claim of standards certification.
 abstract final class SymbolCatalog {
+  // Independent pole pairs on the 10-unit grid, so each pole can be wired
+  // straight to single-pole symbols placed beside it.
+  static const _threePolePorts = <PortDefinition>[
+    PortDefinition(id: '1', label: '1', position: Vec2(-20, -32)),
+    PortDefinition(id: '2', label: '2', position: Vec2(-20, 32)),
+    PortDefinition(id: '3', label: '3', position: Vec2(0, -32)),
+    PortDefinition(id: '4', label: '4', position: Vec2(0, 32)),
+    PortDefinition(id: '5', label: '5', position: Vec2(20, -32)),
+    PortDefinition(id: '6', label: '6', position: Vec2(20, 32)),
+  ];
+
   static const definitions = <SymbolDefinition>[
     SymbolDefinition(
       kind: DeviceKind.supply,
@@ -62,6 +73,44 @@ abstract final class SymbolCatalog {
       ],
     ),
     SymbolDefinition(
+      kind: DeviceKind.threePoleBreaker,
+      label: 'Třípólový jistič',
+      prefix: 'Q',
+      width: 72,
+      height: 64,
+      ports: _threePolePorts,
+    ),
+    SymbolDefinition(
+      kind: DeviceKind.fuse,
+      label: 'Pojistka',
+      prefix: 'F',
+      width: 28,
+      height: 60,
+      ports: [
+        PortDefinition(id: 'in', label: '1', position: Vec2(0, -30)),
+        PortDefinition(id: 'out', label: '2', position: Vec2(0, 30)),
+      ],
+    ),
+    SymbolDefinition(
+      kind: DeviceKind.disconnector,
+      label: 'Odpojovač',
+      prefix: 'Q',
+      width: 40,
+      height: 64,
+      ports: [
+        PortDefinition(id: 'in', label: '1', position: Vec2(0, -32)),
+        PortDefinition(id: 'out', label: '2', position: Vec2(0, 32)),
+      ],
+    ),
+    SymbolDefinition(
+      kind: DeviceKind.threePoleDisconnector,
+      label: 'Třípólový odpojovač',
+      prefix: 'Q',
+      width: 72,
+      height: 64,
+      ports: _threePolePorts,
+    ),
+    SymbolDefinition(
       kind: DeviceKind.contactor,
       label: 'Stykač',
       prefix: 'K',
@@ -81,6 +130,33 @@ abstract final class SymbolCatalog {
       ports: [
         PortDefinition(id: 'in', label: 'U / V / W', position: Vec2(0, -33)),
         PortDefinition(id: 'pe', label: 'PE', position: Vec2(33, 0)),
+      ],
+    ),
+    SymbolDefinition(
+      kind: DeviceKind.transformer,
+      label: 'Transformátor',
+      prefix: 'T',
+      width: 40,
+      height: 80,
+      ports: [
+        PortDefinition(id: '1u1', label: '1U1', position: Vec2(-10, -40)),
+        PortDefinition(id: '1u2', label: '1U2', position: Vec2(10, -40)),
+        PortDefinition(id: '2u1', label: '2U1', position: Vec2(-10, 40)),
+        PortDefinition(id: '2u2', label: '2U2', position: Vec2(10, 40)),
+      ],
+    ),
+    SymbolDefinition(
+      kind: DeviceKind.currentTransformer,
+      label: 'Transformátor proudu',
+      prefix: 'T',
+      width: 40,
+      height: 60,
+      ports: [
+        PortDefinition(id: 'p1', label: 'P1', position: Vec2(0, -30)),
+        PortDefinition(id: 'p2', label: 'P2', position: Vec2(0, 30)),
+        // Secondary leads face left, away from the designation text.
+        PortDefinition(id: 's1', label: 'S1', position: Vec2(-20, -10)),
+        PortDefinition(id: 's2', label: 'S2', position: Vec2(-20, 10)),
       ],
     ),
     SymbolDefinition(
@@ -114,6 +190,28 @@ abstract final class SymbolCatalog {
       ],
     ),
     SymbolDefinition(
+      kind: DeviceKind.contactNc,
+      label: 'Rozpínací kontakt',
+      prefix: 'S',
+      width: 42,
+      height: 60,
+      ports: [
+        PortDefinition(id: 'in', label: '11', position: Vec2(0, -30)),
+        PortDefinition(id: 'out', label: '12', position: Vec2(0, 30)),
+      ],
+    ),
+    SymbolDefinition(
+      kind: DeviceKind.pushbuttonNo,
+      label: 'Spínací tlačítko',
+      prefix: 'S',
+      width: 42,
+      height: 60,
+      ports: [
+        PortDefinition(id: 'in', label: '13', position: Vec2(0, -30)),
+        PortDefinition(id: 'out', label: '14', position: Vec2(0, 30)),
+      ],
+    ),
+    SymbolDefinition(
       kind: DeviceKind.coil,
       label: 'Cívka relé',
       prefix: 'K',
@@ -133,6 +231,28 @@ abstract final class SymbolCatalog {
       ports: [
         PortDefinition(id: 'in', label: 'X1', position: Vec2(0, -28)),
         PortDefinition(id: 'out', label: 'X2', position: Vec2(0, 28)),
+      ],
+    ),
+    SymbolDefinition(
+      kind: DeviceKind.ammeter,
+      label: 'Ampérmetr',
+      prefix: 'P',
+      width: 40,
+      height: 60,
+      ports: [
+        PortDefinition(id: 'in', label: '1', position: Vec2(0, -30)),
+        PortDefinition(id: 'out', label: '2', position: Vec2(0, 30)),
+      ],
+    ),
+    SymbolDefinition(
+      kind: DeviceKind.voltmeter,
+      label: 'Voltmetr',
+      prefix: 'P',
+      width: 40,
+      height: 60,
+      ports: [
+        PortDefinition(id: 'in', label: '1', position: Vec2(0, -30)),
+        PortDefinition(id: 'out', label: '2', position: Vec2(0, 30)),
       ],
     ),
   ];

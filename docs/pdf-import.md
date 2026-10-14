@@ -2,7 +2,7 @@
 
 První verze importu převádí PDF na editovatelnou **grafiku**: samostatné vektorové
 cesty, texty a vložené obrázky. Každá stránka vytvoří list se svými rozměry.
-Výsledkem je běžný přenositelný `.oecad` ve formátu v2, nikoli odkaz na původní
+Výsledkem je běžný přenositelný `.oecad` ve formátu v3, nikoli odkaz na původní
 PDF nebo celostránkový snímek. Soubor lze otevřít i ve webové aplikaci.
 
 Import zatím neobnovuje přístroje, vývody ani elektrické spoje. Nakreslená čára
@@ -65,6 +65,11 @@ identifikaci zdroje SHA-256 a upozornění na nepřevedené vlastnosti.
   záruku pixelově totožného výstupu.
 - Odkazy a záložky PDF nejsou elektrické vazby. Dokument může obsahovat informace
   užitečné pro další rekonstrukci, ale tento import z nich nevytváří netlist.
+- Typ listu se odhaduje jen z názvu stránky ve stromu záložek podle obecných slov,
+  například „výstavba rozvaděče“, „jednopólové“, koncové „- 1P“, „kusovník“
+  nebo „seznam“. Název bez takového slova nebo se slovy více typů zůstane bez
+  odhadu a list dostane výchozí typ vícepólové schéma. Zpráva o importu uvádí
+  počet odhadnutých listů; typ lze kdykoli změnit ve vlastnostech listu.
 - Obecné PDF s maskami, složitým ořezáváním nebo jinými nepodporovanými prvky
   vyžaduje kontrolu zprávy a vizuální srovnání. Naskenované PDF zůstane obrázkem;
   tento převodník neobsahuje OCR ani rozpoznávání symbolů.
@@ -75,8 +80,9 @@ identifikaci zdroje SHA-256 a upozornění na nepřevedené vlastnosti.
   a 15 000 grafických objektů. Větší projekty **ukládejte ručně do souboru**;
   aplikace tento stav ukazuje v liště. Explicitní uložení zachovává všechny listy.
 
-Formát v2 nadále čte starší soubory v1. Uložením se zapisuje v2, které starší
-vydání aplikace nepřečte. Schéma je popsáno v [dokumentaci jádra](../packages/ecad_core/README.md).
+Aplikace čte soubory formátu v1 až v3. Převodník i uložení zapisují v3, které starší
+vydání aplikace odmítnou jako nepodporovaný formát. Schéma je popsáno v
+[dokumentaci jádra](../packages/ecad_core/README.md).
 
 Další etapy zahrnují vlastní symboly, vícepólové přístroje, svorkovnice, kabely,
 rozpoznávání sítí a vazby mezi listy. Uživatelské vstupní dokumenty ani jejich

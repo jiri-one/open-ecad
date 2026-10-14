@@ -4,15 +4,18 @@ import '../app/controller.dart';
 import '../app/theme.dart';
 import '../editor/schematic_canvas.dart';
 import 'components.dart';
+import 'sheet_types.dart';
 
 class ProjectPanel extends StatefulWidget {
   const ProjectPanel({
     super.key,
     required this.controller,
     required this.onRenameSheet,
+    required this.onAddSheet,
   });
   final EditorController controller;
   final VoidCallback onRenameSheet;
+  final VoidCallback onAddSheet;
   @override
   State<ProjectPanel> createState() => _ProjectPanelState();
 }
@@ -89,11 +92,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
     final count = app.project.pages.length;
     final visibleSheets =
         app.project.pages
-            .where(
-              (sheet) => '${sheet.number} ${sheet.name}'.toLowerCase().contains(
-                sheetSearch.toLowerCase(),
-              ),
-            )
+            .where((sheet) => sheetMatchesSearch(sheet, sheetSearch))
             .toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -107,7 +106,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
           trailing: EcadIconButton(
             icon: Icons.add,
             label: 'Přidat list',
-            onPressed: app.addSheet,
+            onPressed: widget.onAddSheet,
             size: 24,
             iconSize: 16,
           ),
@@ -119,12 +118,17 @@ class _ProjectPanelState extends State<ProjectPanel> {
             onChanged: (value) => setState(() => sheetSearch = value),
             style: const TextStyle(fontSize: 11),
             decoration: const InputDecoration(
-              hintText: 'Najít list…',
+              hintText: 'Najít list nebo typ…',
               prefixIcon: Icon(Icons.search, size: 17),
               isDense: true,
             ),
           ),
         ),
+        if (visibleSheets.isEmpty)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
+            child: Text('Žádný odpovídající list.'),
+          ),
         Expanded(
           child: ListView.builder(
             key: const PageStorageKey('project-sheets'),
@@ -133,7 +137,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
             itemBuilder: (context, index) {
               final sheet = visibleSheets[index];
               final active = app.activeSheetId == sheet.id;
-              return Semantics(
+              final row = Semantics(
                 selected: active,
                 button: true,
                 child: InkWell(
@@ -144,7 +148,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
                     margin: const EdgeInsets.only(bottom: 4),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 9,
-                      vertical: 10,
+                      vertical: 7,
                     ),
                     decoration: BoxDecoration(
                       color: active ? c.accent : c.panel,
@@ -153,7 +157,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
                     child: Row(
                       children: [
                         Icon(
-                          Icons.description_outlined,
+                          sheetTypeIcon(sheet.type),
                           size: 16,
                           color: active ? c.onAccent : c.foreground,
                         ),
@@ -167,21 +171,54 @@ class _ProjectPanelState extends State<ProjectPanel> {
                         ),
                         const SizedBox(width: 9),
                         Expanded(
-                          child: Text(
-                            sheet.name,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight:
-                                  active ? FontWeight.w600 : FontWeight.w400,
-                              color: active ? c.onAccent : c.foreground,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                sheet.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight:
+                                      active
+                                          ? FontWeight.w600
+                                          : FontWeight.w400,
+                                  color: active ? c.onAccent : c.foreground,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                sheet.type.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: active ? c.onAccent : c.muted,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
+                        if (active) const SizedBox(width: 22),
                       ],
                     ),
                   ),
                 ),
+              );
+              if (!active) return row;
+              // A sibling, not a child: the row's double-tap recognizer would
+              // otherwise delay every tap on the menu button.
+              return Stack(
+                children: [
+                  row,
+                  Positioned(
+                    right: 4,
+                    top: 0,
+                    bottom: 4,
+                    child: Center(child: _sheetMenu(app, c)),
+                  ),
+                ],
               );
             },
           ),
@@ -189,6 +226,36 @@ class _ProjectPanelState extends State<ProjectPanel> {
       ],
     );
   }
+
+  Widget _sheetMenu(EditorController app, EcadColors c) =>
+      PopupMenuButton<String>(
+        tooltip: 'Vlastnosti listu',
+        onSelected: (value) {
+          if (value == 'rename') {
+            widget.onRenameSheet();
+          } else {
+            app.setSheetType(SheetType.values.byName(value));
+          }
+        },
+        itemBuilder:
+            (_) => [
+              const PopupMenuItem(
+                value: 'rename',
+                child: Text('Přejmenovat list…'),
+              ),
+              const PopupMenuDivider(),
+              for (final type in SheetType.values)
+                CheckedPopupMenuItem(
+                  value: type.name,
+                  checked: app.sheet.type == type,
+                  child: Text(type.label),
+                ),
+            ],
+        child: Padding(
+          padding: const EdgeInsets.all(3),
+          child: Icon(Icons.more_vert, size: 16, color: c.onAccent),
+        ),
+      );
 
   Widget _buildLibrary(EditorController app, EcadColors c) {
     final kinds =
@@ -289,7 +356,11 @@ class _ProjectPanelState extends State<ProjectPanel> {
                                           ),
                                         ),
                                         Text(
-                                          '${definition.prefix} · ${definition.ports.length} ${definition.ports.length == 1 ? 'připojovací bod' : 'připojovací body'}',
+                                          '${definition.prefix} · ${definition.ports.length} ${switch (definition.ports.length) {
+                                            1 => 'připojovací bod',
+                                            < 5 => 'připojovací body',
+                                            _ => 'připojovacích bodů',
+                                          }}',
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                           style: TextStyle(

@@ -79,16 +79,27 @@ class Vec2 {
   String toString() => 'Vec2($x, $y)';
 }
 
+/// Serialized by name; the declaration order is only the library order.
 enum DeviceKind {
   supply,
   breaker,
+  threePoleBreaker,
+  fuse,
+  disconnector,
+  threePoleDisconnector,
   contactor,
   motor,
+  transformer,
+  currentTransformer,
   terminal,
   earth,
   contactNo,
+  contactNc,
+  pushbuttonNo,
   coil,
   lamp,
+  ammeter,
+  voltmeter,
 }
 
 class Device {
@@ -251,11 +262,42 @@ class Wire {
   }
 }
 
+/// Editing, connectivity and validation rules are identical for every type;
+/// the type only names and organizes the page.
+enum SheetType {
+  multiLine('Vícepólové schéma'),
+  singleLine('Jednopólové schéma'),
+  cabinetLayout('Výstavba rozvaděče'),
+  form('Formulář');
+
+  const SheetType(this.label);
+  final String label;
+
+  /// Compatibility fallback when a document or command names no type; it
+  /// says nothing about what an older or unclassified page actually shows.
+  static const legacyDefault = SheetType.multiLine;
+}
+
+/// An absent [key] means "unspecified" and takes [fallback]; null or an
+/// unknown name is invalid data and is never silently defaulted.
+SheetType jsonSheetType(
+  Map<String, Object?> map,
+  String key, {
+  SheetType? fallback,
+}) {
+  final name = jsonString(map, key, fallback: fallback?.name, max: 40);
+  for (final type in SheetType.values) {
+    if (type.name == name) return type;
+  }
+  throw EcadException('Unknown sheet type "$name".', code: 'invalid_schema');
+}
+
 class Sheet {
   Sheet({
     required this.id,
     required this.name,
     required this.number,
+    this.type = SheetType.legacyDefault,
     this.width = 1100,
     this.height = 780,
     this.showFrame = true,
@@ -269,6 +311,7 @@ class Sheet {
   final String id;
   final String name;
   final String number;
+  final SheetType type;
   final double width;
   final double height;
   final bool showFrame;
@@ -295,6 +338,7 @@ class Sheet {
     String? id,
     String? name,
     String? number,
+    SheetType? type,
     double? width,
     double? height,
     bool? showFrame,
@@ -306,6 +350,7 @@ class Sheet {
     id: id ?? this.id,
     name: name ?? this.name,
     number: number ?? this.number,
+    type: type ?? this.type,
     width: width ?? this.width,
     height: height ?? this.height,
     showFrame: showFrame ?? this.showFrame,
@@ -322,6 +367,7 @@ class Sheet {
     'id': id,
     'name': name,
     'number': number,
+    'type': type.name,
     'width': width,
     'height': height,
     'showFrame': showFrame,
@@ -339,6 +385,7 @@ class Sheet {
         'id',
         'name',
         'number',
+        'type',
         'width',
         'height',
         'showFrame',
@@ -370,6 +417,7 @@ class Sheet {
       id: jsonString(map, 'id', max: 128),
       name: jsonString(map, 'name', max: 200),
       number: jsonString(map, 'number', max: 32),
+      type: jsonSheetType(map, 'type', fallback: SheetType.legacyDefault),
       width: width,
       height: height,
       showFrame: jsonBool(map, 'showFrame', fallback: true),
@@ -408,7 +456,10 @@ class EcadProject {
     required List<Sheet> pages,
   }) : pages = List.unmodifiable(pages);
   static const format = 'open-ecad';
-  static const formatVersion = 2;
+
+  /// Bumped whenever written files gain fields that older strict readers
+  /// reject, so they report an unsupported format instead of a schema error.
+  static const formatVersion = 3;
   final String id;
   final String name;
   final String description;
@@ -446,7 +497,8 @@ class EcadProject {
     'pages': pages.map((p) => p.toJson()).toList(),
   };
 
-  /// Decodes v2 and upgrades v1 with default page bounds and no graphics.
+  /// Reads v1 to v3. Fields that older versions lack (v1 page bounds, frame
+  /// and graphics; v1–v2 sheet type) get compatibility defaults.
   /// Use [ProjectEngine] or validateProject to also check graph consistency.
   factory EcadProject.fromJson(Object? value) {
     final map = jsonObject(
@@ -465,7 +517,8 @@ class EcadProject {
     final version = map['formatVersion'];
     if (map['format'] != format ||
         version is! int ||
-        (version != 1 && version != formatVersion)) {
+        version < 1 ||
+        version > formatVersion) {
       throw const EcadException(
         'Unsupported project format or formatVersion.',
         code: 'unsupported_format',

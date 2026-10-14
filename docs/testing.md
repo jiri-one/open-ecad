@@ -12,6 +12,8 @@ chování a škálování ověřte na cílovém počítači následujícím prů
 3. Na ukázce vybrat a přesunout několik přístrojů, otočit jistič a vrátit změny.
    Přidat svorku a propojit její bod s dalším vývodem. Vybrat a odstranit vodič.
 4. Přepnout na druhý list, dvojklikem přejmenovat jeho záložku, přidat nový list.
+   Vytvořit formulář s prázdnou tabulkou, změnit typ listu ve **Vlastnostech**
+   a vrátit změnu. V hledání listů zkusit „1P“ a „formular“ bez diakritiky.
 5. Zadat `Přidej motorový vývod`. Zkontrolovat náhled, přepnout na původní schéma,
    použít návrh a vrátit ho jediným undo. Vyzkoušet duplikaci vybraných přístrojů.
 6. V textovém poli napsat písmena V, W a R a mazat text; kreslicí zkratky nesmějí

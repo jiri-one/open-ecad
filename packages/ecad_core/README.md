@@ -3,18 +3,36 @@
 Pure Dart document model, symbol geometry, validation, atomic commands, undo/redo,
 and command-line tools for Open ECAD. No Flutter dependency.
 
-The version 2 `.ecad.json` format contains `format: "open-ecad"`,
-`formatVersion: 2`, a project ID, name, description, monotonic revision, and
+The version 3 `.ecad.json` format contains `format: "open-ecad"`,
+`formatVersion: 3`, a project ID, name, description, monotonic revision, and
 `pages`. Version 1 documents load transparently with their original 1100 × 780
-sheet bounds, a visible frame, and an empty graphics collection. Saving writes
-version 2. Other format versions are rejected.
+sheet bounds, a visible frame, and an empty graphics collection; version 1 and 2
+sheets get the fallback sheet type. Saving writes version 3, so older readers
+report `unsupported_format` instead of misreading the file. Other format
+versions are rejected.
+
+During early development the format may change without backward compatibility.
 
 Symbol positions are centers; rotations are degrees clockwise in the screen
 coordinate system. Wires reference device IDs and named ports rather than
-coordinates, so wires follow moved or rotated symbols. Each sheet also has
+coordinates, so wires follow moved or rotated symbols. `WireRouter` computes the
+orthogonal path that the editor and exports share: it leaves and enters
+terminals along their outward axis and avoids the two connected symbols, with
+best-effort routing when those symbols overlap. Other devices are not obstacles.
+Routing is designed for the editor's 90-degree turns; other rotation angles
+in external documents use best-effort geometry.
+Each sheet also has
 `width`, `height`, `showFrame`, an optional 1-based `sourcePage`, and a `graphics`
 collection. Graphics remain separate from electrical devices and connections.
 Imported drawing paths and text do not establish electrical connectivity.
+
+A sheet `type` is `multiLine`, `singleLine`, `cabinetLayout`, or `form`. Saving
+always writes it. A missing field (older files, unclassified PDF pages) takes
+the compatibility fallback `multiLine`, which says nothing about the page
+content; any other value is rejected. The type names the page and its frame
+caption; editing and validation rules are the same for every type.
+`SheetTemplates.blankForm()` returns an original blank table of ordinary
+graphics with generic captions only.
 
 ## Native drawing elements
 
@@ -85,9 +103,16 @@ The engine rejects stale revisions and commits a whole command batch only after
 its final document passes structural validation. Undo and redo also increment
 the revision; a previously prepared proposal becomes stale even after undo.
 Supported types: `addDevice`, `moveDevices`, `updateDevice`, `deleteDevices`,
-`addWire`, `deleteWire`, `addSheet`, `renameSheet`, `renameProject`,
-`addGraphics`, `updateGraphic`, `updateGraphics`, `moveGraphics`, `deleteGraphics`.
+`addWire`, `deleteWire`, `addSheet`, `renameSheet`, `setSheetType`,
+`renameProject`, `addGraphics`, `updateGraphic`, `updateGraphics`,
+`moveGraphics`, `deleteGraphics`.
 Deleting devices removes their attached wires in the same transaction.
+`moveDevices` and `updateDevice` also adjust the manual waypoints next to a
+moved or rotated terminal, in the same revision. Other bends are kept when
+possible. Unsafe bends are dropped, falling back to an automatic route if needed
+to avoid a connected symbol or reach a terminal from the correct side.
+`setSheetType` accepts `sheetId` and `sheetType`, for example
+`{"type": "setSheetType", "sheetId": "sheet_power", "sheetType": "singleLine"}`.
 
 `addGraphics` accepts `sheetId` and a nonempty `graphics` array;
 `updateGraphic` accepts `sheetId` and a complete replacement `graphic` with an
@@ -126,7 +151,7 @@ boundaries. Validation is not electrical simulation, engineering certification,
 or a check of protection sizing or standards compliance.
 
 The two-page demo is explicitly illustrative: a single-line three-phase feeder
-and a separate 24 V control example. Cross-sheet component associations,
+(sheet type `singleLine`) and a separate 24 V control example. Cross-sheet component associations,
 conductor counts, interlocks, and complete protection design are not modeled.
 The code and simple symbol definitions are original; no QElectroTech code or
 symbol data is imported.

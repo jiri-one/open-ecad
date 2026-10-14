@@ -67,7 +67,11 @@ Future<PdfConversion> convertPdfToProject(String path) async {
           }
           return '${warning['message']} (${warning['count']})';
         }).toList();
-    return PdfConversion(await output.readAsString(), warnings: warnings);
+    final typeNote = sheetTypeImportNote(metadata['sheetTypes']);
+    return PdfConversion(
+      await output.readAsString(),
+      warnings: [...warnings, if (typeNote != null) typeNote],
+    );
   } on ProcessException {
     throw const FormatException(
       'Python pro převod PDF není dostupný. Postup instalace je v docs/pdf-import.md.',

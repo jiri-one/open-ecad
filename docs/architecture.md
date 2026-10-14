@@ -20,8 +20,17 @@ flowchart LR
 Doména je v `packages/ecad_core`; Flutter nemá vlastní paralelní model schématu.
 Přístroj obsahuje typ, ID, označení, střed, otočení a textové údaje. Spoj odkazuje
 na ID přístroje a jeho pojmenovaný vývod. Poloha konců se odvozuje z geometrie
-symbolu, takže editace přístroje neodpojuje vodiče. Dokument obsahuje listy a revizi.
-Formát v2 přidává rozměry listu a nezávislé grafické objekty (cesty, texty, PNG).
+symbolu, takže editace přístroje neodpojuje vodiče. Trasu počítá sdílený
+`WireRouter` jádra pro plátno, náhled tažení i export. Přesun nebo otočení
+přístroje upraví v téže revizi ruční zlomy u dotčeného vývodu. Ostatní zlomy
+zachovává, pokud dovolují napojení bez průchodu připojenou značkou a ze správné
+strany vývodu; jinak postupně přejde až k automatické trase. Dokument obsahuje
+listy a revizi.
+Typ listu (vícepólové a jednopólové schéma, výstavba rozvaděče, formulář) list
+pojmenovává a třídí; pravidla editace, propojení i kontroly jsou pro všechny typy
+stejná. Mění se vratným příkazem `setSheetType`.
+Formát v2 přidal rozměry listu a nezávislé grafické objekty (cesty, texty, PNG),
+formát v3 typ listu.
 Grafika nemá automaticky elektrický význam. Místní Python převodník PDF vytváří
 tyto objekty, editor i export pracují se stejným modelem bez původního PDF.
 
@@ -84,7 +93,9 @@ jsou řazené, aby pomalejší starý zápis nepřepsal novější stav. Je omez
 2 MiB a 15 000 grafických objektů; velké importy vyžadují explicitní uložení.
 Na desktopu probíhá převod PDF v odděleném procesu a JSON kódování/dekódování přes
 `compute`. Ve webovém sestavení `compute` zůstává na hlavním vlákně. Čtení v1
-doplňuje výchozí rozměry listu a prázdnou grafiku, nové soubory se zapisují jako v2.
+doplňuje výchozí rozměry listu a prázdnou grafiku, čtení v1 a v2 náhradní typ
+listu. Nové soubory se zapisují jako v3; starší čtečka je tak odmítne jako
+nepodporovaný formát, místo aby hlásila neznámé pole.
 
 Explicitní uložení pracuje se snímkem a identitou otevřeného dokumentu. Pozdní
 dokončení ukládání nesmí označit mezitím otevřený projekt za uložený. Web vrací

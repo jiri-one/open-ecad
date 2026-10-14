@@ -10,6 +10,13 @@ import 'theme.dart';
 
 enum SidePanel { assistant, properties }
 
+String defaultSheetName(SheetType type) => switch (type) {
+  SheetType.multiLine => 'Nové schéma',
+  SheetType.singleLine => 'Nové jednopólové schéma',
+  SheetType.cabinetLayout => 'Nová výstavba rozvaděče',
+  SheetType.form => 'Nový formulář',
+};
+
 class ConversationEntry {
   const ConversationEntry(this.text, {this.isUser = false, this.detail});
   final String text;
@@ -370,13 +377,32 @@ class EditorController extends ChangeNotifier {
     }
   }
 
-  void addSheet() {
+  void setSheetType(SheetType type) {
+    if (sheet.type == type) return;
+    execute([SetSheetType(activeSheetId, type)], 'Typ listu: ${type.label}');
+  }
+
+  void addSheet({
+    SheetType type = SheetType.multiLine,
+    String? name,
+    bool formStarter = false,
+  }) {
     final page = Sheet(
       id: newId('sheet'),
-      name: 'Nové schéma',
+      name:
+          name == null || name.trim().isEmpty
+              ? defaultSheetName(type)
+              : name.trim(),
       number: (project.pages.length + 1).toString().padLeft(2, '0'),
+      type: type,
+      graphics:
+          formStarter && type == SheetType.form
+              ? SheetTemplates.blankForm()
+              : const [],
     );
-    if (execute([AddSheet(page)], 'Přidán nový list')) setSheet(page.id);
+    if (execute([AddSheet(page)], 'Přidán nový list · ${type.label}')) {
+      setSheet(page.id);
+    }
   }
 
   void duplicateSelection() {

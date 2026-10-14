@@ -6,6 +6,7 @@ import '../widgets/assistant_panel.dart';
 import '../widgets/components.dart';
 import '../widgets/project_panel.dart';
 import '../widgets/properties_panel.dart';
+import '../widgets/sheet_types.dart';
 import 'controller.dart';
 import 'dialogs.dart';
 import 'theme.dart';
@@ -95,6 +96,20 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     if (name != null && mounted) app.renameSheet(name);
   }
 
+  Future<void> addSheet([SheetType? type]) async {
+    final request = await showNewSheetDialog(
+      context,
+      initialType: type ?? app.sheet.type,
+    );
+    if (request != null && mounted) {
+      app.addSheet(
+        type: request.type,
+        name: request.name,
+        formStarter: request.formStarter,
+      );
+    }
+  }
+
   void validate() {
     app.validate();
   }
@@ -104,6 +119,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     app,
     openProject: openProject,
     focusAssistant: focusAssistant,
+    addSheet: addSheet,
   );
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -221,6 +237,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                             child: ProjectPanel(
                               controller: app,
                               onRenameSheet: renameSheet,
+                              onAddSheet: addSheet,
                             ),
                           ),
                           VerticalDivider(
@@ -294,13 +311,13 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                                           child: Row(
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              const Icon(
-                                                Icons.description_outlined,
+                                              Icon(
+                                                sheetTypeIcon(app.sheet.type),
                                                 size: 12,
                                               ),
                                               const SizedBox(width: 7),
                                               Text(
-                                                '${app.sheet.number} / ${app.project.pages.length.toString().padLeft(2, '0')}',
+                                                '${app.sheet.number} / ${app.project.pages.length.toString().padLeft(2, '0')} · ${app.sheet.type.label}',
                                                 style: const TextStyle(
                                                   fontSize: 10,
                                                 ),
@@ -868,6 +885,11 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                       ),
                       child: Row(
                         children: [
+                          Tooltip(
+                            message: sheet.type.label,
+                            child: Icon(sheetTypeIcon(sheet.type), size: 13),
+                          ),
+                          const SizedBox(width: 8),
                           Text(
                             sheet.number,
                             style: TextStyle(fontSize: 10, color: c.muted),
@@ -896,7 +918,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
           child: EcadIconButton(
             icon: Icons.add,
             label: 'Nový list',
-            onPressed: app.addSheet,
+            onPressed: addSheet,
             size: 28,
             iconSize: 17,
           ),

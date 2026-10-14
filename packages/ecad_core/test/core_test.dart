@@ -57,7 +57,10 @@ void main() {
     test('rejects unknown format versions and fields', () {
       final json = DemoProject.create().toJson();
       expect(
-        () => EcadProject.fromJson({...json, 'formatVersion': 3}),
+        () => EcadProject.fromJson({
+          ...json,
+          'formatVersion': EcadProject.formatVersion + 1,
+        }),
         throwsA(errorCode('unsupported_format')),
       );
       expect(
