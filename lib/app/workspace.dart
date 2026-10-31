@@ -2,6 +2,22 @@ import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../editor/schematic_canvas.dart';
+import '../editor/drawing_cursor.dart';
+import '../services/drawing_cursor_settings.dart';
+import '../services/pointer_warp.dart';
+import '../widgets/drawing_cursor_dialog.dart';
+import '../editor/mounting_canvas.dart';
+import '../widgets/report_view.dart';
+import '../widgets/recovery_dialog.dart';
+import '../widgets/inventory.dart';
+import '../widgets/diagnostic_text.dart';
+import '../widgets/terminal_symbol_dialog.dart';
+import '../widgets/continuation_editor.dart';
+import '../widgets/continuation_picker.dart';
+import '../widgets/edit_history.dart';
+import '../widgets/occurrence_dialog.dart' show electricalSheet;
+import 'continuation_context.dart';
+import 'workspace_controller.dart';
 import '../widgets/assistant_panel.dart';
 import '../widgets/components.dart';
 import '../widgets/project_panel.dart';
@@ -11,20 +27,35 @@ import 'controller.dart';
 import 'dialogs.dart';
 import 'theme.dart';
 
-class OpenEcadApp extends StatelessWidget {
+class OpenEcadApp extends StatefulWidget {
   const OpenEcadApp({super.key, required this.controller});
   final EditorController controller;
   @override
+  State<OpenEcadApp> createState() => _OpenEcadAppState();
+}
+
+class _OpenEcadAppState extends State<OpenEcadApp> {
+  late final workspace = WorkspaceController(widget.controller);
+  @override
+  void dispose() {
+    workspace.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: controller,
+    listenable: workspace,
     builder:
         (context, _) => MaterialApp(
           title: 'Open ECAD',
           debugShowCheckedModeBanner: false,
-          theme: buildEcadTheme(controller.appearance),
+          theme: buildEcadTheme(workspace.active.appearance),
           themeAnimationDuration: Duration.zero,
           scrollBehavior: const _EditorScrollBehavior(),
-          home: EditorWorkspace(controller: controller),
+          home: EditorWorkspace(
+            controller: workspace.active,
+            workspace: workspace,
+          ),
         ),
   );
 }
@@ -40,23 +71,60 @@ class _EditorScrollBehavior extends MaterialScrollBehavior {
 }
 
 class EditorWorkspace extends StatefulWidget {
-  const EditorWorkspace({super.key, required this.controller});
+  const EditorWorkspace({super.key, required this.controller, this.workspace});
   final EditorController controller;
+  final WorkspaceController? workspace;
   @override
   State<EditorWorkspace> createState() => _EditorWorkspaceState();
 }
 
 class _EditorWorkspaceState extends State<EditorWorkspace> {
+  final drawingCursor = DrawingCursorPreferences();
+  @override
+  void initState() {
+    super.initState();
+    drawingCursor.addListener(_cursorChanged);
+    drawingCursor.load().catchError((Object _) {});
+  }
+
+  void _cursorChanged() {
+    if (mounted) setState(() {});
+  }
+
   final promptFocus = FocusNode(debugLabel: 'Assistant input');
   bool showProject = true, showAssistant = true;
-  EditorController get app => widget.controller;
+  late final localWorkspace =
+      widget.workspace == null ? WorkspaceController(widget.controller) : null;
+  WorkspaceController get workspace => widget.workspace ?? localWorkspace!;
+  EditorController get app => workspace.active;
   @override
   void dispose() {
+    drawingCursor.removeListener(_cursorChanged);
+    drawingCursor.dispose();
+    localWorkspace?.dispose();
     promptFocus.dispose();
     super.dispose();
   }
 
+  SheetTab? _lastTabTap;
+  DateTime? _lastTabTapAt;
+  void activateTab(SheetTab tab) {
+    final now = DateTime.now();
+    final twice =
+        _lastTabTap == tab &&
+        _lastTabTapAt != null &&
+        now.difference(_lastTabTapAt!).inMilliseconds < 350;
+    _lastTabTap = tab;
+    _lastTabTapAt = now;
+    workspace.activate(tab);
+    if (twice) {
+      _lastTabTap = null;
+      renameSheet();
+    }
+  }
+
   void focusAssistant() {
+    _continuationNavigationRequest++;
     setState(() => showAssistant = true);
     app.setPanel(SidePanel.assistant);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -64,45 +132,301 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     });
   }
 
-  Future<void> openProject() async {
-    if (await confirmReplaceProject(context, app)) await app.openProject();
-  }
-
-  Future<void> importPdf() async {
-    if (await confirmReplaceProject(context, app)) {
-      await app.openProject(importPdf: true);
+  void editSelectedDevice() {
+    _continuationNavigationRequest++;
+    final owner = app;
+    if (owner.showingProposal ||
+        owner.pastePreview != null ||
+        owner.mode != CanvasMode.select ||
+        owner.viewport.hasActiveGesture) {
+      return;
+    }
+    if (owner.selectedMarkers.length == 1 && owner.selectedIds.length == 1) {
+      editContinuationMarker(owner.selectedMarkers.single.id);
+    } else if (owner.selectedDevices.length == 1) {
+      showDeviceProperties(context, owner, owner.selectedDevices.single.id);
+    } else if (owner.selectedIds.length == 1 &&
+        (owner.selectedGraphics.length == 1 ||
+            owner.sheet.corners.any((c) => owner.selectedIds.contains(c.id)))) {
+      editDrawingObject(owner.selectedIds.single);
+    } else if (owner.selectedPlacements.length == 1) {
+      editComponent(
+        context,
+        owner,
+        component: owner.project.componentById(
+          owner.selectedPlacements.single.componentId,
+        ),
+      );
     }
   }
 
-  Future<void> newProject({bool demo = false}) async {
-    if (await confirmReplaceProject(context, app)) app.newProject(demo: demo);
+  Future<void> editDrawingObject(String id) async {
+    _continuationNavigationRequest++;
+    if (!app.viewport.canInteract) return;
+    final guard = continuationContext();
+    final owner = guard.owner;
+    if (owner.sheet.graphics.any((g) => g.id == id)) {
+      owner.select({id});
+      setState(() => showAssistant = true);
+      owner.setPanel(SidePanel.properties);
+      return;
+    }
+    final corner = owner.sheet.corners.where((c) => c.id == id).firstOrNull;
+    if (corner == null) return;
+    final edited = await showCornerEditor(context, corner);
+    if (edited == null) return;
+    if (!guard.current) {
+      continuationStale();
+      return;
+    }
+    if (edited.orientation != corner.orientation) {
+      owner.execute(
+        [UpdateConnectionCorner(guard.sheetId, edited)],
+        'Upraven spojovací roh',
+        expectedRevision: guard.revision,
+      );
+    }
+  }
+
+  ContinuationContext continuationContext({String? markerId}) {
+    final owner = app;
+    final navigation = workspace.navigationGeneration;
+    return ContinuationContext(
+      owner,
+      markerId: markerId,
+      isActive:
+          () =>
+              mounted &&
+              workspace.navigationGeneration == navigation &&
+              workspace.active == owner &&
+              workspace.document(owner.documentSessionId) == owner &&
+              workspace.activeTab ==
+                  SheetTab(owner.documentSessionId, owner.activeSheetId),
+    );
+  }
+
+  void editContinuationMarker(String id) {
+    _continuationNavigationRequest++;
+    if (!app.viewport.canInteract) return;
+    final guard = continuationContext(markerId: id);
+    final marker = guard.occurrence?.marker;
+    if (marker == null) return;
+    editContinuation(
+      context,
+      guard.owner,
+      marker: marker,
+      isActive: () => guard.current,
+      onNavigate: (target) => followContinuation(id, target: target),
+    );
+  }
+
+  void placeContinuation(Vec2 position) {
+    final guard = continuationContext();
+    if (!guard.current || app.showingProposal) return;
+    editContinuation(
+      context,
+      guard.owner,
+      position: position,
+      initialLinkId: guard.owner.placingContinuationLinkId,
+      initialGlyph: guard.owner.placingContinuationGlyph,
+      initialLabel: guard.owner.placingContinuationLabel,
+      isActive: () => guard.current,
+    );
+  }
+
+  void startContinuation() {
+    if (app.viewport.hasActiveGesture ||
+        !electricalSheet(app.sheet) ||
+        app.showingProposal) {
+      return;
+    }
+    app.setContinuationTool();
+  }
+
+  Future<void> placeContinuationPeer(String markerId) async {
+    if (!app.viewport.canInteract) return;
+    final guard = continuationContext(markerId: markerId);
+    final marker = guard.occurrence?.marker;
+    if (marker == null) return;
+    final sheetId = await showContinuationSheetPicker(
+      context,
+      project: guard.owner.project,
+      isCurrent: () => guard.current,
+    );
+    if (sheetId == null) return;
+    if (!guard.current) {
+      continuationStale();
+      return;
+    }
+    workspace.openSheet(guard.owner, sheetId);
+    guard.owner.setContinuationTool(linkId: marker.linkId, glyph: marker.glyph);
+  }
+
+  void continuationStale() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Původní projekt, list nebo odkaz se změnil. Zopakujte akci z aktuálního výkresu.',
+        ),
+      ),
+    );
+  }
+
+  int _continuationNavigationRequest = 0;
+
+  Future<void> followContinuation(
+    String markerId, {
+    ContinuationTarget? target,
+  }) async {
+    if (!app.viewport.canInteract) return;
+    final request = ++_continuationNavigationRequest;
+    final guard = continuationContext(markerId: markerId);
+    if (!guard.current) return;
+    final owner = guard.owner;
+    final targets = ContinuationIndex(
+      owner.project,
+    ).targets(sheetId: guard.sheetId, markerId: markerId);
+    if (targets.isEmpty) {
+      owner.reportStatus(
+        'Tento odkaz nemá protějšek. Přidejte další marker do stejné sítě.',
+      );
+      return;
+    }
+    var chosen = target;
+    if (chosen == null && targets.length == 1) chosen = targets.single;
+    chosen ??= await showContinuationTargetPicker(
+      context,
+      targets: targets,
+      linkLabels: {
+        for (final link in owner.project.continuationLinks) link.id: link.label,
+      },
+      isCurrent:
+          () => request == _continuationNavigationRequest && guard.current,
+    );
+    if (chosen == null) return;
+    if (request != _continuationNavigationRequest ||
+        !guard.current ||
+        !owner.viewport.canInteract ||
+        !targets.any(
+          (t) =>
+              t.sheet.id == chosen!.sheet.id && t.marker.id == chosen.marker.id,
+        )) {
+      continuationStale();
+      return;
+    }
+    final destination = chosen;
+    final zoom = owner.viewport.zoom;
+    final changedSheet = destination.sheet.id != guard.sheetId;
+    workspace.openSheet(owner, destination.sheet.id, fitViewport: false);
+    owner.select({destination.marker.id});
+    final arrival = continuationContext(markerId: destination.marker.id);
+    var statusGeneration = owner.statusGeneration;
+    bool current() =>
+        request == _continuationNavigationRequest &&
+        owner.statusGeneration == statusGeneration &&
+        arrival.current &&
+        owner.selectedIds.length == 1 &&
+        owner.selectedIds.contains(destination.marker.id);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!current()) return;
+      if (owner.viewport.revealContinuation(
+        documentIdentity: owner,
+        sheetId: destination.sheet.id,
+        markerId: destination.marker.id,
+        zoom: changedSheet ? zoom : null,
+      )) {
+        owner.reportStatus(
+          'Cíl ${fullPageDesignation(destination.sheet)} · ${continuationLocation(destination)} · kreslicí fokus',
+        );
+        statusGeneration = owner.statusGeneration;
+        // Reveal changes pan, layout and focus; only the following frame can supply the target.
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          if (!current()) return;
+          final target = owner.viewport.continuationPointerTarget(
+            documentIdentity: owner,
+            sheetId: destination.sheet.id,
+            markerId: destination.marker.id,
+            revision: arrival.revision,
+          );
+          if (target == null) return;
+          final moved = await PointerWarp.move(target);
+          if (!current()) return;
+          final now = owner.viewport.continuationPointerTarget(
+            documentIdentity: owner,
+            sheetId: destination.sheet.id,
+            markerId: destination.marker.id,
+            revision: arrival.revision,
+          );
+          if (now == null ||
+              now.viewId != target.viewId ||
+              now.position != target.position ||
+              now.physicalSize != target.physicalSize ||
+              now.devicePixelRatio != target.devicePixelRatio) {
+            return;
+          }
+          owner.reportStatus(
+            'Cíl ${fullPageDesignation(destination.sheet)} · ${continuationLocation(destination)} · '
+            '${moved ? 'ukazatel myši na cíli' : 'kreslicí fokus; přesun ukazatele myši nepotvrzen'}',
+          );
+        });
+      }
+    });
+  }
+
+  void followSelectedContinuation() {
+    final id =
+        app.viewport.hoveredContinuationId ??
+        (app.selectedMarkers.length == 1
+            ? app.selectedMarkers.single.id
+            : null);
+    if (id != null) followContinuation(id);
+  }
+
+  Future<void> openProject() => workspace.open();
+  Future<void> importPdf() => workspace.open(importPdf: true);
+  Future<void> newProject({bool demo = false}) async =>
+      workspace.create(demo: demo);
+  Future<void> closeProject(EditorController doc) async {
+    if (await confirmReplaceProject(context, doc)) workspace.closeDocument(doc);
   }
 
   Future<void> renameProject() async {
+    final owner = app, sessionId = app.documentSessionId;
     final name = await editNameDialog(
       context,
       title: 'Název projektu',
-      value: app.project.name,
+      value: owner.project.name,
     );
-    if (name != null && mounted) app.renameProject(name);
+    if (name != null && mounted && workspace.document(sessionId) == owner) {
+      owner.renameProject(name);
+    }
   }
 
   Future<void> renameSheet() async {
+    final owner = app, sessionId = app.documentSessionId;
+    final sheet = owner.sheet;
     final name = await editNameDialog(
       context,
       title: 'Název listu',
-      value: app.sheet.name,
+      value: sheet.name,
     );
-    if (name != null && mounted) app.renameSheet(name);
+    if (name != null &&
+        mounted &&
+        workspace.document(sessionId) == owner &&
+        owner.project.sheetById(sheet.id) != null) {
+      owner.renameSheet(name, sheetId: sheet.id);
+    }
   }
 
   Future<void> addSheet([SheetType? type]) async {
+    final owner = app, sessionId = app.documentSessionId;
     final request = await showNewSheetDialog(
       context,
-      initialType: type ?? app.sheet.type,
+      initialType: type ?? owner.sheet.type,
     );
-    if (request != null && mounted) {
-      app.addSheet(
+    if (request != null && mounted && workspace.document(sessionId) == owner) {
+      owner.addSheet(
         type: request.type,
         name: request.name,
         formStarter: request.formStarter,
@@ -114,21 +438,128 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     app.validate();
   }
 
-  void commandPalette() => showCommandPalette(
-    context,
-    app,
-    openProject: openProject,
-    focusAssistant: focusAssistant,
-    addSheet: addSheet,
-  );
+  void commandPalette() {
+    final markerId =
+        app.viewport.hoveredContinuationId ??
+        (app.selectedMarkers.length == 1
+            ? app.selectedMarkers.single.id
+            : null);
+    final guard = continuationContext(markerId: markerId);
+    void current(VoidCallback action) {
+      if (guard.current) {
+        action();
+      } else {
+        continuationStale();
+      }
+    }
+
+    showCommandPalette(
+      context,
+      app,
+      openProject: openProject,
+      focusAssistant: focusAssistant,
+      addSheet: addSheet,
+      addContinuation: () => current(startContinuation),
+      followContinuation:
+          () => current(() {
+            if (markerId != null) followContinuation(markerId);
+          }),
+      editHistory: () => current(editHistory),
+      undoEdit: () => current(undoEdit),
+      redoEdit: () => current(redoEdit),
+      copySelection: () => current(copySelection),
+      pasteSelection: () => current(pasteSelection),
+      editSelection:
+          () => current(() {
+            if (markerId != null) {
+              editContinuationMarker(markerId);
+            } else {
+              editSelectedDevice();
+            }
+          }),
+    );
+  }
+
+  void undoEdit() {
+    _continuationNavigationRequest++;
+    app.undo();
+  }
+
+  void redoEdit() {
+    _continuationNavigationRequest++;
+    app.redo();
+  }
+
+  void editHistory() {
+    _continuationNavigationRequest++;
+    app.cancelClipboardPreview(notify: true);
+    final guard = continuationContext();
+    final owner = guard.owner;
+    void apply(int count, {required bool redo}) {
+      if (!guard.current || owner.showingProposal) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Historie už nepatří aktuálnímu stavu dokumentu. Otevřete ji znovu.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      _continuationNavigationRequest++;
+      if (redo) {
+        owner.redoSteps(count, expectedRevision: guard.revision);
+      } else {
+        owner.undoSteps(count, expectedRevision: guard.revision);
+      }
+    }
+
+    showEditHistoryDialog(
+      context: context,
+      undoHistory: owner.undoHistory,
+      redoHistory: owner.redoHistory,
+      historyLimit: owner.historyLimit,
+      onUndoSteps: (count) => apply(count, redo: false),
+      onRedoSteps: (count) => apply(count, redo: true),
+    );
+  }
+
+  bool get _editingText =>
+      FocusManager.instance.primaryFocus?.context
+          ?.findAncestorWidgetOfExactType<EditableText>() !=
+      null;
+
+  void copySelection() {
+    final guard = continuationContext();
+    guard.owner.copySelectionToClipboard(isActive: () => guard.current);
+  }
+
+  void pasteSelection() {
+    app.viewport.focus();
+    final guard = continuationContext();
+    guard.owner.beginClipboardPaste(
+      isActive:
+          () =>
+              guard.current &&
+              ModalRoute.isCurrentOf(context) != false &&
+              !_editingText,
+    );
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey != LogicalKeyboardKey.keyF) {
+      _continuationNavigationRequest++;
+    }
+    if (ModalRoute.isCurrentOf(context) == false) return KeyEventResult.ignored;
     final keyboard = HardwareKeyboard.instance;
     final ctrl = keyboard.isControlPressed || keyboard.isMetaPressed;
     final key = event.logicalKey;
     if (ctrl) {
       if (key == LogicalKeyboardKey.keyS) {
-        app.saveProject();
+        keyboard.isShiftPressed ? app.saveProjectAs() : app.saveProject();
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.keyO) {
@@ -148,13 +579,32 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     if (focusContext?.findAncestorWidgetOfExactType<EditableText>() != null) {
       return KeyEventResult.ignored;
     }
+    if (!ctrl &&
+        !keyboard.isAltPressed &&
+        !keyboard.isShiftPressed &&
+        key == LogicalKeyboardKey.f4) {
+      editSelectedDevice();
+      return KeyEventResult.handled;
+    }
+    if (ctrl &&
+        !keyboard.isAltPressed &&
+        !keyboard.isShiftPressed &&
+        (key == LogicalKeyboardKey.keyC || key == LogicalKeyboardKey.keyV)) {
+      if (app.mode != CanvasMode.select ||
+          app.viewport.hasActiveGesture ||
+          app.ioBusy) {
+        return KeyEventResult.ignored;
+      }
+      key == LogicalKeyboardKey.keyC ? copySelection() : pasteSelection();
+      return KeyEventResult.handled;
+    }
     if (ctrl) {
       if (key == LogicalKeyboardKey.keyZ) {
-        keyboard.isShiftPressed ? app.redo() : app.undo();
+        keyboard.isShiftPressed ? redoEdit() : undoEdit();
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.keyY) {
-        app.redo();
+        redoEdit();
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.keyD) {
@@ -170,6 +620,11 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     if (key == LogicalKeyboardKey.escape) {
       app.cancelTool();
       return KeyEventResult.handled;
+    }
+    if (keyboard.isAltPressed ||
+        keyboard.isShiftPressed ||
+        app.viewport.hasActiveGesture) {
+      return KeyEventResult.ignored;
     }
     if (key == LogicalKeyboardKey.keyV) {
       app.setMode(CanvasMode.select);
@@ -196,6 +651,10 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.keyF) {
+      followSelectedContinuation();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.home) {
       app.viewport.fit();
       return KeyEventResult.handled;
     }
@@ -214,290 +673,414 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
   @override
   Widget build(BuildContext context) {
     final c = EcadColors.of(context);
-    return Focus(
-      onKeyEvent: _onKey,
-      child: Scaffold(
-        body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, bounds) {
-              final compact = bounds.maxWidth < 1120;
-              final projectVisible = showProject && bounds.maxWidth >= 950;
-              final assistantVisible = showAssistant && bounds.maxWidth >= 680;
-              return Column(
-                children: [
-                  _header(c, compact),
-                  _toolbar(c, compact),
-                  Expanded(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (projectVisible) ...[
-                          SizedBox(
-                            width: compact ? 202 : 230,
-                            child: ProjectPanel(
-                              controller: app,
-                              onRenameSheet: renameSheet,
-                              onAddSheet: addSheet,
+    return Listener(
+      onPointerDown: (_) => _continuationNavigationRequest++,
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: _onKey,
+        child: Scaffold(
+          body: SafeArea(
+            child: LayoutBuilder(
+              builder: (context, bounds) {
+                final compact = bounds.maxWidth < 1120;
+                final projectVisible = showProject && bounds.maxWidth >= 950;
+                final assistantVisible =
+                    showAssistant && bounds.maxWidth >= 680;
+                return Column(
+                  children: [
+                    _header(c, compact),
+                    _toolbar(c, compact),
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (projectVisible) ...[
+                            SizedBox(
+                              width: compact ? 240 : 285,
+                              child: ProjectPanel(
+                                controller: app,
+                                workspace: workspace,
+                                onCloseProject: closeProject,
+                                onRenameSheet: renameSheet,
+                                onAddSheet: addSheet,
+                              ),
                             ),
-                          ),
-                          VerticalDivider(
-                            width: 1,
-                            thickness: 1,
-                            color: c.border,
-                          ),
-                        ],
-                        Expanded(
-                          child: Column(
-                            children: [
-                              _sheetTabs(c),
-                              if (app.sheet.sourcePage != null)
-                                Container(
-                                  width: double.infinity,
-                                  color: c.panel,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 6,
-                                  ),
-                                  child: Text(
-                                    'Grafika z PDF · ${app.sheet.graphics.length} objektů · elektrické vazby nejsou obnovené',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: c.muted,
+                            VerticalDivider(
+                              width: 1,
+                              thickness: 1,
+                              color: c.border,
+                            ),
+                          ],
+                          Expanded(
+                            child: Column(
+                              children: [
+                                _sheetTabs(c),
+                                if (app.sheet.sourcePage != null)
+                                  Container(
+                                    width: double.infinity,
+                                    color: c.panel,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 6,
                                     ),
-                                  ),
-                                ),
-                              Expanded(
-                                child: Stack(
-                                  children: [
-                                    Positioned.fill(
-                                      child: SchematicCanvas(
-                                        sheet: app.displaySheet,
-                                        readOnly: app.showingProposal,
-                                        selectedIds: app.selectedIds,
-                                        mode: app.mode,
-                                        placingKind: app.placingKind,
-                                        showGrid: app.showGrid,
-                                        palette: c.canvasPalette,
-                                        controller: app.viewport,
-                                        onSelectionChanged: (ids) {
-                                          if (!app.showingProposal) {
-                                            app.select(ids);
-                                          }
-                                        },
-                                        onMoveDevices: app.moveDevices,
-                                        onMoveSelection: app.moveSelection,
-                                        onCreateGraphic: app.createGraphic,
-                                        onPlaceDevice: app.placeDevice,
-                                        onConnect: app.connect,
-                                        onDeleteWire: app.deleteWire,
+                                    child: Text(
+                                      'Grafika z PDF · ${app.sheet.graphics.length} objektů · elektrické vazby nejsou obnovené',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: c.muted,
                                       ),
                                     ),
-                                    Positioned(
-                                      left: 16,
-                                      top: 16,
-                                      child: IgnorePointer(
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 6,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: c.panel,
-                                            border: Border.all(color: c.border),
-                                            borderRadius: BorderRadius.circular(
-                                              4,
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Icon(
-                                                sheetTypeIcon(app.sheet.type),
-                                                size: 12,
-                                              ),
-                                              const SizedBox(width: 7),
-                                              Text(
-                                                '${app.sheet.number} / ${app.project.pages.length.toString().padLeft(2, '0')} · ${app.sheet.type.label}',
-                                                style: const TextStyle(
-                                                  fontSize: 10,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    if (app.showingProposal)
-                                      Positioned(
-                                        right: 16,
-                                        top: 16,
-                                        child: Container(
-                                          padding: const EdgeInsets.fromLTRB(
-                                            10,
-                                            3,
-                                            3,
-                                            3,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: c.accent,
-                                            borderRadius: BorderRadius.circular(
-                                              4,
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Icon(
-                                                Icons.visibility_outlined,
-                                                color: c.onAccent,
-                                                size: 14,
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Text(
-                                                'NÁHLED NÁVRHU',
-                                                style: TextStyle(
-                                                  fontSize: 9,
-                                                  letterSpacing: 0.6,
-                                                  color: c.onAccent,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 5),
-                                              IconButton(
-                                                onPressed:
-                                                    app.toggleProposalPreview,
-                                                tooltip:
-                                                    'Zobrazit původní schéma',
-                                                icon: Icon(
-                                                  Icons.close,
-                                                  color: c.onAccent,
-                                                  size: 15,
-                                                ),
-                                                constraints:
-                                                    const BoxConstraints.tightFor(
-                                                      width: 28,
-                                                      height: 26,
+                                  ),
+                                Expanded(
+                                  child: Stack(
+                                    children: [
+                                      Positioned.fill(
+                                        child:
+                                            workspace.activeTab == null
+                                                ? const Center(
+                                                  child: Text(
+                                                    'Otevřete list ze stromu projektů',
+                                                  ),
+                                                )
+                                                : app.sheet.type ==
+                                                    SheetType.billOfMaterials
+                                                ? ReportView(
+                                                  key: ValueKey(
+                                                    SheetTab(
+                                                      app.documentSessionId,
+                                                      app.sheet.id,
                                                     ),
-                                                padding: EdgeInsets.zero,
-                                              ),
-                                            ],
-                                          ),
-                                        ),
+                                                  ),
+                                                  app: app,
+                                                )
+                                                : app.sheet.type ==
+                                                        SheetType
+                                                            .cabinetLayout &&
+                                                    (app.sheet.mountingView !=
+                                                            null ||
+                                                        app
+                                                            .sheet
+                                                            .graphics
+                                                            .isEmpty)
+                                                ? MountingCanvas(
+                                                  key: ValueKey(
+                                                    SheetTab(
+                                                      app.documentSessionId,
+                                                      app.sheet.id,
+                                                    ),
+                                                  ),
+                                                  app: app,
+                                                  cursorSettings:
+                                                      drawingCursor.value,
+                                                )
+                                                : DrawingCursorRegion(
+                                                  settings: drawingCursor.value,
+                                                  backgroundColor:
+                                                      c
+                                                          .canvasPalette
+                                                          .background,
+                                                  resetKey: (
+                                                    app.documentSessionId,
+                                                    app.sheet.id,
+                                                  ),
+                                                  child: SchematicCanvas(
+                                                    key: ValueKey(
+                                                      SheetTab(
+                                                        app.documentSessionId,
+                                                        app.sheet.id,
+                                                      ),
+                                                    ),
+                                                    documentIdentity: app,
+                                                    project: app.displayProject,
+                                                    sheet: app.displaySheet,
+                                                    readOnly:
+                                                        app.showingProposal,
+                                                    selectedIds:
+                                                        app.selectedIds,
+                                                    mode: app.mode,
+                                                    placingKind:
+                                                        app.placingKind,
+                                                    terminalSides:
+                                                        app.terminalSides,
+                                                    cornerOrientation:
+                                                        app.cornerOrientation,
+                                                    onPlaceCorner:
+                                                        app.placeCorner,
+                                                    showGrid: app.showGrid,
+                                                    palette: c.canvasPalette,
+                                                    controller: app.viewport,
+                                                    onSelectionChanged: (ids) {
+                                                      if (!app
+                                                          .showingProposal) {
+                                                        app.select(ids);
+                                                        if (ids.isNotEmpty) {
+                                                          app.setPanel(
+                                                            SidePanel
+                                                                .properties,
+                                                          );
+                                                        }
+                                                      }
+                                                    },
+                                                    onMoveDevices:
+                                                        app.moveDevices,
+                                                    onMoveSelection:
+                                                        app.moveSelection,
+                                                    onCreateGraphic:
+                                                        app.createGraphic,
+                                                    onPlaceDevice:
+                                                        app.placeDevice,
+                                                    onConnect: app.connect,
+                                                    onDeleteWire:
+                                                        app.deleteWire,
+                                                    onEditDevice:
+                                                        (id) =>
+                                                            showDeviceProperties(
+                                                              context,
+                                                              app,
+                                                              id,
+                                                            ),
+                                                    onEditDrawingObject:
+                                                        editDrawingObject,
+                                                    onEditContinuation:
+                                                        editContinuationMarker,
+                                                    onFollowContinuation:
+                                                        (id) =>
+                                                            followContinuation(
+                                                              id,
+                                                            ),
+                                                    onPlaceContinuation:
+                                                        placeContinuation,
+                                                    pastePreview:
+                                                        app.pastePreview,
+                                                    onPlacePaste:
+                                                        app.placeClipboard,
+                                                  ),
+                                                ),
                                       ),
-                                    Positioned(
-                                      right: 16,
-                                      bottom: 16,
-                                      child: _zoomControls(c),
-                                    ),
-                                    if (app.mode == CanvasMode.place ||
-                                        app.mode == CanvasMode.wire)
                                       Positioned(
                                         left: 16,
-                                        bottom: 16,
-                                        child: Container(
-                                          constraints: const BoxConstraints(
-                                            maxWidth: 250,
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 8,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: c.accent,
-                                            borderRadius: BorderRadius.circular(
-                                              4,
+                                        top: 16,
+                                        child: IgnorePointer(
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 6,
                                             ),
-                                          ),
-                                          child: Text(
-                                            app.mode == CanvasMode.wire
-                                                ? 'Klikněte na první a druhý připojovací bod'
-                                                : 'Klikněte do výkresu · Esc ukončí vkládání',
-                                            style: TextStyle(
-                                              color: c.onAccent,
-                                              fontSize: 10,
+                                            decoration: BoxDecoration(
+                                              color: c.panel,
+                                              border: Border.all(
+                                                color: c.border,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  sheetTypeIcon(app.sheet.type),
+                                                  size: 12,
+                                                ),
+                                                const SizedBox(width: 7),
+                                                Text(
+                                                  '${fullPageDesignation(app.sheet)} / ${app.project.pages.length.toString().padLeft(2, '0')} · ${app.sheet.type.label}',
+                                                  style: const TextStyle(
+                                                    fontSize: 10,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
                                         ),
                                       ),
+                                      if (app.showingProposal)
+                                        Positioned(
+                                          right: 16,
+                                          top: 16,
+                                          child: Container(
+                                            padding: const EdgeInsets.fromLTRB(
+                                              10,
+                                              3,
+                                              3,
+                                              3,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: c.accent,
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  Icons.visibility_outlined,
+                                                  color: c.onAccent,
+                                                  size: 14,
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  'NÁHLED NÁVRHU',
+                                                  style: TextStyle(
+                                                    fontSize: 9,
+                                                    letterSpacing: 0.6,
+                                                    color: c.onAccent,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 5),
+                                                IconButton(
+                                                  onPressed:
+                                                      app.toggleProposalPreview,
+                                                  tooltip:
+                                                      'Zobrazit původní schéma',
+                                                  icon: Icon(
+                                                    Icons.close,
+                                                    color: c.onAccent,
+                                                    size: 15,
+                                                  ),
+                                                  constraints:
+                                                      const BoxConstraints.tightFor(
+                                                        width: 28,
+                                                        height: 26,
+                                                      ),
+                                                  padding: EdgeInsets.zero,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      Positioned(
+                                        right: 16,
+                                        bottom: 16,
+                                        child: _zoomControls(c),
+                                      ),
+                                      if (app.mode == CanvasMode.corner ||
+                                          app.mode == CanvasMode.place ||
+                                          app.mode == CanvasMode.wire)
+                                        Positioned(
+                                          left: 16,
+                                          bottom: 16,
+                                          child: Container(
+                                            constraints: const BoxConstraints(
+                                              maxWidth: 250,
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 8,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: c.accent,
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              app.mode == CanvasMode.wire
+                                                  ? 'Klikněte na první a druhý připojovací bod'
+                                                  : 'Klikněte do výkresu · Esc ukončí vkládání',
+                                              style: TextStyle(
+                                                color: c.onAccent,
+                                                fontSize: 10,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                if (app.diagnosticsVisible)
+                                  _diagnosticsPanel(c),
+                              ],
+                            ),
+                          ),
+                          if (assistantVisible) ...[
+                            VerticalDivider(
+                              width: 1,
+                              thickness: 1,
+                              color: c.border,
+                            ),
+                            SizedBox(
+                              width: compact ? 300 : 330,
+                              child: Material(
+                                color: c.panel,
+                                child: Column(
+                                  children: [
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        border: Border(
+                                          bottom: BorderSide(color: c.border),
+                                        ),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          PanelTab(
+                                            label: 'Asistent',
+                                            icon: Icons.auto_awesome_outlined,
+                                            selected:
+                                                app.sidePanel ==
+                                                SidePanel.assistant,
+                                            onTap:
+                                                () => app.setPanel(
+                                                  SidePanel.assistant,
+                                                ),
+                                          ),
+                                          PanelTab(
+                                            label: 'Vlastnosti',
+                                            icon: Icons.tune,
+                                            selected:
+                                                app.sidePanel ==
+                                                SidePanel.properties,
+                                            count: app.selectedIds.length,
+                                            onTap:
+                                                () => app.setPanel(
+                                                  SidePanel.properties,
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: IndexedStack(
+                                        index: app.sidePanel.index,
+                                        children: [
+                                          AssistantPanel(
+                                            controller: app,
+                                            onSettings:
+                                                () => showAiSettings(
+                                                  context,
+                                                  app,
+                                                ),
+                                            inputFocus: promptFocus,
+                                          ),
+                                          PropertiesPanel(
+                                            controller: app,
+                                            onEditContinuation:
+                                                editContinuationMarker,
+                                            onAddContinuation:
+                                                startContinuation,
+                                            onAddContinuationPeer:
+                                                placeContinuationPeer,
+                                            onFollowContinuation:
+                                                (id, target) =>
+                                                    followContinuation(
+                                                      id,
+                                                      target: target,
+                                                    ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
-                              if (app.diagnosticsVisible) _diagnosticsPanel(c),
-                            ],
-                          ),
-                        ),
-                        if (assistantVisible) ...[
-                          VerticalDivider(
-                            width: 1,
-                            thickness: 1,
-                            color: c.border,
-                          ),
-                          SizedBox(
-                            width: compact ? 300 : 330,
-                            child: Material(
-                              color: c.panel,
-                              child: Column(
-                                children: [
-                                  Container(
-                                    decoration: BoxDecoration(
-                                      border: Border(
-                                        bottom: BorderSide(color: c.border),
-                                      ),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        PanelTab(
-                                          label: 'Asistent',
-                                          icon: Icons.auto_awesome_outlined,
-                                          selected:
-                                              app.sidePanel ==
-                                              SidePanel.assistant,
-                                          onTap:
-                                              () => app.setPanel(
-                                                SidePanel.assistant,
-                                              ),
-                                        ),
-                                        PanelTab(
-                                          label: 'Vlastnosti',
-                                          icon: Icons.tune,
-                                          selected:
-                                              app.sidePanel ==
-                                              SidePanel.properties,
-                                          count: app.selectedIds.length,
-                                          onTap:
-                                              () => app.setPanel(
-                                                SidePanel.properties,
-                                              ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: IndexedStack(
-                                      index: app.sidePanel.index,
-                                      children: [
-                                        AssistantPanel(
-                                          controller: app,
-                                          onSettings:
-                                              () =>
-                                                  showAiSettings(context, app),
-                                          inputFocus: promptFocus,
-                                        ),
-                                        PropertiesPanel(controller: app),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
                             ),
-                          ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                  _statusBar(c, compact),
-                ],
-              );
-            },
+                    _statusBar(c, compact),
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -565,8 +1148,8 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                 const SizedBox(height: 3),
                 Text(
                   app.dirty
-                      ? 'Neuložené změny · místní pracovní kopie'
-                      : 'Projekt · otevřený formát .oecad',
+                      ? '● Neuložené změny · ${app.fileName ?? 'bez souboru'}'
+                      : (app.fileName ?? 'Projekt bez souboru'),
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 9, color: c.muted),
                 ),
@@ -630,157 +1213,327 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
       color: c.panel,
       border: Border(bottom: BorderSide(color: c.border)),
     ),
-    child: Row(
-      children: [
-        PopupMenuButton<String>(
-          tooltip: 'Soubor',
-          offset: const Offset(0, 36),
-          onSelected: (value) {
-            switch (value) {
-              case 'new':
-                newProject();
-              case 'demo':
-                newProject(demo: true);
-              case 'open':
-                openProject();
-              case 'importPdf':
-                importPdf();
-              case 'save':
-                app.saveProject();
-              case 'pdf':
-                app.exportProject(pdf: true);
-              case 'svg':
-                app.exportProject(pdf: false);
-            }
-          },
-          itemBuilder:
-              (_) => const [
-                PopupMenuItem(value: 'new', child: Text('Nový projekt')),
-                PopupMenuItem(value: 'open', child: Text('Otevřít projekt…')),
-                PopupMenuItem(
-                  value: 'importPdf',
-                  child: Text('Importovat PDF jako grafiku…'),
+    child: LayoutBuilder(
+      builder:
+          (context, bounds) => SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: bounds.maxWidth),
+              child: IntrinsicWidth(
+                child: Row(
+                  children: [
+                    PopupMenuButton<String>(
+                      tooltip: 'Soubor',
+                      offset: const Offset(0, 36),
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'new':
+                            newProject();
+                          case 'demo':
+                            newProject(demo: true);
+                          case 'open':
+                            openProject();
+                          case 'recovery':
+                            showRecoveryDialog(context, workspace);
+                          case 'importPdf':
+                            importPdf();
+                          case 'save':
+                            app.saveProject();
+                          case 'saveAs':
+                            app.saveProjectAs();
+                          case 'close':
+                            closeProject(app);
+                          case 'pdf':
+                            app.exportProject(pdf: true);
+                          case 'svg':
+                            app.exportProject(pdf: false);
+                        }
+                      },
+                      itemBuilder:
+                          (_) => const [
+                            PopupMenuItem(
+                              value: 'new',
+                              child: Text('Nový projekt'),
+                            ),
+                            PopupMenuItem(
+                              value: 'open',
+                              child: Text('Otevřít projekt…'),
+                            ),
+                            PopupMenuItem(
+                              value: 'recovery',
+                              child: Text('Obnovit pracovní kopii…'),
+                            ),
+                            PopupMenuItem(
+                              value: 'importPdf',
+                              child: Text('Importovat PDF jako grafiku…'),
+                            ),
+                            PopupMenuItem(
+                              value: 'save',
+                              child: Text('Uložit projekt'),
+                            ),
+                            PopupMenuItem(
+                              value: 'saveAs',
+                              child: Text('Uložit jako… · Ctrl Shift S'),
+                            ),
+                            PopupMenuItem(
+                              value: 'close',
+                              child: Text('Zavřít aktivní projekt…'),
+                            ),
+                            PopupMenuDivider(),
+                            PopupMenuItem(
+                              value: 'pdf',
+                              child: Text('Exportovat všechny listy do PDF…'),
+                            ),
+                            PopupMenuItem(
+                              value: 'svg',
+                              child: Text('Exportovat aktuální list do SVG…'),
+                            ),
+                            PopupMenuDivider(),
+                            PopupMenuItem(
+                              value: 'demo',
+                              child: Text('Otevřít ukázkový projekt'),
+                            ),
+                          ],
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        child: Row(
+                          children: [
+                            Icon(Icons.folder_open_outlined, size: 17),
+                            SizedBox(width: 7),
+                            Text('Soubor', style: TextStyle(fontSize: 11)),
+                            SizedBox(width: 5),
+                            Icon(Icons.keyboard_arrow_down, size: 14),
+                          ],
+                        ),
+                      ),
+                    ),
+                    _toolbarDivider(c),
+                    EcadIconButton(
+                      icon: Icons.undo,
+                      label:
+                          'Vrátit · Ctrl Z${app.undoLabel == null ? '' : '\n${app.undoLabel}'}',
+                      onPressed: app.canUndo ? undoEdit : null,
+                    ),
+                    EcadIconButton(
+                      icon: Icons.redo,
+                      label:
+                          'Obnovit · Ctrl Y / Ctrl Shift Z${app.redoLabel == null ? '' : '\n${app.redoLabel}'}',
+                      onPressed: app.canRedo ? redoEdit : null,
+                    ),
+                    EcadIconButton(
+                      icon: Icons.history,
+                      label: 'Historie úprav',
+                      onPressed: editHistory,
+                    ),
+                    _toolbarDivider(c),
+                    _tool(
+                      Icons.near_me_outlined,
+                      'Výběr',
+                      'V',
+                      CanvasMode.select,
+                      compact,
+                    ),
+                    _tool(
+                      Icons.polyline_outlined,
+                      'Vodič',
+                      'W',
+                      CanvasMode.wire,
+                      compact,
+                    ),
+                    EcadIconButton(
+                      icon: Icons.arrow_forward,
+                      label: 'Vložit pokračovací odkaz',
+                      selected: app.mode == CanvasMode.continuation,
+                      onPressed:
+                          electricalSheet(app.sheet) ? startContinuation : null,
+                    ),
+                    EcadIconButton(
+                      icon: Icons.subdirectory_arrow_right,
+                      label: 'Přejít na protějšek · F',
+                      onPressed: followSelectedContinuation,
+                    ),
+                    EcadIconButton(
+                      icon: Icons.radio_button_unchecked,
+                      label: 'Svorka · 1–4 směry',
+                      selected:
+                          app.mode == CanvasMode.place &&
+                          app.placingKind == DeviceKind.terminal,
+                      onPressed: () async {
+                        final owner = app, generation = app.documentGeneration;
+                        final sides = await showTerminalSymbolDialog(
+                          context,
+                          initialSides: owner.terminalSides,
+                          title: 'Vložit průchozí svorku',
+                        );
+                        if (sides != null &&
+                            owner.isDocumentCurrent(generation)) {
+                          owner.setTerminalTool(sides);
+                        }
+                      },
+                    ),
+                    PopupMenuButton<CornerOrientation>(
+                      tooltip: 'Spojovací roh',
+                      icon: Icon(
+                        Icons.turn_right,
+                        size: 18,
+                        color: app.mode == CanvasMode.corner ? c.accent : null,
+                      ),
+                      onSelected: app.setCornerTool,
+                      itemBuilder:
+                          (_) => [
+                            for (final orientation in CornerOrientation.values)
+                              PopupMenuItem(
+                                value: orientation,
+                                child: Text(
+                                  'Spojovací roh ${orientation.glyph}',
+                                ),
+                              ),
+                          ],
+                    ),
+                    _tool(
+                      Icons.pan_tool_outlined,
+                      'Posun',
+                      'H',
+                      CanvasMode.pan,
+                      compact,
+                    ),
+                    PopupMenuButton<CanvasMode>(
+                      tooltip: 'Kreslit grafiku',
+                      icon: const Icon(Icons.draw_outlined, size: 18),
+                      onSelected: app.setMode,
+                      itemBuilder:
+                          (_) => const [
+                            PopupMenuItem(
+                              value: CanvasMode.drawLine,
+                              child: Text('Čára · L'),
+                            ),
+                            PopupMenuItem(
+                              value: CanvasMode.drawRectangle,
+                              child: Text('Obdélník · B'),
+                            ),
+                            PopupMenuItem(
+                              value: CanvasMode.drawText,
+                              child: Text('Text · T'),
+                            ),
+                          ],
+                    ),
+                    _toolbarDivider(c),
+                    EcadIconButton(
+                      icon: Icons.rotate_right,
+                      label: 'Otočit výběr · R',
+                      onPressed:
+                          app.selectedIds.isEmpty &&
+                                  app.mode != CanvasMode.corner
+                              ? null
+                              : app.rotateSelection,
+                    ),
+                    EcadIconButton(
+                      icon: Icons.copy_all_outlined,
+                      label: 'Duplikovat výběr · Ctrl D',
+                      onPressed:
+                          app.selectedIds.isEmpty
+                              ? null
+                              : app.duplicateSelection,
+                    ),
+                    EcadIconButton(
+                      icon: Icons.content_copy,
+                      label: 'Kopírovat výběr · Ctrl C',
+                      onPressed: app.selectedIds.isEmpty ? null : copySelection,
+                    ),
+                    EcadIconButton(
+                      icon: Icons.content_paste,
+                      label: 'Vložit ze schránky · Ctrl V',
+                      onPressed: pasteSelection,
+                    ),
+                    EcadIconButton(
+                      icon: Icons.delete_outline,
+                      label: 'Odstranit výběr · Delete',
+                      onPressed:
+                          app.selectedIds.isEmpty ? null : app.deleteSelection,
+                    ),
+                    _toolbarDivider(c),
+                    EcadIconButton(
+                      icon: Icons.grid_4x4_outlined,
+                      label: 'Zobrazit mřížku',
+                      selected: app.showGrid,
+                      onPressed: app.toggleGrid,
+                    ),
+                    EcadIconButton(
+                      icon: Icons.my_location,
+                      label: 'Nastavení kreslicího kurzoru',
+                      onPressed:
+                          () => showDrawingCursorDialog(
+                            context,
+                            preferences: drawingCursor,
+                          ),
+                    ),
+                    const SizedBox(width: 5),
+                    if (!compact)
+                      OutlinedButton.icon(
+                        onPressed: validate,
+                        icon: const Icon(Icons.fact_check_outlined, size: 15),
+                        label: const Text('Kontrola'),
+                      )
+                    else
+                      EcadIconButton(
+                        icon: Icons.fact_check_outlined,
+                        label: 'Zkontrolovat projekt',
+                        onPressed: validate,
+                      ),
+                    const Spacer(),
+                    EcadIconButton(
+                      icon: Icons.edit_outlined,
+                      label: 'Upravit vybraný objekt · F4',
+                      onPressed:
+                          !app.showingProposal &&
+                                  (app.selectedDevices.length == 1 ||
+                                      app.selectedPlacements.length == 1 ||
+                                      app.selectedMarkers.length == 1 ||
+                                      app.selectedGraphics.length == 1 ||
+                                      (app.selectedIds.length == 1 &&
+                                          app.sheet.corners.any(
+                                            (c) =>
+                                                app.selectedIds.contains(c.id),
+                                          )))
+                              ? editSelectedDevice
+                              : null,
+                    ),
+                    EcadIconButton(
+                      icon: Icons.tune,
+                      label: 'Zobrazit vlastnosti',
+                      selected:
+                          showAssistant &&
+                          app.sidePanel == SidePanel.properties,
+                      onPressed: () {
+                        setState(() => showAssistant = true);
+                        app.setPanel(SidePanel.properties);
+                      },
+                    ),
+                    EcadIconButton(
+                      icon: Icons.vertical_split_outlined,
+                      label: 'Zobrazit projekt a knihovnu',
+                      selected: showProject,
+                      onPressed:
+                          () => setState(() => showProject = !showProject),
+                    ),
+                    EcadIconButton(
+                      icon: Icons.auto_awesome_outlined,
+                      label: 'Zobrazit asistenta',
+                      selected: showAssistant,
+                      onPressed:
+                          () => setState(() => showAssistant = !showAssistant),
+                    ),
+                    const SizedBox(width: 4),
+                    EcadIconButton(
+                      icon: Icons.help_outline,
+                      label: 'Ovládání a klávesové zkratky',
+                      onPressed: () => showHelpDialog(context),
+                    ),
+                  ],
                 ),
-                PopupMenuItem(value: 'save', child: Text('Uložit projekt…')),
-                PopupMenuDivider(),
-                PopupMenuItem(
-                  value: 'pdf',
-                  child: Text('Exportovat všechny listy do PDF…'),
-                ),
-                PopupMenuItem(
-                  value: 'svg',
-                  child: Text('Exportovat aktuální list do SVG…'),
-                ),
-                PopupMenuDivider(),
-                PopupMenuItem(
-                  value: 'demo',
-                  child: Text('Otevřít ukázkový projekt'),
-                ),
-              ],
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                Icon(Icons.folder_open_outlined, size: 17),
-                SizedBox(width: 7),
-                Text('Soubor', style: TextStyle(fontSize: 11)),
-                SizedBox(width: 5),
-                Icon(Icons.keyboard_arrow_down, size: 14),
-              ],
+              ),
             ),
           ),
-        ),
-        _toolbarDivider(c),
-        EcadIconButton(
-          icon: Icons.undo,
-          label: 'Vrátit · Ctrl Z',
-          onPressed: app.canUndo ? app.undo : null,
-        ),
-        EcadIconButton(
-          icon: Icons.redo,
-          label: 'Obnovit · Ctrl Y',
-          onPressed: app.canRedo ? app.redo : null,
-        ),
-        _toolbarDivider(c),
-        _tool(Icons.near_me_outlined, 'Výběr', 'V', CanvasMode.select, compact),
-        _tool(Icons.polyline_outlined, 'Vodič', 'W', CanvasMode.wire, compact),
-        _tool(Icons.pan_tool_outlined, 'Posun', 'H', CanvasMode.pan, compact),
-        PopupMenuButton<CanvasMode>(
-          tooltip: 'Kreslit grafiku',
-          icon: const Icon(Icons.draw_outlined, size: 18),
-          onSelected: app.setMode,
-          itemBuilder:
-              (_) => const [
-                PopupMenuItem(
-                  value: CanvasMode.drawLine,
-                  child: Text('Čára · L'),
-                ),
-                PopupMenuItem(
-                  value: CanvasMode.drawRectangle,
-                  child: Text('Obdélník · B'),
-                ),
-                PopupMenuItem(
-                  value: CanvasMode.drawText,
-                  child: Text('Text · T'),
-                ),
-              ],
-        ),
-        _toolbarDivider(c),
-        EcadIconButton(
-          icon: Icons.rotate_right,
-          label: 'Otočit výběr · R',
-          onPressed: app.selectedIds.isEmpty ? null : app.rotateSelection,
-        ),
-        EcadIconButton(
-          icon: Icons.copy_outlined,
-          label: 'Duplikovat výběr · Ctrl D',
-          onPressed: app.selectedIds.isEmpty ? null : app.duplicateSelection,
-        ),
-        EcadIconButton(
-          icon: Icons.delete_outline,
-          label: 'Odstranit výběr · Delete',
-          onPressed: app.selectedIds.isEmpty ? null : app.deleteSelection,
-        ),
-        _toolbarDivider(c),
-        EcadIconButton(
-          icon: Icons.grid_4x4_outlined,
-          label: 'Zobrazit mřížku',
-          selected: app.showGrid,
-          onPressed: app.toggleGrid,
-        ),
-        const SizedBox(width: 5),
-        if (!compact)
-          OutlinedButton.icon(
-            onPressed: validate,
-            icon: const Icon(Icons.fact_check_outlined, size: 15),
-            label: const Text('Kontrola'),
-          )
-        else
-          EcadIconButton(
-            icon: Icons.fact_check_outlined,
-            label: 'Zkontrolovat projekt',
-            onPressed: validate,
-          ),
-        const Spacer(),
-        EcadIconButton(
-          icon: Icons.vertical_split_outlined,
-          label: 'Zobrazit projekt a knihovnu',
-          selected: showProject,
-          onPressed: () => setState(() => showProject = !showProject),
-        ),
-        EcadIconButton(
-          icon: Icons.auto_awesome_outlined,
-          label: 'Zobrazit asistenta',
-          selected: showAssistant,
-          onPressed: () => setState(() => showAssistant = !showAssistant),
-        ),
-        const SizedBox(width: 4),
-        EcadIconButton(
-          icon: Icons.help_outline,
-          label: 'Ovládání a klávesové zkratky',
-          onPressed: () => showHelpDialog(context),
-        ),
-      ],
     ),
   );
   Widget _toolbarDivider(EcadColors c) => Padding(
@@ -848,84 +1601,67 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
 
   Widget _sheetTabs(EcadColors c) => Container(
     height: 46,
-    decoration: BoxDecoration(
-      color: c.panel,
-      border: Border(bottom: BorderSide(color: c.border)),
-    ),
+    color: c.panel,
     child: Row(
       children: [
         Expanded(
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
-              for (final sheet in app.project.pages)
-                Semantics(
-                  button: true,
-                  selected: sheet.id == app.activeSheetId,
-                  child: InkWell(
-                    onTap: () => app.setSheet(sheet.id),
-                    onDoubleTap: () {
-                      app.setSheet(sheet.id);
-                      renameSheet();
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      constraints: const BoxConstraints(minWidth: 140),
+              for (final tab in workspace.tabs)
+                Builder(
+                  builder: (context) {
+                    final doc = workspace.document(tab.sessionId)!;
+                    final sheet = doc.project.sheetById(tab.sheetId)!;
+                    return Container(
                       decoration: BoxDecoration(
                         border: Border(
-                          right: BorderSide(color: c.border),
                           bottom: BorderSide(
                             color:
-                                sheet.id == app.activeSheetId
+                                workspace.activeTab == tab
                                     ? c.foreground
-                                    : Colors.transparent,
+                                    : c.border,
                             width: 2,
                           ),
                         ),
                       ),
                       child: Row(
                         children: [
-                          Tooltip(
-                            message: sheet.type.label,
-                            child: Icon(sheetTypeIcon(sheet.type), size: 13),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            sheet.number,
-                            style: TextStyle(fontSize: 10, color: c.muted),
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            sheet.name,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight:
-                                  sheet.id == app.activeSheetId
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
+                          InkWell(
+                            onTap: () => activateTab(tab),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                              child: Text(
+                                '${doc.project.name}${doc.dirty ? ' ●' : ''} · ${fullPageDesignation(sheet)} ${sheet.name}',
+                                style: const TextStyle(fontSize: 11),
+                              ),
                             ),
+                          ),
+                          IconButton(
+                            tooltip: 'Zavřít tab ${fullPageDesignation(sheet)}',
+                            onPressed: () => workspace.closeTab(tab),
+                            icon: const Icon(Icons.close, size: 14),
                           ),
                         ],
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 5),
-          child: EcadIconButton(
-            icon: Icons.add,
-            label: 'Nový list',
-            onPressed: addSheet,
-            size: 28,
-            iconSize: 17,
-          ),
+        IconButton(
+          tooltip: 'Přidat list',
+          onPressed: addSheet,
+          icon: const Icon(Icons.add, size: 18),
         ),
       ],
     ),
   );
+
   Widget _zoomControls(EcadColors c) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
     decoration: BoxDecoration(
@@ -970,7 +1706,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
         ),
         EcadIconButton(
           icon: Icons.fit_screen,
-          label: 'Celý list · F',
+          label: 'Celý list · Home',
           onPressed: app.viewport.fit,
           size: 27,
           iconSize: 17,
@@ -1003,7 +1739,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
         const SizedBox(width: 12),
         Text(
           app.sheet.graphics.isEmpty
-              ? '${app.sheet.devices.length} přístrojů · ${app.sheet.wires.length} vodičů'
+              ? '${app.sheet.devices.length} přístrojů · ${AutoConnect.wires(app.sheet).length} vodičů'
               : '${app.sheet.graphics.length} grafických objektů · ${app.selectedIds.length} vybráno',
           style: const TextStyle(fontSize: 9),
         ),
@@ -1075,6 +1811,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                       ),
                     )
                     : ListView.builder(
+                      key: const ValueKey('diagnostics-list'),
                       itemCount: app.diagnostics.length,
                       itemBuilder: (context, index) {
                         final issue = app.diagnostics[index];
@@ -1088,7 +1825,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                             size: 15,
                           ),
                           title: Text(
-                            issue.message,
+                            diagnosticText(app.project, issue),
                             style: const TextStyle(fontSize: 11),
                           ),
                           onTap: () {
@@ -1097,6 +1834,19 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                             }
                             if (issue.deviceId != null) {
                               app.select({issue.deviceId!});
+                            }
+                            if (issue.componentId case final id?) {
+                              editComponent(
+                                context,
+                                app,
+                                component: app.project.componentById(id),
+                              );
+                            } else if (issue.articleId case final id?) {
+                              editArticle(
+                                context,
+                                app,
+                                article: app.project.articleById(id),
+                              );
                             }
                             app.setPanel(SidePanel.properties);
                           },

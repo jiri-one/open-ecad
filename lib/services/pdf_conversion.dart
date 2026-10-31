@@ -18,6 +18,6 @@ String? sheetTypeImportNote(Object? summary) {
   if (classified == 0 || unclassified is! int) return null;
   return 'Typ listu je odhadnutý z názvu stránky v záložkách PDF u '
       '$classified z ${classified + unclassified} listů. Ostatní mají výchozí '
-      'typ ${SheetType.legacyDefault.label.toLowerCase()}. Typ lze změnit '
+      'typ ${SheetType.multiLine.label.toLowerCase()}. Typ lze změnit '
       've vlastnostech listu.';
 }

@@ -2,7 +2,7 @@
 
 První verze importu převádí PDF na editovatelnou **grafiku**: samostatné vektorové
 cesty, texty a vložené obrázky. Každá stránka vytvoří list se svými rozměry.
-Výsledkem je běžný přenositelný `.oecad` ve formátu v3, nikoli odkaz na původní
+Výsledkem je běžný přenositelný `.oecad` ve formátu v4, nikoli odkaz na původní
 PDF nebo celostránkový snímek. Soubor lze otevřít i ve webové aplikaci.
 
 Import zatím neobnovuje přístroje, vývody ani elektrické spoje. Nakreslená čára
@@ -11,7 +11,7 @@ Grafiku lze vybrat, přesunout, otočit, duplikovat, smazat a měnit její vlast
 Texty lze přepsat. Nové čáry, obdélníky a texty se vkládají přes **Kreslit grafiku**
 nebo klávesami **L**, **B**, **T**. Existující nástroje přístrojů a vodičů fungují
 na stejném listu. Editor jednotlivých uzlů křivek a tvorba vlastních elektrických
-symbolů jsou další etapa.
+značek pro knihovnu jsou další etapa; bloky s editovatelnými porty již lze vložit.
 
 ## Instalace místního převodníku
 
@@ -84,10 +84,11 @@ identifikaci zdroje SHA-256 a upozornění na nepřevedené vlastnosti.
   a 15 000 grafických objektů. Větší projekty **ukládejte ručně do souboru**;
   aplikace tento stav ukazuje v liště. Explicitní uložení zachovává všechny listy.
 
-Aplikace čte soubory formátu v1 až v3. Převodník i uložení zapisují v3, které starší
-vydání aplikace odmítnou jako nepodporovaný formát. Schéma je popsáno v
+Aplikace čte formáty v4 a v5 a ukládá v5. PDF převodník vytváří v4.
+Starší formáty se odmítají bez automatické migrace. Schéma je popsáno v
 [dokumentaci jádra](../packages/ecad_core/README.md).
 
-Další etapy zahrnují vlastní symboly, vícepólové přístroje, svorkovnice, kabely,
-rozpoznávání sítí a vazby mezi listy. Uživatelské vstupní dokumenty ani jejich
+Další etapy importu zahrnují rozpoznávání elektrických značek, sítí a vazeb
+mezi listy z PDF. V ručně vytvářeném projektu již existují komponenty,
+svorkovnice i mezilistové odkazy. Uživatelské vstupní dokumenty ani jejich
 převedené projekty nejsou součástí veřejného repozitáře.

@@ -56,24 +56,73 @@ abstract final class WireRouter {
 
   /// Null for a port the device kind does not define.
   static WireTerminal? terminal(Device device, String portId) {
-    final definition = SymbolCatalog.definitionFor(device.kind);
+    final definition = geometryFor(device);
     final port = definition.portById(portId);
     if (port == null) return null;
     final offset = _offset(device, port);
     return WireTerminal(
       device.position + offset,
-      direction: _axis(offset),
+      direction: _axis(
+        (port.direction ?? port.position).rotated(device.rotation),
+      ),
       body: _body(device, definition),
     );
   }
 
+  static RouteBox body(Device device) {
+    final geometry = geometryFor(device);
+    final cos = math.cos(device.rotation * math.pi / 180).abs();
+    final sin = math.sin(device.rotation * math.pi / 180).abs();
+    final halfWidth = (geometry.width * cos + geometry.height * sin) / 2;
+    final halfHeight = (geometry.width * sin + geometry.height * cos) / 2;
+    return RouteBox(
+      device.position.x - halfWidth,
+      device.position.y - halfHeight,
+      device.position.x + halfWidth,
+      device.position.y + halfHeight,
+    );
+  }
+
   /// Empty when an endpoint cannot be resolved.
-  static List<Vec2> path(Wire wire, Map<String, Device> devices) {
-    final from = devices[wire.from.deviceId];
-    final to = devices[wire.to.deviceId];
-    final start = from == null ? null : terminal(from, wire.from.portId);
-    final end = to == null ? null : terminal(to, wire.to.portId);
+  static WireTerminal? endpoint(
+    WireEndpoint ref,
+    Map<String, Device> devices, [
+    Map<String, ContinuationMarker> markers = const {},
+    Map<String, ConnectionCorner> corners = const {},
+  ]) {
+    switch (ref) {
+      case CornerRef(:final cornerId, :final portId):
+        final corner = corners[cornerId];
+        final point = corner?.portPosition(portId);
+        return point == null
+            ? null
+            : WireTerminal(point, direction: corner!.direction(portId)!);
+      case TerminalRef(:final deviceId, :final portId):
+        final device = devices[deviceId];
+        return device == null || device.mode == OccurrenceMode.reference
+            ? null
+            : terminal(device, portId);
+      case ContinuationRef(:final markerId):
+        final marker = markers[markerId];
+        return marker == null
+            ? null
+            : WireTerminal(
+              marker.position,
+              direction: sideDirection(marker.direction),
+            );
+    }
+  }
+
+  static List<Vec2> path(
+    Wire wire,
+    Map<String, Device> devices, [
+    Map<String, ContinuationMarker> markers = const {},
+    Map<String, ConnectionCorner> corners = const {},
+  ]) {
+    final start = endpoint(wire.from, devices, markers, corners);
+    final end = endpoint(wire.to, devices, markers, corners);
     if (start == null || end == null) return const [];
+    if (wire.isAutomatic) return [start.point, end.point];
     return route(start, end, wire.waypoints);
   }
 
@@ -119,25 +168,6 @@ abstract final class WireRouter {
       point.y > box.top + _epsilon &&
       point.y < box.bottom - _epsilon;
 
-  static bool _onPath(Vec2 point, List<Vec2> path) {
-    if (path.length == 1) return _near(point, path.single);
-    for (var i = 1; i < path.length; i++) {
-      final a = path[i - 1];
-      final b = path[i];
-      final vertical = (a.x - b.x).abs() < _epsilon;
-      final across = vertical ? point.x - a.x : point.y - a.y;
-      final along = vertical ? point.y : point.x;
-      final low = vertical ? math.min(a.y, b.y) : math.min(a.x, b.x);
-      final high = vertical ? math.max(a.y, b.y) : math.max(a.x, b.x);
-      if (across.abs() < _epsilon &&
-          along > low - _epsilon &&
-          along < high + _epsilon) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   static List<Vec2> _through(
     WireTerminal start,
     WireTerminal end,
@@ -182,13 +212,17 @@ abstract final class WireRouter {
   static Wire follow(
     Wire wire,
     Map<String, Device> before,
-    Map<String, Device> after,
-  ) {
+    Map<String, Device> after, {
+    Map<String, ContinuationMarker> beforeMarkers = const {},
+    Map<String, ContinuationMarker> afterMarkers = const {},
+    Map<String, ConnectionCorner> beforeCorners = const {},
+    Map<String, ConnectionCorner> afterCorners = const {},
+  }) {
     if (wire.waypoints.isEmpty) return wire;
-    final oldStart = _at(before, wire.from);
-    final newStart = _at(after, wire.from);
-    final oldEnd = _at(before, wire.to);
-    final newEnd = _at(after, wire.to);
+    final oldStart = endpoint(wire.from, before, beforeMarkers, beforeCorners);
+    final newStart = endpoint(wire.from, after, afterMarkers, afterCorners);
+    final oldEnd = endpoint(wire.to, before, beforeMarkers, beforeCorners);
+    final newEnd = endpoint(wire.to, after, afterMarkers, afterCorners);
     if (oldStart == null ||
         newStart == null ||
         oldEnd == null ||
@@ -242,59 +276,7 @@ abstract final class WireRouter {
         written: <int>{},
       );
     }
-    // Sliding a bend can put it inside a connected symbol, and the device may
-    // land on a far bend. Such hints are dropped, then the moved bends, and
-    // finally all of them; the stored route is never knowingly invalid.
-    final start = terminal(after[wire.from.deviceId]!, wire.from.portId)!;
-    final end = terminal(after[wire.to.deviceId]!, wire.to.portId)!;
-    final adjusted = points.map(_tidy).toList();
-    final moved = {
-      if (startChanged) ...[...startRun.on, ...startRun.line],
-      if (endChanged) ...[...endRun.on, ...endRun.line],
-    };
-    bool clear(Vec2 point) =>
-        !_inside(start.body, point) && !_inside(end.body, point);
-    var tried = -1;
-    for (final hints in [
-      adjusted,
-      [
-        for (final point in adjusted)
-          if (clear(point)) point,
-      ],
-      [
-        for (final (index, point) in adjusted.indexed)
-          if (!moved.contains(index) && clear(point)) point,
-      ],
-      const <Vec2>[],
-    ]) {
-      // Each candidate is a subset of the previous one.
-      if (hints.length == tried) continue;
-      tried = hints.length;
-      final settled = _settle(start, end, hints);
-      if (settled != null) return wire.copyWith(waypoints: settled);
-    }
-    return wire.copyWith(waypoints: adjusted);
-  }
-
-  /// [hints] without those the path skips, if the path through them is
-  /// sound; a skipped hint would be invisible yet shape later edits.
-  static List<Vec2>? _settle(
-    WireTerminal start,
-    WireTerminal end,
-    List<Vec2> hints,
-  ) {
-    var current = hints;
-    for (var attempt = 0; attempt < 4; attempt++) {
-      final path = _through(start, end, current);
-      if (!_sound(path, start, end)) return null;
-      final visited = [
-        for (final point in current)
-          if (_onPath(point, path)) point,
-      ];
-      if (visited.length == current.length) return current;
-      current = visited;
-    }
-    return null;
+    return wire.copyWith(waypoints: points.map(_tidy).toList());
   }
 
   /// Waypoint indices next to a terminal, in [order] from it: those on the
@@ -575,7 +557,7 @@ abstract final class WireRouter {
     return result;
   }
 
-  static RouteBox? _body(Device device, SymbolDefinition definition) {
+  static RouteBox? _body(Device device, SymbolGeometry definition) {
     final radians = device.rotation * math.pi / 180;
     final cos = math.cos(radians).abs();
     final sin = math.sin(radians).abs();
@@ -590,7 +572,9 @@ abstract final class WireRouter {
     for (final port in definition.ports) {
       final offset = _offset(device, port);
       final point = device.position + offset;
-      final axis = _axis(offset);
+      final axis = _axis(
+        (port.direction ?? port.position).rotated(device.rotation),
+      );
       if (axis.x > 0) right = math.min(right, point.x);
       if (axis.x < 0) left = math.max(left, point.x);
       if (axis.y > 0) bottom = math.min(bottom, point.y);
@@ -598,16 +582,6 @@ abstract final class WireRouter {
     }
     if (right - left < _epsilon || bottom - top < _epsilon) return null;
     return RouteBox(left, top, right, bottom);
-  }
-
-  /// Without the body, which following waypoints does not need.
-  static WireTerminal? _at(Map<String, Device> devices, TerminalRef ref) {
-    final device = devices[ref.deviceId];
-    if (device == null) return null;
-    final port = SymbolCatalog.definitionFor(device.kind).portById(ref.portId);
-    if (port == null) return null;
-    final offset = _offset(device, port);
-    return WireTerminal(device.position + offset, direction: _axis(offset));
   }
 
   // Most symbols are unrotated; skipping the trigonometry keeps large batch

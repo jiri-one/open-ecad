@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'commands.dart';
+import 'autoconnect.dart';
+import 'catalog.dart';
+import 'edit_history.dart';
 import 'graphics.dart';
 import 'model.dart';
 import 'routing.dart';
@@ -34,18 +37,21 @@ class ProjectEngine {
   bool get canRedo => _redo.isNotEmpty;
   String? get undoLabel => canUndo ? _undo.last.label : null;
   String? get redoLabel => canRedo ? _redo.last.label : null;
+  List<EditHistoryEntry> get undoHistory => _history(_undo);
+  List<EditHistoryEntry> get redoHistory => _history(_redo);
+
+  List<EditHistoryEntry> _history(List<_HistoryEntry> entries) =>
+      List.unmodifiable([
+        for (final (index, entry) in entries.reversed.indexed)
+          EditHistoryEntry(label: entry.label, steps: index + 1),
+      ]);
 
   void execute(
     List<EcadCommand> commands, {
     String label = '',
     int? expectedRevision,
   }) {
-    if (expectedRevision != null && expectedRevision != _project.revision) {
-      throw EcadException(
-        'This edit targets revision $expectedRevision; the project is at revision ${_project.revision}.',
-        code: 'stale_revision',
-      );
-    }
+    _checkRevision(expectedRevision);
     if (commands.isEmpty || commands.length > ProjectLimits.maxCommands) {
       throw const EcadException(
         'A transaction requires 1–1000 commands.',
@@ -65,6 +71,29 @@ class ProjectEngine {
     }
     final candidate = draft.build(revision);
     requireValidProject(candidate);
+    final editedWireIds = {
+      for (final command in commands)
+        if (command is AddWire)
+          command.wire.id
+        else if (command is UpdateWire)
+          command.wire.id,
+    };
+    for (final sheet in candidate.pages) {
+      final pairs = <(WireEndpoint, WireEndpoint), Wire>{};
+      for (final wire in sheet.wires) {
+        final previous =
+            pairs[(wire.from, wire.to)] ?? pairs[(wire.to, wire.from)];
+        if (previous != null &&
+            (editedWireIds.contains(wire.id) ||
+                editedWireIds.contains(previous.id))) {
+          throw const EcadException(
+            'These endpoints are already connected.',
+            code: 'duplicate_connection',
+          );
+        }
+        pairs[(wire.from, wire.to)] = wire;
+      }
+    }
     // Nothing observable changes until every command and the final graph pass.
     _undo.add(_HistoryEntry(_project, label));
     if (_undo.length > historyLimit) _undo.removeAt(0);
@@ -74,30 +103,67 @@ class ProjectEngine {
 
   bool undo() {
     if (!canUndo) return false;
-    final revision = _nextRevision();
-    final entry = _undo.removeLast();
-    _redo.add(_HistoryEntry(_project, entry.label));
-    _project = entry.project.copyWith(revision: revision);
-    return true;
+    return undoSteps(1);
   }
 
   bool redo() {
     if (!canRedo) return false;
-    final revision = _nextRevision();
-    final entry = _redo.removeLast();
-    _undo.add(_HistoryEntry(_project, entry.label));
-    _project = entry.project.copyWith(revision: revision);
+    return redoSteps(1);
+  }
+
+  bool undoSteps(int count, {int? expectedRevision}) =>
+      _moveHistory(_undo, _redo, count, expectedRevision);
+
+  bool redoSteps(int count, {int? expectedRevision}) =>
+      _moveHistory(_redo, _undo, count, expectedRevision);
+
+  bool _moveHistory(
+    List<_HistoryEntry> source,
+    List<_HistoryEntry> destination,
+    int count,
+    int? expectedRevision,
+  ) {
+    _checkRevision(expectedRevision);
+    if (count < 1 || count > source.length) {
+      throw const EcadException(
+        'History step count must be positive and within available history.',
+        code: 'invalid_history_count',
+      );
+    }
+    final revision = _nextRevision(count);
+    final boundary = source.length - count;
+    final candidate = source[boundary].project.copyWith(revision: revision);
+    final moved = <_HistoryEntry>[];
+    var previous = _project;
+    for (var index = source.length - 1; index >= boundary; index--) {
+      final entry = source[index];
+      moved.add(_HistoryEntry(previous, entry.label));
+      previous = entry.project;
+    }
+    // A rejected jump must leave both stacks intact.
+    source.removeRange(boundary, source.length);
+    destination.addAll(moved);
+    _project = candidate;
     return true;
   }
 
-  int _nextRevision() {
-    if (_project.revision >= ProjectLimits.maxRevision) {
+  void _checkRevision(int? expectedRevision) {
+    if (expectedRevision != null && expectedRevision != _project.revision) {
+      throw EcadException(
+        'This edit targets revision $expectedRevision; the project is at revision ${_project.revision}.',
+        code: 'stale_revision',
+      );
+    }
+  }
+
+  int _nextRevision([int count = 1]) {
+    if (count > ProjectLimits.maxRevision - _project.revision) {
       throw const EcadException(
         'Project revision limit reached.',
         code: 'limit_exceeded',
       );
     }
-    return _project.revision + 1;
+    return _project.revision + count;
   }
 }
 
@@ -112,6 +178,12 @@ class _Draft {
 
   final EcadProject _project;
   String _name;
+  String? _description;
+  late final _articles = _Items(_project.articles, (v) => v.id);
+  late final _components = _Items(_project.components, (v) => v.id);
+  late final _links = _Items(_project.continuationLinks, (v) => v.id);
+  late final _strips = _Items(_project.terminalStrips, (v) => v.id);
+  late final _layouts = _Items(_project.mountingLayouts, (v) => v.id);
   final List<Sheet> _pages;
 
   // A repeated sheet ID addresses its first sheet until validation rejects it.
@@ -120,6 +192,12 @@ class _Draft {
 
   EcadProject build(int revision) => _project.copyWith(
     name: _name,
+    description: _description,
+    articles: _articles.toList(),
+    components: _components.toList(),
+    continuationLinks: _links.toList(),
+    terminalStrips: _strips.toList(),
+    mountingLayouts: _layouts.toList(),
     revision: revision,
     pages: [
       for (final (index, sheet) in _pages.indexed)
@@ -137,6 +215,95 @@ class _Draft {
 
   void apply(EcadCommand command) {
     switch (command) {
+      case RenameStructureBranch():
+        _renameStructureBranch(command);
+      case AddTerminalStrip():
+        _add(_strips, command.strip, command.strip.id);
+      case UpdateTerminalStrip():
+        _replace(_strips, command.strip, command.strip.id);
+      case AddArticle():
+        _add(_articles, command.article, command.article.id);
+      case UpdateArticle():
+        final previous = _articles.last(command.article.id);
+        if (previous != null &&
+            previous.unit != command.article.unit &&
+            _components.toList().any((c) => c.articleId == previous.id)) {
+          throw const EcadException(
+            'The unit of a used article cannot change; assign another article.',
+            code: 'article_unit_in_use',
+          );
+        }
+        _replace(_articles, command.article, command.article.id);
+      case DeleteArticle():
+        _remove(_articles, command.articleId);
+      case AddComponent():
+        _add(_components, command.component, command.component.id);
+      case UpdateComponent():
+        _replace(_components, command.component, command.component.id);
+      case DeleteComponent():
+        _remove(_components, command.componentId);
+      case AddContinuationLink():
+        _add(_links, command.link, command.link.id);
+      case UpdateContinuationLink():
+        _replace(_links, command.link, command.link.id);
+      case DeleteContinuationLink():
+        _remove(_links, command.linkId);
+      case AddMountingLayout():
+        _add(_layouts, command.layout, command.layout.id);
+      case UpdateMountingLayout():
+        _replace(_layouts, command.layout, command.layout.id);
+      case DeleteMountingLayout():
+        _remove(_layouts, command.layoutId);
+      case AddConnectionCorner():
+        _add(
+          _sheet(command.sheetId).corners,
+          command.corner,
+          command.corner.id,
+        );
+      case UpdateConnectionCorner():
+        _sheet(command.sheetId).changeCorner(command.corner);
+      case DeleteConnectionCorner():
+        _remove(_sheet(command.sheetId).corners, command.cornerId);
+        _sheet(command.sheetId).deleteAttached(command.cornerId);
+      case AddContinuationMarker():
+        _add(
+          _sheet(command.sheetId).markers,
+          command.marker,
+          command.marker.id,
+        );
+      case UpdateContinuationMarker():
+        _sheet(command.sheetId).changeMarker(command.marker);
+      case DeleteContinuationMarker():
+        _remove(_sheet(command.sheetId).markers, command.markerId);
+        _sheet(command.sheetId).deleteAttached(command.markerId);
+      case SetProjectDescription():
+        _description = command.description;
+      case UpdateWire():
+        _sheet(command.sheetId).updateWire(command.wire);
+      case UpdateSheet():
+        _sheet(command.sheet.id);
+        _pages[_pageIndex[command.sheet.id]!] = command.sheet;
+        _edited.remove(_pageIndex[command.sheet.id]);
+      case DeleteSheet():
+        _sheet(command.sheetId);
+        _flushSheets();
+        _pages.removeAt(_pageIndex[command.sheetId]!);
+        _reindexSheets();
+      case ReorderSheets():
+        if (command.ids.length != _pages.length ||
+            command.ids.toSet().length != _pages.length ||
+            command.ids.any((id) => !_pageIndex.containsKey(id))) {
+          throw const EcadException(
+            'Reorder requires each sheet ID exactly once.',
+            code: 'invalid_command',
+          );
+        }
+        _flushSheets();
+        final ordered = [for (final id in command.ids) _pages[_pageIndex[id]!]];
+        _pages.clear();
+        _pages.addAll(ordered);
+        _reindexSheets();
+
       case RenameProject():
         _name = command.name;
       case AddSheet():
@@ -168,6 +335,7 @@ class _Draft {
       case UpdateDevice():
         final sheet = _sheet(command.sheetId);
         _requireDevices(sheet.devices, [command.device.id]);
+        sheet.requireDisconnectedTerminalPorts([command.device]);
         sheet.changeDevices([command.device.id], (_) => command.device);
       case UpdateDevices():
         final sheet = _sheet(command.sheetId);
@@ -181,6 +349,7 @@ class _Draft {
           );
         }
         _requireDevices(sheet.devices, replacements.keys);
+        sheet.requireDisconnectedTerminalPorts(command.devices);
         sheet.changeDevices(
           replacements.keys,
           (device) => replacements[device.id]!,
@@ -260,6 +429,104 @@ class _Draft {
     }
   }
 
+  void _renameStructureBranch(RenameStructureBranch command) {
+    if ([
+      command.prefix,
+      command.replacement,
+    ].any((path) => path.length > 16 || !path.every(validReferenceSegment))) {
+      throw const EcadException(
+        'Invalid structure path.',
+        code: 'invalid_structure',
+      );
+    }
+    StructureContext replace(StructureContext value) => replaceStructurePrefix(
+      value,
+      command.aspect,
+      command.prefix,
+      command.replacement,
+    );
+    _flushSheets();
+    for (var i = 0; i < _pages.length; i++) {
+      final page = _pages[i];
+      final context = replace(page.structure);
+      if (context != page.structure)
+        _pages[i] = page.copyWith(structure: context);
+    }
+    for (final component in _components.toList()) {
+      final reference = component.reference;
+      if (reference == null) continue;
+      final context = replace(reference.context);
+      if (context != reference.context) {
+        _replace(
+          _components,
+          component.copyWith(
+            reference: ComponentReference(
+              context: context,
+              localDesignation: reference.localDesignation,
+            ),
+          ),
+          component.id,
+        );
+      }
+    }
+    for (final strip in _strips.toList()) {
+      final context = replace(strip.reference.context);
+      if (context != strip.reference.context) {
+        _replace(
+          _strips,
+          strip.copyWith(
+            reference: ComponentReference(
+              context: context,
+              localDesignation: strip.reference.localDesignation,
+            ),
+          ),
+          strip.id,
+        );
+      }
+    }
+  }
+
+  void _flushSheets() {
+    for (final entry in _edited.entries) {
+      _pages[entry.key] = entry.value.build();
+    }
+    _edited.clear();
+  }
+
+  void _reindexSheets() {
+    _pageIndex.clear();
+    for (final (index, sheet) in _pages.indexed) {
+      _pageIndex[sheet.id] = index;
+    }
+  }
+
+  static void _add<T extends Object>(_Items<T> items, T value, String id) {
+    if (items.contains(id))
+      throw EcadException(
+        'Identifier $id already exists.',
+        code: 'duplicate_id',
+      );
+    items.add(value);
+  }
+
+  static void _replace<T extends Object>(_Items<T> items, T value, String id) {
+    if (!items.contains(id))
+      throw EcadException(
+        'Identifier $id does not exist.',
+        code: 'missing_reference',
+      );
+    items.update([id], (_) => value);
+  }
+
+  static void _remove<T extends Object>(_Items<T> items, String id) {
+    if (!items.contains(id))
+      throw EcadException(
+        'Identifier $id does not exist.',
+        code: 'missing_reference',
+      );
+    items.removeAll([id]);
+  }
+
   static void _requireDevices(_Items<Device> devices, Iterable<String> ids) {
     if (ids.isEmpty || ids.length > ProjectLimits.maxDevices) {
       throw const EcadException(
@@ -304,6 +571,12 @@ class _SheetDraft {
   String? name;
   SheetType? type;
   _Items<Device>? _devices;
+  _Items<ConnectionCorner>? _corners;
+  _Items<ConnectionCorner> get corners =>
+      _corners ??= _Items(_sheet.corners, (v) => v.id);
+  _Items<ContinuationMarker>? _markers;
+  _Items<ContinuationMarker> get markers =>
+      _markers ??= _Items(_sheet.continuations, (v) => v.id);
   _Items<Wire>? _wires;
   _Items<DrawingElement>? _graphics;
   Map<String, List<int>>? _wiresByDevice;
@@ -318,6 +591,8 @@ class _SheetDraft {
     name: name,
     type: type,
     devices: _devices?.toList(),
+    continuations: _markers?.toList(),
+    corners: _corners?.toList(),
     wires: _wires?.toList(),
     graphics: _graphics?.toList(),
   );
@@ -325,6 +600,35 @@ class _SheetDraft {
   void addWire(Wire wire) {
     final position = wires.add(wire);
     if (_wiresByDevice case final index?) _attach(index, wire, position);
+  }
+
+  void updateWire(Wire wire) {
+    _Draft._replace(wires, wire, wire.id);
+    _wiresByDevice = null;
+  }
+
+  void requireDisconnectedTerminalPorts(Iterable<Device> replacements) {
+    final removed = <TerminalRef>{};
+    for (final next in replacements) {
+      final previous = devices.last(next.id)!;
+      if (previous.symbol case TerminalSymbolSpec(:final sides)) {
+        final retained = geometryFor(next).ports.map((p) => p.id).toSet();
+        removed.addAll(
+          sides
+              .where((s) => !retained.contains(s.name))
+              .map((s) => TerminalRef(deviceId: next.id, portId: s.name)),
+        );
+      }
+    }
+    if (removed.isNotEmpty &&
+        AutoConnect.wires(
+          build(),
+        ).any((w) => removed.contains(w.from) || removed.contains(w.to))) {
+      throw const EcadException(
+        'Disconnect a terminal port before removing its direction.',
+        code: 'connected_terminal_port',
+      );
+    }
   }
 
   /// Manual bends of attached wires follow the devices in the same revision,
@@ -345,18 +649,81 @@ class _SheetDraft {
     }
     // Following reads only the two ends of a wire.
     Map<String, Device> ends(Wire wire, Device? Function(String) lookup) => {
-      for (final id in [wire.from.deviceId, wire.to.deviceId])
+      for (final id in [wire.from.ownerId, wire.to.ownerId])
         if (lookup(id) case final device?) id: device,
     };
     for (final position in attached) {
       final wire = wires.at(position);
       if (wire == null) continue;
+      final markerEnds = {
+        for (final id in [wire.from.ownerId, wire.to.ownerId])
+          if (markers.last(id) case final marker?) id: marker,
+      };
       wires.replace(
         position,
         WireRouter.follow(
           wire,
           ends(wire, (id) => before[id] ?? devices.last(id)),
           ends(wire, devices.last),
+          beforeCorners: {for (final c in corners.toList()) c.id: c},
+          afterCorners: {for (final c in corners.toList()) c.id: c},
+          beforeMarkers: markerEnds,
+          afterMarkers: markerEnds,
+        ),
+      );
+    }
+  }
+
+  void deleteAttached(String id) => _attachedTo(id).forEach(wires.removeAt);
+
+  void changeMarker(ContinuationMarker marker) {
+    final old = markers.last(marker.id);
+    if (old == null)
+      throw const EcadException(
+        'Unknown continuation marker.',
+        code: 'missing_reference',
+      );
+    final before = {for (final m in markers.toList()) m.id: m};
+    markers.update([marker.id], (_) => marker);
+    final after = {...before, marker.id: marker};
+    final deviceMap = {for (final d in devices.toList()) d.id: d};
+    for (final position in _attachedTo(marker.id)) {
+      final wire = wires.at(position);
+      if (wire != null)
+        wires.replace(
+          position,
+          WireRouter.follow(
+            wire,
+            deviceMap,
+            deviceMap,
+            beforeCorners: {for (final c in corners.toList()) c.id: c},
+            afterCorners: {for (final c in corners.toList()) c.id: c},
+            beforeMarkers: before,
+            afterMarkers: after,
+          ),
+        );
+    }
+  }
+
+  void changeCorner(ConnectionCorner corner) {
+    final before = {for (final c in corners.toList()) c.id: c};
+    _Draft._replace(corners, corner, corner.id);
+    final after = {...before, corner.id: corner};
+    final deviceMap = {for (final d in devices.toList()) d.id: d};
+    final markerMap = {for (final m in markers.toList()) m.id: m};
+    for (final position in _attachedTo(corner.id)) {
+      final wire = wires.at(position);
+      if (wire == null) continue;
+      wires.replace(
+        position,
+        WireRouter.follow(
+          wire,
+          deviceMap,
+          deviceMap,
+          beforeMarkers: markerMap,
+          afterMarkers: markerMap,
+          beforeCorners: before,
+          afterCorners: after,
         ),
       );
     }
@@ -383,9 +750,9 @@ class _SheetDraft {
   }
 
   static void _attach(Map<String, List<int>> index, Wire wire, int position) {
-    index.putIfAbsent(wire.from.deviceId, () => []).add(position);
-    if (wire.to.deviceId != wire.from.deviceId) {
-      index.putIfAbsent(wire.to.deviceId, () => []).add(position);
+    index.putIfAbsent(wire.from.ownerId, () => []).add(position);
+    if (wire.to.ownerId != wire.from.ownerId) {
+      index.putIfAbsent(wire.to.ownerId, () => []).add(position);
     }
   }
 }

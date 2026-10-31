@@ -182,6 +182,7 @@ class AssistantService {
         prompt: prompt,
         settings: settings,
         sheet: sheet,
+        project: project,
         selectedDeviceIds: selectedDeviceIds,
       );
       return fromActions(
@@ -508,21 +509,58 @@ class _CommandBuilder {
     this.sheet,
     this.selectedIds,
     this.insertionPoint,
-  ) : devices = [...sheet.devices],
+  ) : _project = project,
+      _strips = [...project.terminalStrips],
+      devices = [...sheet.devices],
       wires = [...sheet.wires],
-      _namingDevices = project.pages.expand((page) => page.devices).toList(),
-      _reservedDesignations =
-          project.pages
-              .expand((page) => page.devices)
-              .map((device) => _designationKey(device.designation))
-              .toSet();
+      _components = [...project.components],
+      _reservedDesignations = {
+        ...project.components.map(
+          (component) => _designationKey(component.designation ?? ''),
+        ),
+        ...project.continuationLinks.map((link) => _designationKey(link.label)),
+      };
 
   final Sheet sheet;
+  final EcadProject _project;
+  final List<TerminalStrip> _strips;
+  EcadProject get _snapshot =>
+      _project.copyWith(components: _components, terminalStrips: _strips);
+
+  TerminalStrip _stripForInsertion({String? localDesignation}) {
+    final existing =
+        _strips
+            .where(
+              (s) =>
+                  s.reference.context.key == sheet.structure.key &&
+                  (localDesignation == null ||
+                      referenceKey(s.reference.localDesignation) ==
+                          referenceKey(localDesignation)),
+            )
+            .firstOrNull;
+    if (existing != null) return existing;
+    final strip = TerminalStrip(
+      id: _id('strip'),
+      reference: ComponentReference(
+        context: sheet.structure,
+        localDesignation:
+            localDesignation ??
+            nextLocalDesignation(_snapshot, sheet.structure, 'X'),
+      ),
+    );
+    _strips.add(strip);
+    commands.add(AddTerminalStrip(strip));
+    return strip;
+  }
+
+  String _terminalNumber(TerminalStrip strip) =>
+      nextTerminalNumber(_snapshot, strip);
+
   final Set<String> selectedIds;
   final Vec2? insertionPoint;
   final List<Device> devices;
   final List<Wire> wires;
-  final List<Device> _namingDevices;
+  final List<Component> _components;
   final Set<String> _reservedDesignations;
   final List<EcadCommand> commands = [];
   static int _idCounter = 0;
@@ -579,21 +617,22 @@ class _CommandBuilder {
   /// Connected devices reserve their whole branch, including labels and route
   /// waypoints. This remains true after saving/reopening, without layout state.
   List<_PlacementBox> _occupiedFootprints() {
+    final resolver = ProjectResolver(_snapshot);
     final byId = {for (final device in devices) device.id: device};
     final links = <String, List<Wire>>{};
     for (final wire in wires) {
-      (links[wire.from.deviceId] ??= []).add(wire);
-      (links[wire.to.deviceId] ??= []).add(wire);
+      (links[wire.from.ownerId] ??= []).add(wire);
+      (links[wire.to.ownerId] ??= []).add(wire);
     }
     final visited = <String>{};
     final result = <_PlacementBox>[];
     for (final device in devices) {
       if (!visited.add(device.id)) continue;
-      var bounds = _deviceFootprint(device);
+      var bounds = _deviceFootprint(device, resolver);
       final queue = [device.id];
       for (var index = 0; index < queue.length; index++) {
         final id = queue[index];
-        bounds = bounds.union(_deviceFootprint(byId[id]!));
+        bounds = bounds.union(_deviceFootprint(byId[id]!, resolver));
         for (final wire in links[id] ?? const <Wire>[]) {
           for (final point in wire.waypoints) {
             bounds = bounds.union(
@@ -601,7 +640,7 @@ class _CommandBuilder {
             );
           }
           final other =
-              wire.from.deviceId == id ? wire.to.deviceId : wire.from.deviceId;
+              wire.from.ownerId == id ? wire.to.ownerId : wire.from.ownerId;
           if (byId.containsKey(other) && visited.add(other)) queue.add(other);
         }
       }
@@ -610,8 +649,9 @@ class _CommandBuilder {
     return result;
   }
 
-  static _PlacementBox _deviceFootprint(Device device) {
-    final definition = SymbolCatalog.definitionFor(device.kind);
+  _PlacementBox _deviceFootprint(Device device, ProjectResolver resolver) {
+    final definition = geometryFor(device);
+    final component = resolver.components[device.componentId]!;
     final angle = device.rotation * math.pi / 180;
     final halfWidth =
         (definition.width * math.cos(angle).abs() +
@@ -621,19 +661,19 @@ class _CommandBuilder {
         (definition.height * math.cos(angle).abs() +
             definition.width * math.sin(angle).abs()) /
         2;
-    final subtitle = device.rating.isEmpty ? definition.label : device.rating;
+    final subtitle = component.description;
     var labelWidth = math.max(
-      _textWidth(device.designation, 12),
+      _textWidth(resolver.fullDesignation(component), 12),
       _textWidth(subtitle, 9),
     );
     var labelBottom = 22.0;
-    if (device.description.isNotEmpty) {
+    if (component.description.isNotEmpty) {
       // SVG export wraps descriptions at 45 characters; keep that text clear.
       labelWidth = math.max(
         labelWidth,
-        math.min(_textWidth(device.description, 9), 285),
+        math.min(_textWidth(component.description, 9), 285),
       );
-      labelBottom = 30 + ((device.description.length / 45).ceil()) * 13.0;
+      labelBottom = 30 + ((component.description.length / 45).ceil()) * 13.0;
     }
     return _PlacementBox(
       device.position.x - halfWidth - 6,
@@ -660,56 +700,105 @@ class _CommandBuilder {
     return width;
   }
 
-  Device insert(
+  Device? insert(
     DeviceKind kind, {
     String? designation,
     String rating = '',
     String description = '',
     Vec2? position,
   }) {
-    var device = Device(
-      id: _id('device'),
-      kind: kind,
-      designation:
-          designation ?? SymbolCatalog.nextDesignation(_namingDevices, kind),
-      position: position ?? const Vec2(0, 0),
-      description: description,
-      rating: rating,
-    );
+    if (kind == DeviceKind.earth) {
+      final label = designation ?? _designation('PE');
+      final link = ContinuationLink(id: _id('link'), label: label);
+      final marker = ContinuationMarker(
+        id: _id('marker'),
+        linkId: link.id,
+        position:
+            position ?? _freePosition(const _PlacementBox(-20, -20, 90, 35)),
+        glyph: ContinuationGlyph.earth,
+      );
+      commands.addAll([
+        AddContinuationLink(link),
+        AddContinuationMarker(sheet.id, marker),
+      ]);
+      _reservedDesignations.add(_designationKey(label));
+      return null;
+    }
+    TerminalStrip? strip;
+    String? terminalNumber;
+    if (kind == DeviceKind.terminal) {
+      if (designation != null) {
+        final match = RegExp(r'^-?([^:]+):([^:]+)$').firstMatch(designation);
+        if (match == null ||
+            !validReferenceSegment(match.group(1)!) ||
+            !validReferenceSegment(match.group(2)!)) {
+          throw const FormatException(
+            'Označení svorky zadejte jako X9:7 v aktuální struktuře.',
+          );
+        }
+        strip = _stripForInsertion(localDesignation: match.group(1)!);
+        terminalNumber = match.group(2)!;
+      } else {
+        strip = _stripForInsertion();
+      }
+    }
+    final seed =
+        strip == null
+            ? createBuiltinComponent(
+              componentId: _id('component'),
+              deviceId: _id('device'),
+              kind: kind,
+              designation:
+                  designation ??
+                  nextLocalDesignation(
+                    _snapshot,
+                    sheet.structure,
+                    SymbolCatalog.definitionFor(kind).prefix,
+                  ),
+              position: position ?? const Vec2(0, 0),
+              description: [
+                description,
+                rating,
+              ].where((s) => s.isNotEmpty).join(' · '),
+            )
+            : createTerminalComponent(
+              componentId: _id('component'),
+              deviceId: _id('device'),
+              stripId: strip.id,
+              number: terminalNumber ?? _terminalNumber(strip),
+              position: position ?? Vec2.zero,
+              description: description,
+            );
+    var device = seed.device;
+    final component =
+        strip != null
+            ? seed.component
+            : seed.component.copyWith(
+              designation: null,
+              reference: ComponentReference(
+                context: sheet.structure,
+                localDesignation: seed.component.designation!,
+              ),
+            );
+    _components.add(component);
+    commands.add(AddComponent(component));
     if (position == null) {
       device = device.copyWith(
-        position: _freePosition(_deviceFootprint(device)),
+        position: _freePosition(
+          _deviceFootprint(device, ProjectResolver(_snapshot)),
+        ),
       );
     }
     commands.add(AddDevice(sheet.id, device));
     devices.add(device);
-    _namingDevices.add(device);
-    _reservedDesignations.add(_designationKey(device.designation));
+
+    _reservedDesignations.add(_designationKey((component.designation ?? '')));
     return device;
   }
 
   void motorBranch(String rating) {
-    // Plan the complete footprint before adding any command. This includes the
-    // PE device at (+140, +470) and the labels to the right of every symbol.
-    final prototypes = [
-      for (final entry in [
-        (DeviceKind.supply, const Vec2(0, 0)),
-        (DeviceKind.breaker, const Vec2(0, 120)),
-        (DeviceKind.contactor, const Vec2(0, 250)),
-        (DeviceKind.motor, const Vec2(0, 390)),
-        (DeviceKind.earth, const Vec2(140, 470)),
-      ])
-        Device(
-          id: 'placement_preview',
-          kind: entry.$1,
-          designation: SymbolCatalog.nextDesignation(_namingDevices, entry.$1),
-          position: entry.$2,
-          rating: entry.$1 == DeviceKind.motor ? rating : '',
-        ),
-    ];
-    final footprint = prototypes
-        .map(_deviceFootprint)
-        .reduce((a, b) => a.union(b));
+    // Reserve the whole branch so labels and the PE continuation remain clear.
+    final footprint = _PlacementBox(-32, -35, 280, 500);
     final origin = _freePosition(footprint);
     final supply = insert(DeviceKind.supply, position: origin);
     final breaker = insert(
@@ -725,16 +814,30 @@ class _CommandBuilder {
       position: Vec2(origin.x, origin.y + 390),
       rating: rating,
     );
-    final earth = insert(
-      DeviceKind.earth,
+    final link = ContinuationLink(id: _id('link'), label: _designation('PE'));
+    _reservedDesignations.add(_designationKey(link.label));
+    final earth = ContinuationMarker(
+      id: _id('marker'),
+      linkId: link.id,
       position: Vec2(origin.x + 140, origin.y + 470),
+      glyph: ContinuationGlyph.earth,
     );
-    _connect(supply, 'out', breaker, 'in');
-    _connect(breaker, 'out', contactor, 'in');
-    _connect(contactor, 'out', motor, 'in');
-    final motorPe = SymbolCatalog.worldPortPosition(motor, 'pe');
-    final earthPort = SymbolCatalog.worldPortPosition(earth, 'in');
-    _connect(motor, 'pe', earth, 'in', [Vec2(earthPort.x, motorPe.y)]);
+    commands.addAll([
+      AddContinuationLink(link),
+      AddContinuationMarker(sheet.id, earth),
+    ]);
+    _connect(supply!, 'out', breaker!, 'in');
+    _connect(breaker, 'out', contactor!, 'in');
+    _connect(contactor, 'out', motor!, 'in');
+    final motorPe = worldPortPosition(motor, 'pe');
+    final wire = Wire(
+      id: _id('wire'),
+      from: TerminalRef(deviceId: motor.id, portId: 'pe'),
+      to: ContinuationRef(markerId: earth.id),
+      waypoints: [Vec2(earth.position.x, motorPe.y)],
+    );
+    commands.add(AddWire(sheet.id, wire));
+    wires.add(wire);
   }
 
   void _connect(
@@ -775,17 +878,26 @@ class _CommandBuilder {
         'Pro přejmenování vyberte právě jeden přístroj.',
       );
     }
-    final old = selected.single;
-    final updated = _copy(
-      old,
-      id: old.id,
-      designation: designation,
-      position: old.position,
+    final old = _components.firstWhere(
+      (c) => c.id == selected.single.componentId,
     );
-    commands.add(UpdateDevice(sheet.id, updated));
-    _namingDevices.add(updated);
-    _reservedDesignations.add(_designationKey(updated.designation));
-    devices[devices.indexWhere((device) => device.id == old.id)] = updated;
+    final updated = old.copyWith(
+      designation:
+          old.reference == null && old.terminal == null
+              ? designation
+              : old.legacyDesignation,
+      reference:
+          old.reference == null
+              ? null
+              : ComponentReference(
+                context: old.reference!.context,
+                localDesignation: designation,
+              ),
+      terminal: old.terminal?.copyWith(number: designation),
+    );
+    commands.add(UpdateComponent(updated));
+    _components[_components.indexOf(old)] = updated;
+    _reservedDesignations.add(_designationKey(designation));
   }
 
   void delete() {
@@ -794,7 +906,7 @@ class _CommandBuilder {
     devices.removeWhere((device) => ids.contains(device.id));
     wires.removeWhere(
       (wire) =>
-          ids.contains(wire.from.deviceId) || ids.contains(wire.to.deviceId),
+          ids.contains(wire.from.ownerId) || ids.contains(wire.to.ownerId),
     );
   }
 
@@ -810,11 +922,11 @@ class _CommandBuilder {
         wires
             .where(
               (wire) =>
-                  selectedIds.contains(wire.from.deviceId) &&
-                  selectedIds.contains(wire.to.deviceId),
+                  selectedIds.contains(wire.from.ownerId) &&
+                  selectedIds.contains(wire.to.ownerId),
             )
             .toList();
-    if ((selected.length + internalWires.length) * count +
+    if ((selected.length * 2 + internalWires.length) * count +
             commands.length +
             reserved >
         limit) {
@@ -826,37 +938,134 @@ class _CommandBuilder {
     final maxX = selected.map((device) => device.position.x).reduce(math.max);
     final spacing = math.max(160.0, maxX - minX + 160);
     for (var copy = 1; copy <= count; copy++) {
+      final componentIds = {
+        for (final id in selected.map((d) => d.componentId).toSet())
+          id: _id('component'),
+      };
       final ids = <String, String>{};
       final dx = spacing * copy;
+      final clones =
+          <
+            String,
+            ({
+              Component component,
+              Map<String, String> terminals,
+              Map<String, String> functions,
+            })
+          >{};
       for (final device in selected) {
         final id = _id('device');
         ids[device.id] = id;
-        final prefix = device.designation.replaceFirst(RegExp(r'\d+$'), '');
-        final clone = _copy(
-          device,
-          id: id,
-          designation: _designation(
-            prefix.isEmpty
-                ? SymbolCatalog.definitionFor(device.kind).prefix
-                : prefix,
+        final component = _components.firstWhere(
+          (c) => c.id == device.componentId,
+        );
+        final cloned = clones.putIfAbsent(component.id, () {
+          final prefix =
+              device.kind == null
+                  ? 'A'
+                  : SymbolCatalog.definitionFor(device.kind!).prefix;
+          final strip =
+              component.terminal == null ? null : _stripForInsertion();
+          final terminals = {
+            for (final t
+                in component.electrical?.terminals ?? <ComponentTerminal>[])
+              t.id: _id('terminal'),
+          };
+          final functions = {
+            for (final f
+                in component.electrical?.functions ?? <ComponentFunction>[])
+              f.id: _id('function'),
+          };
+          final clone = component.copyWith(
+            id: componentIds[component.id]!,
+            designation: null,
+            procurement: component.procurement.copyWith(
+              includedInComponentId:
+                  componentIds[component.procurement.includedInComponentId] ??
+                  component.procurement.includedInComponentId,
+            ),
+            reference:
+                strip == null
+                    ? ComponentReference(
+                      context: sheet.structure,
+                      localDesignation: nextLocalDesignation(
+                        _snapshot,
+                        sheet.structure,
+                        prefix,
+                      ),
+                    )
+                    : null,
+            terminal:
+                strip == null
+                    ? null
+                    : component.terminal!.copyWith(
+                      stripId: strip.id,
+                      number: _terminalNumber(strip),
+                    ),
+            electrical:
+                component.electrical == null
+                    ? null
+                    : ElectricalModel(
+                      terminals: [
+                        for (final t in component.electrical!.terminals)
+                          t.copyWith(id: terminals[t.id]),
+                      ],
+                      functions: [
+                        for (final f in component.electrical!.functions)
+                          f.copyWith(
+                            id: functions[f.id],
+                            terminalIds:
+                                f.terminalIds
+                                    .map((t) => terminals[t]!)
+                                    .toList(),
+                          ),
+                      ],
+                    ),
+          );
+          commands.add(AddComponent(clone));
+          _components.add(clone);
+          _reservedDesignations.add(
+            _designationKey(ProjectResolver(_snapshot).fullDesignation(clone)),
+          );
+          return (component: clone, terminals: terminals, functions: functions);
+        });
+        final symbol = switch (device.symbol) {
+          TerminalSymbolSpec s => s.copyWith(
+            terminalId: cloned.terminals[s.terminalId]!,
           ),
+          BuiltinSymbolSpec s => BuiltinSymbolSpec(
+            kind: s.kind,
+            bindings: s.bindings.map(
+              (k, v) => MapEntry(k, cloned.terminals[v]!),
+            ),
+          ),
+          PortBlockSpec s => s.copyWith(
+            ports: [
+              for (final p in s.ports)
+                p.copyWith(terminalId: cloned.terminals[p.terminalId]),
+            ],
+          ),
+        };
+        final clone = device.copyWith(
+          id: id,
+          componentId: cloned.component.id,
+          functionId: cloned.functions[device.functionId],
+          symbol: symbol,
           position: Vec2(device.position.x + dx, device.position.y),
         );
         commands.add(AddDevice(sheet.id, clone));
         devices.add(clone);
-        _namingDevices.add(clone);
-        _reservedDesignations.add(_designationKey(clone.designation));
       }
       for (final wire in internalWires) {
         final clone = Wire(
           id: _id('wire'),
           from: TerminalRef(
-            deviceId: ids[wire.from.deviceId]!,
-            portId: wire.from.portId,
+            deviceId: ids[wire.from.ownerId]!,
+            portId: (wire.from as TerminalRef).portId,
           ),
           to: TerminalRef(
-            deviceId: ids[wire.to.deviceId]!,
-            portId: wire.to.portId,
+            deviceId: ids[wire.to.ownerId]!,
+            portId: (wire.to as TerminalRef).portId,
           ),
           waypoints:
               wire.waypoints
@@ -869,21 +1078,6 @@ class _CommandBuilder {
     }
     return Vec2(spacing, 0);
   }
-
-  Device _copy(
-    Device source, {
-    required String id,
-    required String designation,
-    required Vec2 position,
-  }) => Device(
-    id: id,
-    kind: source.kind,
-    designation: designation,
-    position: position,
-    description: source.description,
-    rating: source.rating,
-    rotation: source.rotation,
-  );
 }
 
 class _PlacementBox {

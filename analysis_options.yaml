@@ -1,5 +1,6 @@
 analyzer:
   exclude:
+    - private/**
     - build/**
     - web/**
     - windows/**

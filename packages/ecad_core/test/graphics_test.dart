@@ -64,33 +64,16 @@ EcadProject _project(List<DrawingElement> graphics) => EcadProject(
 
 void main() {
   group('versioned native drawing format', () {
-    test('loads v1 and writes v3 with legacy canvas defaults', () {
-      final old = DemoProject.create().toJson();
-      old['formatVersion'] = 1;
-      for (final raw in old['pages']! as List) {
-        final page = raw as Map<String, Object?>;
-        for (final field in [
-          'type',
-          'width',
-          'height',
-          'showFrame',
-          'sourcePage',
-          'graphics',
-        ]) {
-          page.remove(field);
-        }
+    test('rejects historical versions instead of guessing missing fields', () {
+      for (final version in [1, 2, 3]) {
+        expect(
+          () => EcadProject.fromJson({
+            ...DemoProject.create().toJson(),
+            'formatVersion': version,
+          }),
+          throwsA(_error('unsupported_format')),
+        );
       }
-      final migrated = EcadProject.fromJson(old);
-      final engine = ProjectEngine(migrated);
-      expect(engine.project.pages.first.width, 1100);
-      expect(engine.project.pages.first.height, 780);
-      expect(engine.project.pages.first.showFrame, isTrue);
-      expect(engine.project.pages.first.sourcePage, isNull);
-      expect(engine.project.pages.first.graphics, isEmpty);
-      expect(engine.project.pages.first.type, SheetType.legacyDefault);
-      expect(engine.project.toJson()['formatVersion'], 3);
-      expect(engine.project.pages.first.devices, isNotEmpty);
-      expect(engine.project.pages.first.wires, isNotEmpty);
     });
 
     test('round-trips all geometry and styles without default field bloat', () {
@@ -651,11 +634,11 @@ void main() {
         final line = _line();
         engine.execute(
           [
-            AddGraphics('sheet_power', [line, _text()]),
-            MoveDevices('sheet_power', {'dev_motor': const Vec2(500, 500)}),
-            MoveGraphics('sheet_power', {'line': const Vec2(10, 20)}),
+            AddGraphics('sheet_control', [line, _text()]),
+            MoveDevices('sheet_control', {'dev_coil': const Vec2(500, 500)}),
+            MoveGraphics('sheet_control', {'line': const Vec2(10, 20)}),
             UpdateGraphic(
-              'sheet_power',
+              'sheet_control',
               _text().copyWith(text: 'Edited label', rotation: 90),
             ),
           ],
@@ -672,7 +655,7 @@ void main() {
           'Edited label',
         );
         expect(
-          engine.project.pages.first.deviceById('dev_motor')!.position,
+          engine.project.pages.first.deviceById('dev_coil')!.position,
           const Vec2(500, 500),
         );
         final after = engine.project;
@@ -681,7 +664,7 @@ void main() {
         expect(engine.redo(), isTrue);
         expect(engine.project.toJson(), after.copyWith(revision: 3).toJson());
         engine.execute([
-          DeleteGraphics('sheet_power', {'line'}),
+          DeleteGraphics('sheet_control', {'line'}),
         ]);
         expect(engine.project.pages.first.graphics.map((g) => g.id), ['text']);
         expect(

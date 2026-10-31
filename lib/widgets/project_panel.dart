@@ -1,6 +1,10 @@
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
 import '../app/controller.dart';
+import '../app/workspace_controller.dart';
+import 'inventory.dart';
+import 'structure_tree.dart';
+import 'sheet_settings.dart';
 import '../app/theme.dart';
 import '../editor/schematic_canvas.dart';
 import 'components.dart';
@@ -12,8 +16,12 @@ class ProjectPanel extends StatefulWidget {
     required this.controller,
     required this.onRenameSheet,
     required this.onAddSheet,
+    this.workspace,
+    this.onCloseProject,
   });
   final EditorController controller;
+  final WorkspaceController? workspace;
+  final ValueChanged<EditorController>? onCloseProject;
   final VoidCallback onRenameSheet;
   final VoidCallback onAddSheet;
   @override
@@ -37,12 +45,12 @@ class _ProjectPanelState extends State<ProjectPanel> {
     final c = EcadColors.of(context);
     final app = widget.controller;
     return DefaultTabController(
-      length: 2,
+      length: 4,
       animationDuration: Duration.zero,
       child: Builder(
         builder: (context) {
           final tabs = DefaultTabController.of(context);
-          return Container(
+          return Material(
             color: c.panel,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -65,8 +73,10 @@ class _ProjectPanelState extends State<ProjectPanel> {
                     indicatorSize: TabBarIndicatorSize.tab,
                     dividerColor: c.border,
                     tabs: const [
-                      Tab(text: 'Listy projektu'),
+                      Tab(text: 'Listy'),
+                      Tab(text: 'Značky'),
                       Tab(text: 'Přístroje'),
+                      Tab(text: 'Artikly'),
                     ],
                   ),
                 ),
@@ -74,10 +84,12 @@ class _ProjectPanelState extends State<ProjectPanel> {
                   child: ListenableBuilder(
                     listenable: tabs,
                     builder:
-                        (context, _) =>
-                            tabs.index == 0
-                                ? _buildSheets(app, c)
-                                : _buildLibrary(app, c),
+                        (context, _) => switch (tabs.index) {
+                          0 => _buildSheets(app, c),
+                          1 => _buildLibrary(app, c),
+                          2 => InventoryPanel(app: app),
+                          _ => InventoryPanel(app: app, articles: true),
+                        },
                   ),
                 ),
               ],
@@ -88,144 +100,124 @@ class _ProjectPanelState extends State<ProjectPanel> {
     );
   }
 
-  Widget _buildSheets(EditorController app, EcadColors c) {
-    final count = app.project.pages.length;
-    final visibleSheets =
-        app.project.pages
-            .where((sheet) => sheetMatchesSearch(sheet, sheetSearch))
-            .toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SectionCaption(
-          '$count ${count == 1
-              ? 'list'
-              : count < 5
-              ? 'listy'
-              : 'listů'}',
-          trailing: EcadIconButton(
-            icon: Icons.add,
-            label: 'Přidat list',
-            onPressed: widget.onAddSheet,
-            size: 24,
-            iconSize: 16,
-          ),
+  Widget _buildSheets(EditorController app, EcadColors c) => Column(
+    children: [
+      SectionCaption(
+        'Otevřené projekty',
+        trailing: IconButton(
+          tooltip: 'Přidat list',
+          onPressed: widget.onAddSheet,
+          icon: const Icon(Icons.add, size: 18),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-          child: TextField(
-            controller: sheetSearchController,
-            onChanged: (value) => setState(() => sheetSearch = value),
-            style: const TextStyle(fontSize: 11),
-            decoration: const InputDecoration(
-              hintText: 'Najít list nebo typ…',
-              prefixIcon: Icon(Icons.search, size: 17),
-              isDense: true,
-            ),
+      ),
+      Padding(
+        padding: const EdgeInsets.all(10),
+        child: TextField(
+          controller: sheetSearchController,
+          decoration: const InputDecoration(
+            hintText: 'Najít list nebo typ…',
+            prefixIcon: Icon(Icons.search),
           ),
+          onChanged: (v) => setState(() => sheetSearch = v),
         ),
-        if (visibleSheets.isEmpty)
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
-            child: Text('Žádný odpovídající list.'),
-          ),
-        Expanded(
-          child: ListView.builder(
-            key: const PageStorageKey('project-sheets'),
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-            itemCount: visibleSheets.length,
-            itemBuilder: (context, index) {
-              final sheet = visibleSheets[index];
-              final active = app.activeSheetId == sheet.id;
-              final row = Semantics(
-                selected: active,
-                button: true,
-                child: InkWell(
-                  onTap: () => app.setSheet(sheet.id),
-                  onDoubleTap: active ? widget.onRenameSheet : null,
-                  borderRadius: BorderRadius.circular(4),
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 4),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 7,
-                    ),
-                    decoration: BoxDecoration(
-                      color: active ? c.accent : c.panel,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          sheetTypeIcon(sheet.type),
-                          size: 16,
-                          color: active ? c.onAccent : c.foreground,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          sheet.number,
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: active ? c.onAccent : c.muted,
-                          ),
-                        ),
-                        const SizedBox(width: 9),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                sheet.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight:
-                                      active
-                                          ? FontWeight.w600
-                                          : FontWeight.w400,
-                                  color: active ? c.onAccent : c.foreground,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                sheet.type.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 9,
-                                  color: active ? c.onAccent : c.muted,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (active) const SizedBox(width: 22),
-                      ],
-                    ),
+      ),
+      Expanded(
+        child: ListView(
+          children: [
+            for (final doc in widget.workspace?.documents ?? [app])
+              ExpansionTile(
+                key: PageStorageKey(doc.documentSessionId),
+                initiallyExpanded: true,
+                title: Text(
+                  '${doc.project.name}${doc.dirty ? ' ●' : ''}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                subtitle: Tooltip(
+                  message:
+                      doc.currentFile?.path ?? doc.fileName ?? 'Bez souboru',
+                  child: Text(
+                    doc.fileName ?? 'Bez souboru',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 9),
                   ),
                 ),
-              );
-              if (!active) return row;
-              // A sibling, not a child: the row's double-tap recognizer would
-              // otherwise delay every tap on the menu button.
-              return Stack(
+                leading: PopupMenuButton<String>(
+                  tooltip: 'Projekt ${doc.project.name}',
+                  onSelected: (_) => widget.onCloseProject?.call(doc),
+                  itemBuilder:
+                      (_) => const [
+                        PopupMenuItem(
+                          value: 'close',
+                          child: Text('Zavřít projekt…'),
+                        ),
+                      ],
+                  child: const Icon(Icons.folder_open, size: 18),
+                ),
                 children: [
-                  row,
-                  Positioned(
-                    right: 4,
-                    top: 0,
-                    bottom: 4,
-                    child: Center(child: _sheetMenu(app, c)),
+                  StructureTree<Sheet>(
+                    items:
+                        doc.project.pages
+                            .where(
+                              (s) =>
+                                  sheetMatchesSearch(s, sheetSearch) ||
+                                  foldForSearch(
+                                    fullPageDesignation(s),
+                                  ).contains(foldForSearch(sheetSearch)),
+                            )
+                            .toList(),
+                    contextFor: (s) => s.structure,
+                    compare: (a, b) {
+                      final left = fullPageDesignation(a),
+                          right = fullPageDesignation(b);
+                      final n = naturalCompare(left, right);
+                      return n != 0
+                          ? n
+                          : left != right
+                          ? left.compareTo(right)
+                          : a.id.compareTo(b.id);
+                    },
+                    onRename:
+                        (aspect, path) => renameStructureBranchDialog(
+                          context,
+                          doc,
+                          aspect,
+                          path,
+                        ),
+                    leaf:
+                        (sheet) => ListTile(
+                          dense: true,
+                          selected: doc == app && sheet.id == app.activeSheetId,
+                          leading: Icon(sheetTypeIcon(sheet.type), size: 16),
+                          title: Text(
+                            '${fullPageDesignation(sheet)} · ${sheet.name}',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          subtitle: Text(
+                            sheet.type.label,
+                            style: const TextStyle(fontSize: 9),
+                          ),
+                          onTap:
+                              () =>
+                                  widget.workspace == null
+                                      ? app.setSheet(sheet.id)
+                                      : widget.workspace!.openSheet(
+                                        doc,
+                                        sheet.id,
+                                      ),
+                          trailing:
+                              doc == app && sheet.id == app.activeSheetId
+                                  ? _sheetMenu(app, c)
+                                  : null,
+                        ),
                   ),
                 ],
-              );
-            },
-          ),
+              ),
+          ],
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
 
   Widget _sheetMenu(EditorController app, EcadColors c) =>
       PopupMenuButton<String>(
@@ -233,6 +225,14 @@ class _ProjectPanelState extends State<ProjectPanel> {
         onSelected: (value) {
           if (value == 'rename') {
             widget.onRenameSheet();
+          } else if (value == 'settings') {
+            editSheetSettings(context, app);
+          } else if (value == 'up') {
+            app.reorderSheet(-1);
+          } else if (value == 'down') {
+            app.reorderSheet(1);
+          } else if (value == 'delete') {
+            confirmDeleteSheet(context, app);
           } else {
             app.setSheetType(SheetType.values.byName(value));
           }
@@ -242,6 +242,17 @@ class _ProjectPanelState extends State<ProjectPanel> {
               const PopupMenuItem(
                 value: 'rename',
                 child: Text('Přejmenovat list…'),
+              ),
+              const PopupMenuItem(
+                value: 'settings',
+                child: Text('Číslo, papír a vlastnosti…'),
+              ),
+              const PopupMenuItem(value: 'up', child: Text('Posunout výše')),
+              const PopupMenuItem(value: 'down', child: Text('Posunout níže')),
+              PopupMenuItem(
+                value: 'delete',
+                enabled: app.project.pages.length > 1,
+                child: const Text('Odstranit list…'),
               ),
               const PopupMenuDivider(),
               for (final type in SheetType.values)
@@ -253,7 +264,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
             ],
         child: Padding(
           padding: const EdgeInsets.all(3),
-          child: Icon(Icons.more_vert, size: 16, color: c.onAccent),
+          child: Icon(Icons.more_vert, size: 16, color: c.foreground),
         ),
       );
 
@@ -393,7 +404,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
               const SizedBox(width: 9),
               Expanded(
                 child: Text(
-                  'Klikněte na symbol a umístěte ho do výkresu. Esc ukončí vkládání.',
+                  'Značka vytvoří nový fyzický kus. Další zobrazení existujícího kusu přidejte přes Přístroje. PE je pokračování bez kusu. Esc ukončí vkládání.',
                   style: TextStyle(fontSize: 10, color: c.muted, height: 1.6),
                 ),
               ),

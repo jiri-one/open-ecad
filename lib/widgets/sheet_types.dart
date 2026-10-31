@@ -7,13 +7,15 @@ IconData sheetTypeIcon(SheetType type) => switch (type) {
   SheetType.singleLine => Icons.horizontal_rule,
   SheetType.cabinetLayout => Icons.dashboard_outlined,
   SheetType.form => Icons.table_chart_outlined,
+  SheetType.billOfMaterials => Icons.list_alt,
 };
 
 String sheetTypeHint(SheetType type) => switch (type) {
   SheetType.multiLine => 'Obvody se všemi vodiči a vývody přístrojů',
   SheetType.singleLine => '1P · jedna čára zastupuje více vodičů',
-  SheetType.cabinetLayout => 'Ruční výkres skříně a montážní desky',
+  SheetType.cabinetLayout => 'Fyzické umístění v mm a sdílené montážní pohledy',
   SheetType.form => 'Tabulky a seznamy vyplňované ručně',
+  SheetType.billOfMaterials => 'Živý kusovník nebo seznam komponent z projektu',
 };
 
 /// Lowercase text without Czech diacritics, so searches work with any keyboard.

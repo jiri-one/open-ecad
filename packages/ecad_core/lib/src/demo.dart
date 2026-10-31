@@ -1,159 +1,208 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'model.dart';
 
-/// Original illustrative diagrams; not a construction-ready circuit design.
 abstract final class DemoProject {
   static EcadProject create() => EcadProject(
     id: 'project_demo',
-    name: 'Dílna · pohon odsávání',
-    description:
-        'Ilustrační jednopólové schéma pohonu a samostatná ukázka ovládání 24 V. '
-        'Jedna silová čára zastupuje tři fáze. Počty vodičů, úplná ochrana motoru, '
-        'blokování a vazby mezi listy nejsou modelovány. Ukázka editoru; '
-        'nejde o realizační dokumentaci ani posouzení elektrické bezpečnosti.',
-    pages: [
-      Sheet(
-        id: 'sheet_power',
-        name: 'Napájení motoru',
-        number: '01',
-        type: SheetType.singleLine,
-        devices: const [
-          Device(
-            id: 'dev_supply',
-            kind: DeviceKind.supply,
-            designation: '-G1',
-            position: Vec2(400, 150),
-            description: 'Třífázový přívod zobrazený jednou čárou',
-            rating: '3~ 400 V · 50 Hz',
-          ),
-          Device(
-            id: 'dev_breaker',
-            kind: DeviceKind.breaker,
-            designation: '-Q1',
-            position: Vec2(400, 270),
-            description: 'Ilustrační jistič přívodu',
-            rating: '3P · 10 A',
-          ),
-          Device(
-            id: 'dev_contactor',
-            kind: DeviceKind.contactor,
-            designation: '-K1',
-            position: Vec2(400, 390),
-            description: 'Ilustrační třípólový hlavní stykač',
-            rating: '3P · AC-3',
-          ),
-          Device(
-            id: 'dev_motor',
-            kind: DeviceKind.motor,
-            designation: '-M1',
-            position: Vec2(400, 550),
-            description: 'Motor odsávání dílny',
-            rating: '3~ · 2,2 kW',
-          ),
-          Device(
-            id: 'dev_pe_terminal',
-            kind: DeviceKind.terminal,
-            designation: '-X1',
-            position: Vec2(710, 460),
-            description: 'Svorka ochranného vodiče',
-            rating: 'PE',
-          ),
-          Device(
-            id: 'dev_earth',
-            kind: DeviceKind.earth,
-            designation: '-PE1',
-            position: Vec2(710, 585),
-            description: 'Připojení ochranného uzemnění',
-          ),
-        ],
-        wires: [
-          _wire('wire_p1', 'dev_supply', 'out', 'dev_breaker', 'in'),
-          _wire('wire_p2', 'dev_breaker', 'out', 'dev_contactor', 'in'),
-          _wire('wire_p3', 'dev_contactor', 'out', 'dev_motor', 'in'),
-          _wire('wire_pe1', 'dev_motor', 'pe', 'dev_pe_terminal', 'in', const [
-            Vec2(600, 550),
-            Vec2(600, 420),
-            Vec2(710, 420),
-          ]),
-          _wire('wire_pe2', 'dev_pe_terminal', 'out', 'dev_earth', 'in'),
-        ],
+    name: 'Ukázka · jeden kus, více zobrazení',
+    description: 'Syntetická ukázka editace; nejde o realizační dokumentaci.',
+    articles: const [
+      Article(
+        id: 'article_relay',
+        name: 'Ukázkové relé',
+        manufacturer: 'Demo Works',
+        partNumber: 'DEMO-1',
+        unit: QuantityUnit.piece,
+        specification: 'Ukázková funkce',
+        dimensionsMm: DimensionsMm(width: 48, height: 60, depth: 30),
       ),
-      Sheet(
-        id: 'sheet_control',
-        name: 'Ovládání 24 V',
-        number: '02',
-        devices: const [
-          Device(
-            id: 'dev_control_supply',
-            kind: DeviceKind.supply,
-            designation: '-G2',
-            position: Vec2(370, 150),
-            description: 'Externí napájení ovládání; zpětný vodič na X2',
-            rating: '+24 V DC',
+      Article(
+        id: 'article_material',
+        name: 'Ukázkový metrážový materiál',
+        unit: QuantityUnit.metre,
+      ),
+    ],
+    components: [
+      Component(
+        id: 'component_relay',
+        designation: '-K1',
+        articleId: 'article_relay',
+        electrical: ElectricalModel(
+          terminals: const [
+            ComponentTerminal(id: 'terminal_a1', designation: 'A1'),
+            ComponentTerminal(id: 'terminal_a2', designation: 'A2'),
+            ComponentTerminal(id: 'terminal_13', designation: '13'),
+            ComponentTerminal(id: 'terminal_14', designation: '14'),
+          ],
+          functions: [
+            ComponentFunction(
+              id: 'function_coil',
+              name: 'Cívka',
+              terminalIds: ['terminal_a1', 'terminal_a2'],
+            ),
+            ComponentFunction(
+              id: 'function_contact',
+              name: 'Kontakt',
+              terminalIds: ['terminal_13', 'terminal_14'],
+            ),
+          ],
+        ),
+      ),
+      const Component(
+        id: 'material_run',
+        kind: ComponentKind.material,
+        articleId: 'article_material',
+        description: 'Souhrnná délka',
+        quantity: Quantity.millimetres(2750),
+      ),
+      const Component(
+        id: 'material_spare',
+        kind: ComponentKind.material,
+        articleId: 'article_material',
+        quantity: Quantity.millimetres(500),
+        usage: ComponentUsage.spare,
+        procurement: Procurement(source: ProcurementSource.available),
+      ),
+      const Component(
+        id: 'material_unknown',
+        kind: ComponentKind.material,
+        description: 'Dosud neurčený drobný materiál',
+        quantity: Quantity.pieces(null),
+      ),
+    ],
+    continuationLinks: const [
+      ContinuationLink(id: 'link_signal', label: 'SIGNAL-A'),
+      ContinuationLink(id: 'link_earth', label: 'PE'),
+    ],
+    mountingLayouts: [
+      MountingLayout(
+        id: 'layout_demo',
+        name: 'Ukázková montážní plocha',
+        widthMm: 240,
+        heightMm: 160,
+        placements: const [
+          MountingPlacement(
+            id: 'placement_relay',
+            componentId: 'component_relay',
+            centerMm: Vec2(65, 55),
           ),
-          Device(
-            id: 'dev_enable',
-            kind: DeviceKind.contactNo,
-            designation: '-S1',
-            position: Vec2(370, 280),
-            description: 'Aretovaný ovládací spínač v rozepnuté poloze',
-            rating: '13–14',
-          ),
-          Device(
-            id: 'dev_coil',
-            kind: DeviceKind.coil,
-            designation: '-K2',
-            position: Vec2(370, 440),
-            description:
-                'Ukázková cívka relé bez automatického propojení mezi listy',
-            rating: '24 V DC',
-          ),
-          Device(
-            id: 'dev_lamp',
-            kind: DeviceKind.lamp,
-            designation: '-H1',
-            position: Vec2(700, 440),
-            description: 'Signalizace sepnutí',
-            rating: '24 V DC · zelená',
-          ),
-          Device(
-            id: 'dev_return',
-            kind: DeviceKind.terminal,
-            designation: '-X2',
-            position: Vec2(370, 585),
-            description:
-                'Externí zpětný vodič 0 V; volná svorka tvoří hranici výkresu',
-            rating: '0 V DC',
-          ),
-        ],
-        wires: [
-          _wire('wire_c1', 'dev_control_supply', 'out', 'dev_enable', 'in'),
-          _wire('wire_c2', 'dev_enable', 'out', 'dev_coil', 'a1'),
-          _wire('wire_c3', 'dev_enable', 'out', 'dev_lamp', 'in', const [
-            Vec2(370, 350),
-            Vec2(700, 350),
-          ]),
-          _wire('wire_c4', 'dev_coil', 'a2', 'dev_return', 'in'),
-          _wire('wire_c5', 'dev_lamp', 'out', 'dev_return', 'in', const [
-            Vec2(700, 520),
-            Vec2(370, 520),
-          ]),
         ],
       ),
     ],
-  );
-
-  static Wire _wire(
-    String id,
-    String fromDevice,
-    String fromPort,
-    String toDevice,
-    String toPort, [
-    List<Vec2> waypoints = const [],
-  ]) => Wire(
-    id: id,
-    from: TerminalRef(deviceId: fromDevice, portId: fromPort),
-    to: TerminalRef(deviceId: toDevice, portId: toPort),
-    waypoints: waypoints,
+    pages: [
+      Sheet(
+        id: 'sheet_control',
+        name: 'Cívka',
+        number: '01',
+        devices: [
+          Device(
+            id: 'dev_coil',
+            componentId: 'component_relay',
+            functionId: 'function_coil',
+            symbol: BuiltinSymbolSpec(
+              kind: DeviceKind.coil,
+              bindings: {'a1': 'terminal_a1', 'a2': 'terminal_a2'},
+            ),
+            position: const Vec2(300, 250),
+          ),
+        ],
+        continuations: const [
+          ContinuationMarker(
+            id: 'marker_a',
+            linkId: 'link_signal',
+            position: Vec2(300, 130),
+            direction: PortSide.bottom,
+          ),
+          ContinuationMarker(
+            id: 'marker_pe',
+            linkId: 'link_earth',
+            position: Vec2(700, 430),
+            glyph: ContinuationGlyph.earth,
+            direction: PortSide.top,
+          ),
+        ],
+        wires: [
+          Wire(
+            id: 'wire_coil',
+            from: const ContinuationRef(markerId: 'marker_a'),
+            to: const TerminalRef(deviceId: 'dev_coil', portId: 'a1'),
+          ),
+        ],
+      ),
+      Sheet(
+        id: 'sheet_contact',
+        name: 'Kontakt a opakovaný pohled',
+        number: '02',
+        devices: [
+          Device(
+            id: 'dev_contact',
+            componentId: 'component_relay',
+            functionId: 'function_contact',
+            symbol: BuiltinSymbolSpec(
+              kind: DeviceKind.contactNo,
+              bindings: {'in': 'terminal_13', 'out': 'terminal_14'},
+            ),
+            position: const Vec2(300, 250),
+          ),
+          Device(
+            id: 'dev_reference',
+            componentId: 'component_relay',
+            functionId: 'function_coil',
+            mode: OccurrenceMode.reference,
+            symbol: BuiltinSymbolSpec(
+              kind: DeviceKind.coil,
+              bindings: {'a1': 'terminal_a1', 'a2': 'terminal_a2'},
+            ),
+            position: const Vec2(600, 250),
+          ),
+        ],
+        continuations: const [
+          ContinuationMarker(
+            id: 'marker_b',
+            linkId: 'link_signal',
+            position: Vec2(300, 130),
+            direction: PortSide.bottom,
+          ),
+        ],
+        wires: [
+          Wire(
+            id: 'wire_contact',
+            from: const ContinuationRef(markerId: 'marker_b'),
+            to: const TerminalRef(deviceId: 'dev_contact', portId: 'in'),
+          ),
+        ],
+      ),
+      Sheet(
+        id: 'sheet_mounting',
+        name: 'Výstavba',
+        number: '03',
+        type: SheetType.cabinetLayout,
+        mountingView: const MountingView(
+          layoutId: 'layout_demo',
+          viewport: RectUnits(x: 80, y: 80, width: 900, height: 560),
+          scaleDenominator: 2,
+        ),
+      ),
+      Sheet(
+        id: 'sheet_bom',
+        name: 'Kusovník',
+        number: 'B01',
+        type: SheetType.billOfMaterials,
+        report: const BomTableSpec(
+          kind: BomReportKind.articles,
+          title: 'Materiálový přehled',
+        ),
+      ),
+      Sheet(
+        id: 'sheet_components',
+        name: 'Komponenty',
+        number: 'C01',
+        type: SheetType.billOfMaterials,
+        report: const BomTableSpec(
+          kind: BomReportKind.components,
+          title: 'Seznam komponent',
+        ),
+      ),
+    ],
   );
 }

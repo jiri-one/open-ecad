@@ -7,24 +7,29 @@ chování a škálování ověřte na cílovém počítači následujícím prů
    `open_ecad.exe`. Zaznamenat verzi Windows, rozlišení a škálování monitoru.
 2. Přepnout všechny tři motivy. Ověřit české popisky, ikony a fokus klávesnice při
    100 %, 125 % a 150 % škálování; zkusit e-ink a zmenšení okna na 1024 × 768.
-   V levém panelu přepnout mezi **Listy projektu** a **Přístroje**, vyhledat symbol
+   V levém panelu přepnout mezi **Listy**, **Značky**, **Přístroje** a **Artikly**, vyhledat symbol
    a ověřit zachování filtru po přepnutí tam a zpět.
-3. Na ukázce vybrat a přesunout několik přístrojů, otočit jistič a vrátit změny.
+3. Na ukázce vybrat a přesunout symbol, otočit jej a vrátit změny.
    Přidat svorku a propojit její bod s dalším vývodem. Vybrat a odstranit vodič.
-4. Přepnout na druhý list, dvojklikem přejmenovat jeho záložku, přidat nový list.
+4. Projít pět listů ukázky: cívku, kontakt s opakovaným pohledem, výstavbu,
+   kusovník a seznam komponent. Ověřit, že relé je stále jeden fyzický kus.
+   Přejmenovat list přes nabídku seznamu listů a přidat nový list.
    Vytvořit formulář s prázdnou tabulkou, změnit typ listu ve **Vlastnostech**
    a vrátit změnu. V hledání listů zkusit „1P“ a „formular“ bez diakritiky.
 5. Zadat `Přidej motorový vývod`. Zkontrolovat náhled, přepnout na původní schéma,
    použít návrh a vrátit ho jediným undo. Esc zavře náhled, návrh ale zůstane
    v panelu asistenta. Vyzkoušet duplikaci vybraných přístrojů.
 6. V textovém poli napsat písmena V, W a R a mazat text; kreslicí zkratky nesmějí
-   při psaní měnit dokument. Vyzkoušet Ctrl+K, Ctrl+L, Ctrl+Z a Ctrl+S.
+   při psaní měnit dokument. Vyzkoušet Ctrl+K, Ctrl+L, Ctrl+Z, Ctrl+Y a Ctrl+S.
+   Ctrl+C/V zobrazí náhled; kliknutí jej vloží jako jediný krok historie, Esc
+   ho zruší. V **Historii úprav** vrátit a obnovit více kroků.
 7. Uložit `.oecad` do cesty s mezerou a diakritikou, otevřít jiný projekt a načíst
    uložený soubor. Zrušit souborový dialog a ověřit, že dokument zůstal zachovaný.
 8. Změnit projekt, počkat na uložení pracovní kopie, zavřít a znovu otevřít aplikaci.
    Po uložení do souboru a restartu nesmí záhlaví hlásit neuložené změny.
-9. Exportovat PDF a SVG. Ověřit dva listy PDF, české texty a konce spojů při zoomu.
-10. Spustit `Zkontroluj projekt`; ukázka má upozornění na otevřený bod. Kliknutí
+9. Exportovat PDF a SVG. Ověřit všechny listy a odvozené reportové stránky,
+   české texty, konce spojů při zoomu a měřítko montážního pohledu.
+10. Spustit `Zkontroluj projekt`; ukázka má otevřené body a neurčený materiál. Kliknutí
     na nález přejde na příslušný přístroj.
 
 Ollama je samostatný volitelný scénář. Ověřit známý nainstalovaný model, nedostupný

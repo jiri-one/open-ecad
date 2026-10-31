@@ -26,6 +26,7 @@ class OllamaProvider {
     required String prompt,
     required AiProviderSettings settings,
     required Sheet sheet,
+    EcadProject? project,
     required Set<String> selectedDeviceIds,
   }) async {
     settings.validate();
@@ -60,7 +61,7 @@ class OllamaProvider {
                       'Plan only changes explicitly requested by the user. Use only the listed operations. '
                       'Selection operations refer to the supplied selected IDs. Never invent a selection. '
                       'Use motor_branch for a single-line supply, breaker, contactor, motor and protective earth branch. '
-                      'Device coordinates are optional; omit them for automatic placement. '
+                      'Devices are occurrences of physical components. Rename changes the shared component; duplicate creates a new physical component. Earth is a continuation marker, not a component. Device coordinates are optional; omit them for automatic placement. '
                       'No engineering calculations, code, shell commands, external tools or file operations are available. '
                       'If unsupported or ambiguous, return actions: [] and explain in Czech. '
                       'Write a concise Czech label and message describing the actual proposal.',
@@ -71,6 +72,12 @@ class OllamaProvider {
                     'request': prompt,
                     'sheet': {'id': sheet.id, 'name': sheet.name},
                     'selection': selectedDeviceIds.toList(),
+                    'components': [
+                      for (final id
+                          in contextDevices.map((d) => d.componentId).toSet())
+                        if (project?.componentById(id) case final c?)
+                          c.copyWith(note: '').toJson(),
+                    ],
                     'devices':
                         contextDevices
                             .map((device) => device.toJson())

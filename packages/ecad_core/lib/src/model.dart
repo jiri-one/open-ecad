@@ -2,10 +2,19 @@
 import 'dart:math' as math;
 
 import 'graphics.dart';
+import 'domain.dart';
+import 'structure.dart';
+export 'domain.dart';
+export 'structure.dart';
 
 /// Shared format limits. Project files are data, never executable instructions.
 abstract final class ProjectLimits {
   static const maxPages = 1024;
+  static const maxArticles = 20000;
+  static const maxComponents = 20000;
+  static const maxTerminals = 100000;
+  static const maxTerminalReferences = 1000000;
+  static const maxPorts = 100000;
 
   /// A sheet may come from any page of a much longer source document.
   static const maxSourcePage = 1000000;
@@ -105,98 +114,186 @@ enum DeviceKind {
   voltmeter,
 }
 
-class Device {
-  const Device({
+sealed class WireEndpoint {
+  const WireEndpoint();
+  String get ownerId;
+  Map<String, Object?> toJson();
+  factory WireEndpoint.fromJson(Object? value) {
+    final map = jsonObject(value, 'endpoint');
+    return switch (jsonString(map, 'kind')) {
+      'symbol' => TerminalRef.fromJson(value),
+      'continuation' => ContinuationRef.fromJson(value),
+      'corner' => CornerRef.fromJson(value),
+      _ =>
+        throw const EcadException(
+          'Unknown endpoint kind.',
+          code: 'invalid_schema',
+        ),
+    };
+  }
+}
+
+enum CornerOrientation {
+  topLeft('┌', Vec2(1, 0), Vec2(0, 1)),
+  topRight('┐', Vec2(0, 1), Vec2(-1, 0)),
+  bottomRight('┘', Vec2(-1, 0), Vec2(0, -1)),
+  bottomLeft('└', Vec2(0, -1), Vec2(1, 0));
+
+  const CornerOrientation(this.glyph, this.a, this.b);
+  final String glyph;
+  final Vec2 a;
+  final Vec2 b;
+  CornerOrientation get rotated => values[(index + 1) % values.length];
+}
+
+class ConnectionCorner {
+  const ConnectionCorner({
     required this.id,
-    required this.kind,
-    required this.designation,
     required this.position,
-    this.description = '',
-    this.rating = '',
-    this.rotation = 0,
+    this.orientation = CornerOrientation.topLeft,
   });
-
+  static const armLength = 10.0;
+  static const portIds = ['a', 'b'];
   final String id;
-  final DeviceKind kind;
-  final String designation;
   final Vec2 position;
-  final String description;
-  final String rating;
-  final double rotation;
+  final CornerOrientation orientation;
 
-  Device copyWith({
-    String? id,
-    DeviceKind? kind,
-    String? designation,
-    Vec2? position,
-    String? description,
-    String? rating,
-    double? rotation,
-  }) => Device(
-    id: id ?? this.id,
-    kind: kind ?? this.kind,
-    designation: designation ?? this.designation,
-    position: position ?? this.position,
-    description: description ?? this.description,
-    rating: rating ?? this.rating,
-    rotation: rotation ?? this.rotation,
-  );
+  Vec2? direction(String portId) => switch (portId) {
+    'a' => orientation.a,
+    'b' => orientation.b,
+    _ => null,
+  };
+  Vec2? portPosition(String portId) =>
+      direction(portId) == null
+          ? null
+          : position + direction(portId)! * armLength;
+  List<Vec2> get path => [portPosition('a')!, position, portPosition('b')!];
 
+  ConnectionCorner copyWith({Vec2? position, CornerOrientation? orientation}) =>
+      ConnectionCorner(
+        id: id,
+        position: position ?? this.position,
+        orientation: orientation ?? this.orientation,
+      );
   Map<String, Object?> toJson() => {
     'id': id,
-    'kind': kind.name,
-    'designation': designation,
     'position': position.toJson(),
-    'description': description,
-    'rating': rating,
-    'rotation': rotation,
+    'orientation': orientation.name,
   };
-
-  factory Device.fromJson(Object? value) {
+  factory ConnectionCorner.fromJson(Object? value) {
     final map = jsonObject(
       value,
-      'device',
-      allowed: const {
-        'id',
-        'kind',
-        'designation',
-        'position',
-        'description',
-        'rating',
-        'rotation',
-      },
+      'connection corner',
+      allowed: const {'id', 'position', 'orientation'},
     );
-    final kindName = jsonString(map, 'kind');
-    final kinds = DeviceKind.values.where((kind) => kind.name == kindName);
-    if (kinds.isEmpty) {
-      throw EcadException(
-        'Unknown device kind "$kindName".',
+    final name = jsonString(map, 'orientation');
+    final orientation =
+        CornerOrientation.values.where((v) => v.name == name).firstOrNull;
+    if (orientation == null) {
+      throw const EcadException(
+        'Unknown corner orientation.',
         code: 'invalid_schema',
       );
     }
-    return Device(
+    return ConnectionCorner(
       id: jsonString(map, 'id', max: 128),
-      kind: kinds.first,
-      designation: jsonString(map, 'designation', max: 64),
       position: Vec2.fromJson(map['position']),
-      description: jsonString(map, 'description', fallback: '', max: 8192),
-      rating: jsonString(map, 'rating', fallback: '', max: 128),
-      rotation: jsonNumber(map, 'rotation', fallback: 0),
+      orientation: orientation,
     );
   }
 }
 
-class TerminalRef {
+class CornerRef extends WireEndpoint {
+  const CornerRef({required this.cornerId, required this.portId});
+  final String cornerId;
+  final String portId;
+  @override
+  String get ownerId => cornerId;
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': 'corner',
+    'cornerId': cornerId,
+    'portId': portId,
+  };
+  factory CornerRef.fromJson(Object? value) {
+    final map = jsonObject(
+      value,
+      'corner endpoint',
+      allowed: const {'kind', 'cornerId', 'portId'},
+    );
+    if (map['kind'] != 'corner') {
+      throw const EcadException(
+        'Invalid endpoint kind.',
+        code: 'invalid_schema',
+      );
+    }
+    return CornerRef(
+      cornerId: jsonString(map, 'cornerId', max: 128),
+      portId: jsonString(map, 'portId', max: 128),
+    );
+  }
+  @override
+  bool operator ==(Object other) =>
+      other is CornerRef &&
+      cornerId == other.cornerId &&
+      portId == other.portId;
+  @override
+  int get hashCode => Object.hash('corner', cornerId, portId);
+}
+
+class ContinuationRef extends WireEndpoint {
+  const ContinuationRef({required this.markerId});
+  final String markerId;
+  @override
+  String get ownerId => markerId;
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': 'continuation',
+    'markerId': markerId,
+  };
+  factory ContinuationRef.fromJson(Object? value) {
+    final map = jsonObject(
+      value,
+      'continuation endpoint',
+      allowed: const {'kind', 'markerId'},
+    );
+    if (map['kind'] != 'continuation')
+      throw const EcadException(
+        'Invalid endpoint kind.',
+        code: 'invalid_schema',
+      );
+    return ContinuationRef(markerId: jsonString(map, 'markerId', max: 128));
+  }
+  @override
+  bool operator ==(Object other) =>
+      other is ContinuationRef && markerId == other.markerId;
+  @override
+  int get hashCode => Object.hash('continuation', markerId);
+}
+
+class TerminalRef extends WireEndpoint {
   const TerminalRef({required this.deviceId, required this.portId});
   final String deviceId;
   final String portId;
-  Map<String, Object?> toJson() => {'deviceId': deviceId, 'portId': portId};
+  @override
+  String get ownerId => deviceId;
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': 'symbol',
+    'deviceId': deviceId,
+    'portId': portId,
+  };
   factory TerminalRef.fromJson(Object? value) {
     final map = jsonObject(
       value,
       'terminal',
-      allowed: const {'deviceId', 'portId'},
+      allowed: const {'kind', 'deviceId', 'portId'},
     );
+    if (map['kind'] != 'symbol')
+      throw const EcadException(
+        'Invalid endpoint kind.',
+        code: 'invalid_schema',
+      );
     return TerminalRef(
       deviceId: jsonString(map, 'deviceId', max: 128),
       portId: jsonString(map, 'portId', max: 128),
@@ -222,14 +319,15 @@ class Wire {
     List<Vec2> waypoints = const [],
   }) : waypoints = List.unmodifiable(waypoints);
   final String id;
-  final TerminalRef from;
-  final TerminalRef to;
+  final WireEndpoint from;
+  final WireEndpoint to;
   final List<Vec2> waypoints;
+  bool get isAutomatic => false;
 
   Wire copyWith({
     String? id,
-    TerminalRef? from,
-    TerminalRef? to,
+    WireEndpoint? from,
+    WireEndpoint? to,
     List<Vec2>? waypoints,
   }) => Wire(
     id: id ?? this.id,
@@ -252,8 +350,8 @@ class Wire {
     );
     return Wire(
       id: jsonString(map, 'id', max: 128),
-      from: TerminalRef.fromJson(map['from']),
-      to: TerminalRef.fromJson(map['to']),
+      from: WireEndpoint.fromJson(map['from']),
+      to: WireEndpoint.fromJson(map['to']),
       waypoints:
           jsonList(
             map,
@@ -265,20 +363,15 @@ class Wire {
   }
 }
 
-/// Editing, connectivity and validation rules are identical for every type;
-/// the type only names and organizes the page.
 enum SheetType {
   multiLine('Vícepólové schéma'),
   singleLine('Jednopólové schéma'),
   cabinetLayout('Výstavba rozvaděče'),
-  form('Formulář');
+  form('Formulář'),
+  billOfMaterials('Kusovník');
 
   const SheetType(this.label);
   final String label;
-
-  /// Compatibility fallback when a document or command names no type; it
-  /// says nothing about what an older or unclassified page actually shows.
-  static const legacyDefault = SheetType.multiLine;
 }
 
 /// An absent [key] means "unspecified" and takes [fallback]; null or an
@@ -300,25 +393,44 @@ class Sheet {
     required this.id,
     required this.name,
     required this.number,
-    this.type = SheetType.legacyDefault,
+    this.structure = const StructureContext.empty(),
+    this.documentCode = '',
+    this.type = SheetType.multiLine,
     this.width = 1100,
     this.height = 780,
     this.showFrame = true,
     this.sourcePage,
+    this.paperSizeMm = SizeMm.a3Landscape,
+    this.mountingView,
+    this.report,
+    List<ConnectionCorner> corners = const [],
+    List<ContinuationMarker> continuations = const [],
     List<Device> devices = const [],
     List<Wire> wires = const [],
     List<DrawingElement> graphics = const [],
-  }) : devices = List.unmodifiable(devices),
+  }) : corners = List.unmodifiable(corners),
+       continuations = List.unmodifiable(continuations),
+       devices = List.unmodifiable(devices),
        wires = List.unmodifiable(wires),
        graphics = List.unmodifiable(graphics);
   final String id;
   final String name;
   final String number;
+  final StructureContext structure;
+  final String documentCode;
   final SheetType type;
   final double width;
   final double height;
   final bool showFrame;
   final int? sourcePage;
+  final SizeMm paperSizeMm;
+  final MountingView? mountingView;
+  final BomTableSpec? report;
+  final List<ConnectionCorner> corners;
+  ConnectionCorner? cornerById(String id) => findById(corners, id, (v) => v.id);
+  final List<ContinuationMarker> continuations;
+  ContinuationMarker? continuationById(String id) =>
+      findById(continuations, id, (v) => v.id);
   final List<Device> devices;
   final List<Wire> wires;
   final List<DrawingElement> graphics;
@@ -341,11 +453,18 @@ class Sheet {
     String? id,
     String? name,
     String? number,
+    StructureContext? structure,
+    String? documentCode,
     SheetType? type,
     double? width,
     double? height,
     bool? showFrame,
     Object? sourcePage = _unchangedSourcePage,
+    SizeMm? paperSizeMm,
+    Object? mountingView = unchanged,
+    Object? report = unchanged,
+    List<ConnectionCorner>? corners,
+    List<ContinuationMarker>? continuations,
     List<Device>? devices,
     List<Wire>? wires,
     List<DrawingElement>? graphics,
@@ -353,6 +472,8 @@ class Sheet {
     id: id ?? this.id,
     name: name ?? this.name,
     number: number ?? this.number,
+    structure: structure ?? this.structure,
+    documentCode: documentCode ?? this.documentCode,
     type: type ?? this.type,
     width: width ?? this.width,
     height: height ?? this.height,
@@ -361,6 +482,15 @@ class Sheet {
         identical(sourcePage, _unchangedSourcePage)
             ? this.sourcePage
             : sourcePage as int?,
+    paperSizeMm: paperSizeMm ?? this.paperSizeMm,
+    mountingView:
+        identical(mountingView, unchanged)
+            ? this.mountingView
+            : mountingView as MountingView?,
+    report:
+        identical(report, unchanged) ? this.report : report as BomTableSpec?,
+    corners: corners ?? this.corners,
+    continuations: continuations ?? this.continuations,
     devices: devices ?? this.devices,
     wires: wires ?? this.wires,
     graphics: graphics ?? this.graphics,
@@ -370,11 +500,18 @@ class Sheet {
     'id': id,
     'name': name,
     'number': number,
+    if (!structure.isEmpty) 'structure': structure.toJson(),
+    if (documentCode.isNotEmpty) 'documentCode': documentCode,
     'type': type.name,
     'width': width,
     'height': height,
     'showFrame': showFrame,
     if (sourcePage != null) 'sourcePage': sourcePage,
+    'paperSizeMm': paperSizeMm.toJson(),
+    if (mountingView != null) 'mountingView': mountingView!.toJson(),
+    if (report != null) 'report': report!.toJson(),
+    if (corners.isNotEmpty) 'corners': corners.map((v) => v.toJson()).toList(),
+    'continuations': continuations.map((v) => v.toJson()).toList(),
     'devices': devices.map((d) => d.toJson()).toList(),
     'wires': wires.map((w) => w.toJson()).toList(),
     'graphics': graphics.map((g) => g.toJson()).toList(),
@@ -388,11 +525,18 @@ class Sheet {
         'id',
         'name',
         'number',
+        'structure',
+        'documentCode',
         'type',
         'width',
         'height',
         'showFrame',
         'sourcePage',
+        'paperSizeMm',
+        'mountingView',
+        'report',
+        'corners',
+        'continuations',
         'devices',
         'wires',
         'graphics',
@@ -420,7 +564,29 @@ class Sheet {
       id: jsonString(map, 'id', max: 128),
       name: jsonString(map, 'name', max: 200),
       number: jsonString(map, 'number', max: 32),
-      type: jsonSheetType(map, 'type', fallback: SheetType.legacyDefault),
+      structure: StructureContext.fromJson(map['structure']),
+      documentCode: jsonString(map, 'documentCode', max: 64, fallback: ''),
+      type: jsonSheetType(map, 'type'),
+      paperSizeMm: SizeMm.fromJson(map['paperSizeMm']),
+      mountingView:
+          map['mountingView'] == null
+              ? null
+              : MountingView.fromJson(map['mountingView']),
+      report:
+          map['report'] == null ? null : BomTableSpec.fromJson(map['report']),
+      corners:
+          jsonList(
+            map,
+            'corners',
+            max: ProjectLimits.maxDevices,
+            optional: true,
+          ).map(ConnectionCorner.fromJson).toList(),
+      continuations:
+          jsonList(
+            map,
+            'continuations',
+            max: ProjectLimits.maxDevices,
+          ).map(ContinuationMarker.fromJson).toList(),
       width: width,
       height: height,
       showFrame: jsonBool(map, 'showFrame', fallback: true),
@@ -457,17 +623,40 @@ class EcadProject {
     this.description = '',
     this.revision = 0,
     required List<Sheet> pages,
-  }) : pages = List.unmodifiable(pages);
+    List<Article> articles = const [],
+    List<Component> components = const [],
+    List<ContinuationLink> continuationLinks = const [],
+    List<TerminalStrip> terminalStrips = const [],
+    List<MountingLayout> mountingLayouts = const [],
+  }) : terminalStrips = List.unmodifiable(terminalStrips),
+       articles = List.unmodifiable(articles),
+       components = List.unmodifiable(components),
+       continuationLinks = List.unmodifiable(continuationLinks),
+       mountingLayouts = List.unmodifiable(mountingLayouts),
+       pages = List.unmodifiable(pages);
   static const format = 'open-ecad';
 
   /// Bumped whenever written files gain fields that older strict readers
   /// reject, so they report an unsupported format instead of a schema error.
-  static const formatVersion = 3;
+  static const formatVersion = 5;
   final String id;
   final String name;
   final String description;
   final int revision;
   final List<Sheet> pages;
+  final List<Article> articles;
+  final List<Component> components;
+  final List<ContinuationLink> continuationLinks;
+  final List<TerminalStrip> terminalStrips;
+  TerminalStrip? terminalStripById(String id) =>
+      findById(terminalStrips, id, (s) => s.id);
+  final List<MountingLayout> mountingLayouts;
+  Article? articleById(String id) => findById(articles, id, (v) => v.id);
+  Component? componentById(String id) => findById(components, id, (v) => v.id);
+  ContinuationLink? continuationLinkById(String id) =>
+      findById(continuationLinks, id, (v) => v.id);
+  MountingLayout? mountingLayoutById(String id) =>
+      findById(mountingLayouts, id, (v) => v.id);
 
   Sheet? sheetById(String id) {
     for (final page in pages) {
@@ -482,12 +671,22 @@ class EcadProject {
     String? description,
     int? revision,
     List<Sheet>? pages,
+    List<Article>? articles,
+    List<Component>? components,
+    List<ContinuationLink>? continuationLinks,
+    List<TerminalStrip>? terminalStrips,
+    List<MountingLayout>? mountingLayouts,
   }) => EcadProject(
     id: id ?? this.id,
     name: name ?? this.name,
     description: description ?? this.description,
     revision: revision ?? this.revision,
     pages: pages ?? this.pages,
+    articles: articles ?? this.articles,
+    components: components ?? this.components,
+    continuationLinks: continuationLinks ?? this.continuationLinks,
+    terminalStrips: terminalStrips ?? this.terminalStrips,
+    mountingLayouts: mountingLayouts ?? this.mountingLayouts,
   );
 
   Map<String, Object?> toJson() => {
@@ -497,12 +696,16 @@ class EcadProject {
     'name': name,
     'description': description,
     'revision': revision,
+    'articles': articles.map((v) => v.toJson()).toList(),
+    'components': components.map((v) => v.toJson()).toList(),
+    'continuationLinks': continuationLinks.map((v) => v.toJson()).toList(),
+    if (terminalStrips.isNotEmpty)
+      'terminalStrips': terminalStrips.map((v) => v.toJson()).toList(),
+    'mountingLayouts': mountingLayouts.map((v) => v.toJson()).toList(),
     'pages': pages.map((p) => p.toJson()).toList(),
   };
 
-  /// Reads v1 to v3. Fields that older versions lack (v1 page bounds, frame
-  /// and graphics; v1–v2 sheet type) get compatibility defaults.
-  /// Use [ProjectEngine] or validateProject to also check graph consistency.
+  /// Use ProjectEngine or requireValidProject to check reference integrity.
   factory EcadProject.fromJson(Object? value) {
     final map = jsonObject(
       value,
@@ -515,13 +718,17 @@ class EcadProject {
         'description',
         'revision',
         'pages',
+        'articles',
+        'components',
+        'continuationLinks',
+        'terminalStrips',
+        'mountingLayouts',
       },
     );
     final version = map['formatVersion'];
     if (map['format'] != format ||
         version is! int ||
-        version < 1 ||
-        version > formatVersion) {
+        (version != formatVersion && version != 4)) {
       throw const EcadException(
         'Unsupported project format or formatVersion.',
         code: 'unsupported_format',
@@ -533,6 +740,67 @@ class EcadProject {
       fallback: 0,
       max: ProjectLimits.maxRevision,
     );
+    final rawArticles = jsonList(
+      map,
+      'articles',
+      max: ProjectLimits.maxArticles,
+    );
+    final rawComponents = jsonList(
+      map,
+      'components',
+      max: ProjectLimits.maxComponents,
+    );
+    final rawLinks = jsonList(
+      map,
+      'continuationLinks',
+      max: ProjectLimits.maxDevices,
+    );
+    final rawLayouts = jsonList(
+      map,
+      'mountingLayouts',
+      max: ProjectLimits.maxPages,
+    );
+    var terminals = 0;
+    var terminalRefs = 0;
+    var placements = 0;
+    for (final raw in rawComponents) {
+      final component = jsonObject(raw, 'component');
+      if (component['electrical'] case final value?) {
+        final electrical = jsonObject(value, 'electrical');
+        terminals += jsonList(electrical, 'terminals', max: 256).length;
+        for (final rawFunction in jsonList(electrical, 'functions', max: 64)) {
+          terminalRefs +=
+              jsonList(
+                jsonObject(rawFunction, 'function'),
+                'terminalIds',
+                max: 256,
+              ).length;
+        }
+        if (terminals > ProjectLimits.maxTerminals ||
+            terminalRefs > ProjectLimits.maxTerminalReferences) {
+          throw const EcadException(
+            'Too many electrical terminals or references.',
+            code: 'limit_exceeded',
+          );
+        }
+      }
+    }
+    for (final raw in rawLayouts) {
+      placements +=
+          jsonList(
+            jsonObject(raw, 'mounting layout'),
+            'placements',
+            max: ProjectLimits.maxDevices,
+          ).length;
+      if (placements > ProjectLimits.maxDevices)
+        throw const EcadException(
+          'Too many mounting placements.',
+          code: 'limit_exceeded',
+        );
+    }
+    var portCount = 0;
+    var markerCount = 0;
+    var cornerCount = 0;
     final rawPages = jsonList(map, 'pages', max: ProjectLimits.maxPages);
     var deviceCount = 0;
     var wireCount = 0;
@@ -542,6 +810,45 @@ class EcadProject {
     // Enforce whole-project limits before allocating domain object collections.
     for (final raw in rawPages) {
       final page = jsonObject(raw, 'sheet');
+      cornerCount +=
+          jsonList(
+            page,
+            'corners',
+            max: ProjectLimits.maxDevices,
+            optional: true,
+          ).length;
+      markerCount +=
+          jsonList(page, 'continuations', max: ProjectLimits.maxDevices).length;
+      for (final rawDevice in jsonList(
+        page,
+        'devices',
+        max: ProjectLimits.maxDevices,
+      )) {
+        final symbol = jsonObject(
+          jsonObject(rawDevice, 'device')['symbol'],
+          'symbol',
+        );
+        if (symbol['type'] == 'block') {
+          portCount += jsonList(symbol, 'ports', max: 256).length;
+        } else if (symbol['type'] == 'terminal') {
+          portCount += jsonList(symbol, 'sides', max: 4).length;
+        } else {
+          final bindings = jsonObject(symbol['bindings'], 'bindings');
+          if (bindings.length > 256)
+            throw const EcadException(
+              'Too many symbol bindings.',
+              code: 'limit_exceeded',
+            );
+          portCount += bindings.length;
+        }
+      }
+      if (portCount > ProjectLimits.maxPorts ||
+          markerCount > ProjectLimits.maxDevices ||
+          cornerCount > ProjectLimits.maxDevices)
+        throw const EcadException(
+          'Too many symbol ports or continuation markers.',
+          code: 'limit_exceeded',
+        );
       deviceCount +=
           jsonList(page, 'devices', max: ProjectLimits.maxDevices).length;
       wireCount += jsonList(page, 'wires', max: ProjectLimits.maxWires).length;
@@ -591,6 +898,17 @@ class EcadProject {
       description: jsonString(map, 'description', fallback: '', max: 8192),
       revision: revision,
       pages: rawPages.map(Sheet.fromJson).toList(),
+      articles: rawArticles.map(Article.fromJson).toList(),
+      components: rawComponents.map(Component.fromJson).toList(),
+      continuationLinks: rawLinks.map(ContinuationLink.fromJson).toList(),
+      terminalStrips:
+          jsonList(
+            map,
+            'terminalStrips',
+            max: ProjectLimits.maxComponents,
+            optional: true,
+          ).map(TerminalStrip.fromJson).toList(),
+      mountingLayouts: rawLayouts.map(MountingLayout.fromJson).toList(),
     );
   }
 }

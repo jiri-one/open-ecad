@@ -32,16 +32,13 @@ void main() {
       final sample = await run(['sample']);
       expect(sample.exitCode, 0, reason: sample.stderr.toString());
       final project = EcadProject.fromJson(jsonDecode(sample.stdout as String));
-      expect(project.pages, hasLength(2));
+      expect(project.pages, hasLength(5));
       final validation = await run(['validate', projectFile.path, '--json']);
       expect(validation.exitCode, 0, reason: validation.stderr.toString());
       final result =
           jsonDecode(validation.stdout as String) as Map<String, dynamic>;
       expect(result['valid'], isTrue);
-      expect(
-        result['diagnostics'],
-        isNotEmpty,
-      ); // External 0 V drawing boundary.
+      expect(result['diagnostics'], isNotEmpty);
     },
   );
 
@@ -94,12 +91,12 @@ void main() {
             ...demo.pages.first.wires,
             Wire(
               id: 'odd_wire',
-              from: const TerminalRef(deviceId: 'dev_supply', portId: 'out'),
-              to: const TerminalRef(deviceId: 'dev_motor', portId: port),
+              from: const TerminalRef(deviceId: 'dev_coil', portId: 'a1'),
+              to: const TerminalRef(deviceId: 'dev_coil', portId: port),
             ),
           ],
         ),
-        demo.pages.last,
+        ...demo.pages.skip(1),
       ],
     );
     final hostileFile = File('${directory.path}/hostile.ecad.json');
@@ -111,12 +108,12 @@ void main() {
     expect(lines, everyElement(isNot(contains(_terminalControls))));
     expect(
       lines.first,
-      r'Řídicí panel\x1b]0;title\x07\x1b[31m\x0d: 2 sheets, revision 0',
+      r'Řídicí panel\x1b]0;title\x07\x1b[31m\x0d: 5 sheets, revision 0',
     );
     expect(
       lines,
       contains(
-        r'error: Wire odd_wire references unknown port "x\x1b[2J\x9b31m\x0aerror: forged" on -M1.',
+        r'error: Wire odd_wire references unknown port "x\x1b[2J\x9b31m\x0aerror: forged".',
       ),
     );
     expect(lines.where((line) => line.startsWith('error: forged')), isEmpty);
@@ -128,7 +125,7 @@ void main() {
     expect([
       for (final diagnostic in report['diagnostics'] as List)
         (diagnostic as Map)['message'],
-    ], contains('Wire odd_wire references unknown port "$port" on -M1.'));
+    ], contains('Wire odd_wire references unknown port "$port".'));
 
     final commands = File('${directory.path}/commands.json');
     await commands.writeAsString(
@@ -140,7 +137,7 @@ void main() {
     for (final (input, message) in [
       (
         hostileFile,
-        r'invalid_port: Wire odd_wire references unknown port "x\x1b[2J\x9b31m\x0aerror: forged" on -M1.',
+        r'invalid_port: Wire odd_wire references unknown port "x\x1b[2J\x9b31m\x0aerror: forged".',
       ),
       (projectFile, r'missing_sheet: Sheet sheet\x1b]0;x\x07 does not exist.'),
     ]) {
@@ -189,7 +186,7 @@ void main() {
       expect(validated.$1, 0, reason: validated.$3);
       expect(
         validated.$2,
-        startsWith('${DemoProject.create().name}: 2 sheets'),
+        startsWith('${DemoProject.create().name}: 5 sheets'),
       );
 
       final commands = File('${directory.path}/commands.json');
@@ -281,7 +278,7 @@ void main() {
     await commands.writeAsString(
       jsonEncode([
         const RenameProject('Not committed').toJson(),
-        const DeleteWire('sheet_power', 'does_not_exist').toJson(),
+        const DeleteWire('sheet_control', 'does_not_exist').toJson(),
       ]),
     );
     final output = File('${directory.path}/absent.ecad.json');

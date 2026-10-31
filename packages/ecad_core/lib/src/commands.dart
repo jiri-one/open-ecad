@@ -13,6 +13,110 @@ sealed class EcadCommand {
     void fields(Set<String> names) =>
         jsonObject(value, 'command', allowed: {'type', ...names});
     switch (type) {
+      case 'renameStructureBranch':
+        fields({'aspect', 'prefix', 'replacement'});
+        final aspects = StructureAspect.values.where(
+          (aspect) => aspect.name == jsonString(map, 'aspect', max: 16),
+        );
+        if (aspects.isEmpty) {
+          throw const EcadException(
+            'Unknown structure aspect.',
+            code: 'invalid_command',
+          );
+        }
+        List<String> path(String key) =>
+            jsonList(
+              map,
+              key,
+              max: 16,
+            ).map((v) => jsonString({'value': v}, 'value', max: 64)).toList();
+        return RenameStructureBranch(
+          aspects.single,
+          path('prefix'),
+          path('replacement'),
+        );
+      case 'addTerminalStrip':
+        fields({'strip'});
+        return AddTerminalStrip(TerminalStrip.fromJson(map['strip']));
+      case 'updateTerminalStrip':
+        fields({'strip'});
+        return UpdateTerminalStrip(TerminalStrip.fromJson(map['strip']));
+      case 'addArticle':
+        fields({'article'});
+        return AddArticle(Article.fromJson(map['article']));
+      case 'updateArticle':
+        fields({'article'});
+        return UpdateArticle(Article.fromJson(map['article']));
+      case 'deleteArticle':
+        fields({'articleId'});
+        return DeleteArticle(jsonString(map, 'articleId', max: 128));
+      case 'addComponent':
+        fields({'component'});
+        return AddComponent(Component.fromJson(map['component']));
+      case 'updateComponent':
+        fields({'component'});
+        return UpdateComponent(Component.fromJson(map['component']));
+      case 'deleteComponent':
+        fields({'componentId'});
+        return DeleteComponent(jsonString(map, 'componentId', max: 128));
+      case 'addContinuationLink':
+        fields({'link'});
+        return AddContinuationLink(ContinuationLink.fromJson(map['link']));
+      case 'updateContinuationLink':
+        fields({'link'});
+        return UpdateContinuationLink(ContinuationLink.fromJson(map['link']));
+      case 'deleteContinuationLink':
+        fields({'linkId'});
+        return DeleteContinuationLink(jsonString(map, 'linkId', max: 128));
+      case 'addMountingLayout':
+        fields({'layout'});
+        return AddMountingLayout(MountingLayout.fromJson(map['layout']));
+      case 'updateMountingLayout':
+        fields({'layout'});
+        return UpdateMountingLayout(MountingLayout.fromJson(map['layout']));
+      case 'deleteMountingLayout':
+        fields({'layoutId'});
+        return DeleteMountingLayout(jsonString(map, 'layoutId', max: 128));
+      case 'addContinuationMarker':
+        fields({'marker', 'sheetId'});
+        return AddContinuationMarker(
+          sheetId(),
+          ContinuationMarker.fromJson(map['marker']),
+        );
+      case 'updateContinuationMarker':
+        fields({'marker', 'sheetId'});
+        return UpdateContinuationMarker(
+          sheetId(),
+          ContinuationMarker.fromJson(map['marker']),
+        );
+      case 'deleteContinuationMarker':
+        fields({'markerId', 'sheetId'});
+        return DeleteContinuationMarker(
+          sheetId(),
+          jsonString(map, 'markerId', max: 128),
+        );
+      case 'updateSheet':
+        fields({'sheet'});
+        return UpdateSheet(Sheet.fromJson(map['sheet']));
+      case 'updateWire':
+        fields({'wire', 'sheetId'});
+        return UpdateWire(sheetId(), Wire.fromJson(map['wire']));
+      case 'deleteSheet':
+        fields({'sheetId'});
+        return DeleteSheet(sheetId());
+      case 'reorderSheets':
+        fields({'ids'});
+        return ReorderSheets(
+          jsonList(
+            map,
+            'ids',
+            max: ProjectLimits.maxPages,
+          ).map((v) => jsonString({'id': v}, 'id', max: 128)).toList(),
+        );
+      case 'setProjectDescription':
+        fields({'description'});
+        return SetProjectDescription(jsonString(map, 'description', max: 8192));
+
       case 'addDevice':
         fields({'sheetId', 'device'});
         return AddDevice(sheetId(), Device.fromJson(map['device']));
@@ -136,6 +240,24 @@ sealed class EcadCommand {
           );
         }
         return DeleteGraphics(sheetId(), ids);
+      case 'addConnectionCorner':
+        fields({'sheetId', 'corner'});
+        return AddConnectionCorner(
+          sheetId(),
+          ConnectionCorner.fromJson(map['corner']),
+        );
+      case 'updateConnectionCorner':
+        fields({'sheetId', 'corner'});
+        return UpdateConnectionCorner(
+          sheetId(),
+          ConnectionCorner.fromJson(map['corner']),
+        );
+      case 'deleteConnectionCorner':
+        fields({'sheetId', 'cornerId'});
+        return DeleteConnectionCorner(
+          sheetId(),
+          jsonString(map, 'cornerId', max: 128),
+        );
       case 'addWire':
         fields({'sheetId', 'wire'});
         return AddWire(sheetId(), Wire.fromJson(map['wire']));
@@ -161,6 +283,44 @@ sealed class EcadCommand {
         );
     }
   }
+}
+
+class RenameStructureBranch extends EcadCommand {
+  RenameStructureBranch(
+    this.aspect,
+    List<String> prefix,
+    List<String> replacement,
+  ) : prefix = List.unmodifiable(prefix),
+      replacement = List.unmodifiable(replacement);
+  final StructureAspect aspect;
+  final List<String> prefix, replacement;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'renameStructureBranch',
+    'aspect': aspect.name,
+    'prefix': prefix,
+    'replacement': replacement,
+  };
+}
+
+class AddTerminalStrip extends EcadCommand {
+  const AddTerminalStrip(this.strip);
+  final TerminalStrip strip;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'addTerminalStrip',
+    'strip': strip.toJson(),
+  };
+}
+
+class UpdateTerminalStrip extends EcadCommand {
+  const UpdateTerminalStrip(this.strip);
+  final TerminalStrip strip;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'updateTerminalStrip',
+    'strip': strip.toJson(),
+  };
 }
 
 class AddDevice extends EcadCommand {
@@ -365,4 +525,242 @@ List<EcadCommand> decodeCommands(Object? value) {
     );
   }
   return List.unmodifiable(value.map(EcadCommand.fromJson));
+}
+
+class AddArticle extends EcadCommand {
+  const AddArticle(this.article);
+  final Article article;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'addArticle',
+    'article': article.toJson(),
+  };
+}
+
+class UpdateArticle extends EcadCommand {
+  const UpdateArticle(this.article);
+  final Article article;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'updateArticle',
+    'article': article.toJson(),
+  };
+}
+
+class DeleteArticle extends EcadCommand {
+  const DeleteArticle(this.articleId);
+  final String articleId;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'deleteArticle',
+    'articleId': articleId,
+  };
+}
+
+class AddComponent extends EcadCommand {
+  const AddComponent(this.component);
+  final Component component;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'addComponent',
+    'component': component.toJson(),
+  };
+}
+
+class UpdateComponent extends EcadCommand {
+  const UpdateComponent(this.component);
+  final Component component;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'updateComponent',
+    'component': component.toJson(),
+  };
+}
+
+class DeleteComponent extends EcadCommand {
+  const DeleteComponent(this.componentId);
+  final String componentId;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'deleteComponent',
+    'componentId': componentId,
+  };
+}
+
+class AddContinuationLink extends EcadCommand {
+  const AddContinuationLink(this.link);
+  final ContinuationLink link;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'addContinuationLink',
+    'link': link.toJson(),
+  };
+}
+
+class UpdateContinuationLink extends EcadCommand {
+  const UpdateContinuationLink(this.link);
+  final ContinuationLink link;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'updateContinuationLink',
+    'link': link.toJson(),
+  };
+}
+
+class DeleteContinuationLink extends EcadCommand {
+  const DeleteContinuationLink(this.linkId);
+  final String linkId;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'deleteContinuationLink',
+    'linkId': linkId,
+  };
+}
+
+class AddMountingLayout extends EcadCommand {
+  const AddMountingLayout(this.layout);
+  final MountingLayout layout;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'addMountingLayout',
+    'layout': layout.toJson(),
+  };
+}
+
+class UpdateMountingLayout extends EcadCommand {
+  const UpdateMountingLayout(this.layout);
+  final MountingLayout layout;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'updateMountingLayout',
+    'layout': layout.toJson(),
+  };
+}
+
+class DeleteMountingLayout extends EcadCommand {
+  const DeleteMountingLayout(this.layoutId);
+  final String layoutId;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'deleteMountingLayout',
+    'layoutId': layoutId,
+  };
+}
+
+class AddContinuationMarker extends EcadCommand {
+  const AddContinuationMarker(this.sheetId, this.marker);
+  final String sheetId;
+  final ContinuationMarker marker;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'addContinuationMarker',
+    'sheetId': sheetId,
+    'marker': marker.toJson(),
+  };
+}
+
+class UpdateContinuationMarker extends EcadCommand {
+  const UpdateContinuationMarker(this.sheetId, this.marker);
+  final String sheetId;
+  final ContinuationMarker marker;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'updateContinuationMarker',
+    'sheetId': sheetId,
+    'marker': marker.toJson(),
+  };
+}
+
+class DeleteContinuationMarker extends EcadCommand {
+  const DeleteContinuationMarker(this.sheetId, this.markerId);
+  final String sheetId;
+  final String markerId;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'deleteContinuationMarker',
+    'sheetId': sheetId,
+    'markerId': markerId,
+  };
+}
+
+class UpdateSheet extends EcadCommand {
+  const UpdateSheet(this.sheet);
+  final Sheet sheet;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'updateSheet',
+    'sheet': sheet.toJson(),
+  };
+}
+
+class UpdateWire extends EcadCommand {
+  const UpdateWire(this.sheetId, this.wire);
+  final String sheetId;
+  final Wire wire;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'updateWire',
+    'sheetId': sheetId,
+    'wire': wire.toJson(),
+  };
+}
+
+class DeleteSheet extends EcadCommand {
+  const DeleteSheet(this.sheetId);
+  final String sheetId;
+  @override
+  Map<String, Object?> toJson() => {'type': 'deleteSheet', 'sheetId': sheetId};
+}
+
+class ReorderSheets extends EcadCommand {
+  ReorderSheets(List<String> ids) : ids = List.unmodifiable(ids);
+  final List<String> ids;
+  @override
+  Map<String, Object?> toJson() => {'type': 'reorderSheets', 'ids': ids};
+}
+
+class SetProjectDescription extends EcadCommand {
+  const SetProjectDescription(this.description);
+  final String description;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'setProjectDescription',
+    'description': description,
+  };
+}
+
+class AddConnectionCorner extends EcadCommand {
+  const AddConnectionCorner(this.sheetId, this.corner);
+  final String sheetId;
+  final ConnectionCorner corner;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'addConnectionCorner',
+    'sheetId': sheetId,
+    'corner': corner.toJson(),
+  };
+}
+
+class UpdateConnectionCorner extends EcadCommand {
+  const UpdateConnectionCorner(this.sheetId, this.corner);
+  final String sheetId;
+  final ConnectionCorner corner;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'updateConnectionCorner',
+    'sheetId': sheetId,
+    'corner': corner.toJson(),
+  };
+}
+
+class DeleteConnectionCorner extends EcadCommand {
+  const DeleteConnectionCorner(this.sheetId, this.cornerId);
+  final String sheetId;
+  final String cornerId;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'deleteConnectionCorner',
+    'sheetId': sheetId,
+    'cornerId': cornerId,
+  };
 }

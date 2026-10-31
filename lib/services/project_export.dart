@@ -9,11 +9,13 @@ import 'package:image/image.dart' as raster;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import 'document_layout.dart';
+import 'export_fonts.dart';
 import 'project_persistence.dart';
+import 'report_layout.dart';
+import 'schematic_annotations.dart';
+import 'mounting_annotations.dart';
 
-/// Original vector glyphs and editable vector exports, including every sheet.
-/// Native paths and text remain vector content; imported PNGs stay embedded.
-/// No screenshots, remote assets or external font requests are used.
 class ProjectExportService {
   ProjectExportService({ProjectPersistence? persistence})
     : _persistence = persistence ?? ProjectPersistence();
@@ -22,53 +24,43 @@ class ProjectExportService {
   static const pageWidth = 1100.0;
   static const pageHeight = 780.0;
 
-  /// An SVG with one framed sheet per vertical page. Select [sheetId] to export
-  /// the active sheet only; omitting it exports the complete project.
   String svg(EcadProject project, {String? sheetId}) {
-    final sheets = _sheets(project, sheetId);
-    final width = sheets.fold<double>(
-      0,
-      (value, sheet) => math.max(value, sheet.width),
-    );
-    final height = sheets.fold<double>(
-      0,
-      (value, sheet) => value + sheet.height,
-    );
+    final document = layoutDocument(project);
+    final resolver = ProjectResolver(project);
+    final pages = _pages(document, sheetId);
+    final width = pages.map((p) => p.sizeMm.width).reduce(math.max);
+    final height = pages.fold<double>(0, (h, p) => h + p.sizeMm.height);
     final buffer =
         StringBuffer()
           ..writeln('<?xml version="1.0" encoding="UTF-8"?>')
           ..writeln(
-            '<svg xmlns="http://www.w3.org/2000/svg" width="${_n(width)}" height="${_n(height)}" viewBox="0 0 ${_n(width)} ${_n(height)}">',
+            '<svg xmlns="http://www.w3.org/2000/svg" width="${_n(width)}mm" height="${_n(height)}mm" viewBox="0 0 ${_n(width)} ${_n(height)}">',
           )
           ..writeln('<title>${_xml(project.name)}</title>')
-          ..writeln('<desc>${_xml(project.description)}</desc>');
+          ..writeln('<desc>${_xml(project.description)}</desc>')
+          ..writeln(ExportFonts.loaded?.svgStyle ?? '');
     var offset = 0.0;
-    for (var index = 0; index < sheets.length; index++) {
-      buffer.writeln(
-        '<svg x="0" y="${_n(offset)}" width="${_n(sheets[index].width)}" height="${_n(sheets[index].height)}" viewBox="0 0 ${_n(sheets[index].width)} ${_n(sheets[index].height)}">',
-      );
-      buffer.write(
-        _sheetContent(
-          project,
-          sheets[index],
-          project.pages.indexOf(sheets[index]) + 1,
-        ),
-      );
-      buffer.writeln('</svg>');
-      offset += sheets[index].height;
+    for (final page in pages) {
+      buffer
+        ..writeln(
+          '<svg data-sheet="${_xml(page.sheet.id)}" data-page="${_xml(page.number)}" x="0" y="${_n(offset)}" width="${_n(page.sizeMm.width)}" height="${_n(page.sizeMm.height)}" viewBox="0 0 ${_n(page.sizeMm.width)} ${_n(page.sizeMm.height)}">',
+        )
+        ..write(_pageContent(resolver, page, document.pages.length))
+        ..writeln('</svg>');
+      offset += page.sizeMm.height;
     }
     buffer.writeln('</svg>');
     return buffer.toString();
   }
 
   Future<Uint8List> pdf(EcadProject project, {String? sheetId}) async {
-    final sheets = _sheets(project, sheetId);
-    // pdf's SVG image reader expects a four-channel byte buffer, whereas PNG
-    // permits RGB, grayscale and palette storage too. Normalize only this
-    // transient export payload; the portable document keeps its original PNG.
+    final fonts = await ExportFonts.load();
+    final layout = layoutDocument(project);
+    final resolver = ProjectResolver(project);
+    final pages = _pages(layout, sheetId);
     final pdfImages = <String, String>{};
-    for (final sheet in sheets) {
-      for (final graphic in sheet.graphics) {
+    for (final page in pages) {
+      for (final graphic in page.sheet.graphics) {
         if (graphic.kind == DrawingKind.image) {
           pdfImages.putIfAbsent(
             graphic.imageData,
@@ -77,40 +69,34 @@ class ProjectExportService {
         }
       }
     }
-    final regular = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/NotoSans-Regular.ttf'),
-    );
-    final bold = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/NotoSans-SemiBold.ttf'),
-    );
+    final regular = pw.Font.ttf(fonts.regular);
+    final bold = pw.Font.ttf(fonts.bold);
     final document = pw.Document(
       title: project.name,
       subject: project.description,
       creator: 'Open ECAD',
       theme: pw.ThemeData.withFont(base: regular, bold: bold),
     );
-    final regularPdf = regular.getFont(pw.Context(document: document.document));
-    final boldPdf = bold.getFont(pw.Context(document: document.document));
+    final context = pw.Context(document: document.document);
+    final regularPdf = regular.getFont(context);
+    final boldPdf = bold.getFont(context);
     _TextMeasure measure(String text, bool isBold, double size) {
       final font = isBold ? boldPdf : regularPdf;
-      final metrics = font.stringMetrics(text) * size;
       return _TextMeasure(
-        metrics.advanceWidth,
+        (font.stringMetrics(text) * size).advanceWidth,
         size,
         font.ascent / font.emptyLineHeight * size,
       );
     }
 
-    for (final sheet in sheets) {
-      final format =
-          sheet.showFrame &&
-                  sheet.width == pageWidth &&
-                  sheet.height == pageHeight
-              ? PdfPageFormat.a3.landscape
-              : PdfPageFormat(sheet.width, sheet.height);
+    for (final page in pages) {
+      final format = PdfPageFormat(
+        page.sizeMm.width * PdfPageFormat.mm,
+        page.sizeMm.height * PdfPageFormat.mm,
+      );
       final sheetSvg =
-          '<svg xmlns="http://www.w3.org/2000/svg" width="${_n(sheet.width)}" height="${_n(sheet.height)}" viewBox="0 0 ${_n(sheet.width)} ${_n(sheet.height)}">'
-          '${_sheetContent(project, sheet, project.pages.indexOf(sheet) + 1, measureText: measure, pdfImages: pdfImages, pdf: true)}</svg>';
+          '<svg xmlns="http://www.w3.org/2000/svg" width="${_n(page.sizeMm.width)}" height="${_n(page.sizeMm.height)}" viewBox="0 0 ${_n(page.sizeMm.width)} ${_n(page.sizeMm.height)}">'
+          '${_pageContent(resolver, page, layout.pages.length, measureText: measure, pdfImages: pdfImages, pdf: true)}</svg>';
       document.addPage(
         pw.Page(
           pageFormat: format,
@@ -120,7 +106,7 @@ class ProjectExportService {
                 svg: sheetSvg,
                 width: format.width,
                 height: format.height,
-                fit: pw.BoxFit.contain,
+                fit: pw.BoxFit.fill,
                 customFontLookup:
                     (family, style, weight) =>
                         weight == '600' || weight == '700' || weight == 'bold'
@@ -132,6 +118,62 @@ class ProjectExportService {
     }
     return document.save();
   }
+
+  List<DocumentPage> _pages(DocumentLayout document, String? sheetId) {
+    final pages =
+        document.pages
+            .where((p) => sheetId == null || p.sheet.id == sheetId)
+            .toList();
+    if (pages.isEmpty) {
+      throw const FormatException('List pro export neexistuje.');
+    }
+    return pages;
+  }
+
+  String _pageContent(
+    ProjectResolver resolver,
+    DocumentPage page,
+    int pageCount, {
+    _TextMeasure Function(String, bool, double)? measureText,
+    Map<String, String> pdfImages = const {},
+    bool pdf = false,
+  }) {
+    if (page.report case final report?) {
+      return _reportSvg(report, measureText: measureText);
+    }
+    final transform = SheetTransform(page.sheet);
+    return '<rect width="${_n(page.sizeMm.width)}" height="${_n(page.sizeMm.height)}" fill="#ffffff"/>'
+        '<g transform="translate(${_n(transform.offsetMm.x)} ${_n(transform.offsetMm.y)}) scale(${_n(transform.mmPerUnit)})">'
+        '${_sheetContent(resolver, page.sheet, page.index + 1, pageCount, measureText: measureText, pdfImages: pdfImages, pdf: pdf)}</g>';
+  }
+
+  String _reportSvg(
+    ReportPage page, {
+    _TextMeasure Function(String, bool, double)? measureText,
+  }) {
+    final buffer = StringBuffer(
+      '<rect width="${_n(page.sizeMm.width)}" height="${_n(page.sizeMm.height)}" fill="#ffffff"/>',
+    );
+    for (final box in page.boxes) {
+      buffer.writeln(
+        '<rect x="${_n(box.rect.left)}" y="${_n(box.rect.top)}" width="${_n(box.rect.width)}" height="${_n(box.rect.height)}" fill="${box.fill == null ? 'none' : _color(box.fill!)}" stroke="${_color(reportGrid)}" stroke-width="0.18"/>',
+      );
+    }
+    for (final text in page.texts) {
+      final measured =
+          measureText?.call(text.text, text.bold, text.fontSize).width;
+      final scale =
+          measured == null || measured == 0 ? 1.0 : text.width / measured;
+      buffer.writeln(
+        '<g transform="translate(${_n(text.x)} ${_n(text.baseline)}) scale(${_n(scale)} 1)">'
+        '<text x="0" y="0" font-family="Noto Sans" font-size="${_n(text.fontSize)}" font-weight="${text.bold ? '600' : '400'}" fill="${_color(text.color)}" textLength="${_n(text.width)}" lengthAdjust="spacingAndGlyphs">${_xml(text.text)}</text></g>',
+      );
+    }
+    return buffer.toString();
+  }
+
+  static String _color(Color color) =>
+      '#${color.toARGB32().toRadixString(16).substring(2)}';
 
   static String _pdfPng(String data) {
     final bytes = base64Decode(data);
@@ -149,16 +191,16 @@ class ProjectExportService {
     );
   }
 
-  Future<String?> saveSvg(
-    EcadProject project, {
-    String? sheetId,
-  }) => _persistence.saveBytes(
-    Uint8List.fromList(utf8.encode(svg(project, sheetId: sheetId))),
-    fileName:
-        '${ProjectPersistence.safeFileName(project.name)}${sheetId == null ? '' : '-list'}.svg',
-    mimeType: 'image/svg+xml',
-    extension: 'svg',
-  );
+  Future<String?> saveSvg(EcadProject project, {String? sheetId}) async {
+    await ExportFonts.load();
+    return _persistence.saveBytes(
+      Uint8List.fromList(utf8.encode(svg(project, sheetId: sheetId))),
+      fileName:
+          '${ProjectPersistence.safeFileName(project.name)}${sheetId == null ? '' : '-list'}.svg',
+      mimeType: 'image/svg+xml',
+      extension: 'svg',
+    );
+  }
 
   Future<String?> savePdf(
     EcadProject project, {
@@ -171,57 +213,23 @@ class ProjectExportService {
     extension: 'pdf',
   );
 
-  List<Sheet> _sheets(EcadProject project, String? sheetId) {
-    requireValidProject(project);
-    if (sheetId == null) return project.pages;
-    final selected =
-        project.pages.where((sheet) => sheet.id == sheetId).toList();
-    if (selected.isEmpty) {
-      throw const FormatException('List pro export neexistuje.');
-    }
-    return selected;
-  }
-
   String _sheetContent(
-    EcadProject project,
+    ProjectResolver resolver,
     Sheet sheet,
-    int pageNumber, {
+    int pageNumber,
+    int pageCount, {
     _TextMeasure Function(String, bool, double)? measureText,
     Map<String, String> pdfImages = const {},
     bool pdf = false,
   }) {
-    final devices = {for (final device in sheet.devices) device.id: device};
+    final project = resolver.project;
+    final devices = {for (final d in sheet.devices) d.id: d};
+    final markers = {for (final m in sheet.continuations) m.id: m};
+    final corners = {for (final c in sheet.corners) c.id: c};
     final routes = [
-      for (final wire in sheet.wires) WireRouter.path(wire, devices),
+      for (final wire in resolver.wires(sheet))
+        WireRouter.path(wire, devices, markers, corners),
     ];
-    final bounds = _bounds(sheet, routes);
-    const drawingLeft = 65.0;
-    const drawingTop = 114.0;
-    const drawingWidth = 970.0;
-    const drawingHeight = 518.0;
-    final nativeLayout = !sheet.showFrame || sheet.graphics.isNotEmpty;
-    final scale =
-        nativeLayout
-            ? 1.0
-            : math.min(
-              1.0,
-              math.min(
-                drawingWidth / math.max(bounds.width, 1),
-                drawingHeight / math.max(bounds.height, 1),
-              ),
-            );
-    final dx =
-        nativeLayout
-            ? 0.0
-            : drawingLeft +
-                (drawingWidth - bounds.width * scale) / 2 -
-                bounds.left * scale;
-    final dy =
-        nativeLayout
-            ? 0.0
-            : drawingTop +
-                (drawingHeight - bounds.height * scale) / 2 -
-                bounds.top * scale;
     final frameTransform =
         'scale(${_n(sheet.width / pageWidth)} ${_n(sheet.height / pageHeight)})';
     final buffer =
@@ -247,9 +255,7 @@ class ProjectExportService {
         )
         ..writeln('</g>');
     }
-    buffer.writeln(
-      '<g transform="translate(${_n(dx)} ${_n(dy)}) scale(${_n(scale)})">',
-    );
+    buffer.writeln('<g>');
 
     for (final graphic in sheet.graphics) {
       buffer.write(
@@ -262,52 +268,26 @@ class ProjectExportService {
       );
     }
 
+    if (sheet.mountingView != null) {
+      buffer.write(_mountingSvg(resolver, sheet, measureText: measureText));
+    }
+    for (final marker in sheet.continuations) {
+      buffer.write(_continuationSvg(resolver, sheet, marker));
+    }
+    for (final device in sheet.devices) {
+      buffer.write(_deviceSvg(resolver, device));
+    }
+    for (final corner in sheet.corners) {
+      buffer.writeln(
+        '<polyline data-corner="${_xml(corner.id)}" points="${corner.path.map((p) => '${_n(p.x)},${_n(p.y)}').join(' ')}" fill="none" stroke="#26374d" stroke-width="1.8" stroke-linejoin="round"/>',
+      );
+    }
     for (final points in routes) {
       if (points.length < 2) continue;
       buffer.writeln(
         '<polyline points="${points.map((point) => '${_n(point.x)},${_n(point.y)}').join(' ')}" '
         'fill="none" stroke="#26374d" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>',
       );
-    }
-    for (final device in sheet.devices) {
-      final definition = SymbolCatalog.definitionFor(device.kind);
-      final angle = device.rotation * math.pi / 180;
-      final halfWidth =
-          (definition.width * math.cos(angle).abs() +
-              definition.height * math.sin(angle).abs()) /
-          2;
-      final labelX = device.position.x + halfWidth + 16;
-      buffer
-        ..writeln(
-          '<g transform="translate(${_n(device.position.x)} ${_n(device.position.y)}) rotate(${_n(device.rotation)})" '
-          'stroke="#26374d" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none">',
-        )
-        ..writeln(
-          symbolSvg(
-            device.kind,
-            dcSupply: RegExp(
-              r'\bdc\b',
-              caseSensitive: false,
-            ).hasMatch(device.rating),
-          ),
-        )
-        ..writeln('</g>')
-        ..writeln(
-          '<text x="${_n(labelX)}" y="${_n(device.position.y - 5)}" font-size="12" font-weight="600">${_xml(device.designation)}</text>',
-        );
-      final subtitle =
-          device.rating.isNotEmpty ? device.rating : _kindName(device.kind);
-      buffer.writeln(
-        '<text x="${_n(labelX)}" y="${_n(device.position.y + 11)}" font-size="9" fill="#526276">${_xml(subtitle)}</text>',
-      );
-      if (device.description.isNotEmpty) {
-        final lines = _wrap(device.description, 45);
-        for (var line = 0; line < lines.length; line++) {
-          buffer.writeln(
-            '<text x="${_n(labelX)}" y="${_n(device.position.y + 26 + 13 * line)}" font-size="9" fill="#526276">${_xml(lines[line])}</text>',
-          );
-        }
-      }
     }
     buffer.writeln('</g>');
     if (sheet.showFrame) {
@@ -336,19 +316,249 @@ class ProjectExportService {
           '<text x="942" y="691" font-size="8" fill="#64748b">ČÍSLO LISTU</text>',
         )
         ..writeln(
-          '<text x="942" y="707" font-size="12" font-weight="600">${_xml(sheet.number)}</text>',
+          '<text x="942" y="707" font-size="${_n(math.min(12, 116 / math.max(1, fullPageDesignation(sheet).length * .65)))}" font-weight="600">${_xml(fullPageDesignation(sheet))}</text>',
         )
         ..writeln(
           '<text x="690" y="736" font-size="9" fill="#526276">Revize ${project.revision}</text>',
         )
         ..writeln(
-          '<text x="942" y="736" font-size="9" fill="#526276">$pageNumber / ${project.pages.length}</text>',
+          '<text x="942" y="736" font-size="9" fill="#526276">$pageNumber / $pageCount</text>',
         )
         ..writeln('</g>');
     }
     buffer.writeln('</g>');
     return buffer.toString();
   }
+
+  String _deviceSvg(ProjectResolver resolver, Device device) {
+    final component = resolver.components[device.componentId]!;
+    final article = resolver.articles[component.articleId];
+    final geometry = geometryFor(device);
+    final bounds = rotatedBounds(
+      device.position,
+      geometry.width,
+      geometry.height,
+      device.rotation,
+    );
+    final labels = layoutPortAnnotations(resolver, device);
+    final labelX = labels.fold<double>(
+      bounds.x + bounds.width + 16,
+      (x, label) => math.max(x, label.bounds.right + 12),
+    );
+    final buffer =
+        StringBuffer()..writeln(
+          '<g data-device="${_xml(device.id)}" transform="translate(${_n(device.position.x)} ${_n(device.position.y)}) rotate(${_n(device.rotation)})" stroke="#26374d" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none">',
+        );
+    switch (device.symbol) {
+      case TerminalSymbolSpec(:final sides):
+        final terminal = TerminalSymbolGeometry(
+          sides: sides,
+          center: device.position,
+          quarterTurns: device.rotation ~/ 90,
+        );
+        final label = terminal.labelLayout();
+        return '<g data-device="${_xml(device.id)}" stroke="#26374d" stroke-width="1.6" fill="none">'
+            '${terminal.arms.map((a) => '<line x1="${_n(a.start.x)}" y1="${_n(a.start.y)}" x2="${_n(a.end.x)}" y2="${_n(a.end.y)}"/>').join()}'
+            '<circle cx="${_n(terminal.center.x)}" cy="${_n(terminal.center.y)}" r="${_n(terminal.radius)}" fill="#ffffff"/>'
+            '</g><text x="${_n(label.designationOrigin.x)}" y="${_n(label.designationOrigin.y + 10)}" font-size="11">${_xml(resolver.terminalStripLabel(component))}</text>'
+            '<text x="${_n(label.numberOrigin.x)}" y="${_n(label.numberOrigin.y + 10)}" font-size="11">${_xml(component.terminal!.number)}</text>'
+            '${resolver.crossReferences(device).isEmpty ? '' : '<text x="${_n(label.numberOrigin.x)}" y="${_n(label.numberOrigin.y + 24)}" font-size="9">viz ${_xml(resolver.crossReferences(device))}</text>'}';
+      case BuiltinSymbolSpec(:final kind):
+        buffer.write(
+          symbolSvg(
+            kind,
+            dcSupply: RegExp(
+              r'\bdc\b',
+              caseSensitive: false,
+            ).hasMatch(article?.specification ?? ''),
+          ),
+        );
+      case PortBlockSpec(:final width, :final height):
+        buffer.writeln(
+          '<rect x="${_n(-width / 2)}" y="${_n(-height / 2)}" width="${_n(width)}" height="${_n(height)}" fill="#ffffff"/>',
+        );
+    }
+    buffer.writeln('</g>');
+    for (final label in labels) {
+      final p = label.port.geometry.point;
+      final r = label.bounds;
+      buffer
+        ..writeln(
+          '<circle cx="${_n(p.x)}" cy="${_n(p.y)}" r="2.4" fill="#ffffff" stroke="#26374d" stroke-width="1"/>',
+        )
+        ..writeln(
+          '<rect x="${_n(r.left)}" y="${_n(r.top)}" width="${_n(r.width)}" height="${_n(r.height)}" fill="#ffffff"/>',
+        );
+      final lines = label.text.split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        buffer.writeln(
+          '<text x="${_n(r.left + 2)}" y="${_n(r.top + 9.5 + i * 11.25)}" font-size="9" fill="#26374d">${_xml(lines[i])}</text>',
+        );
+      }
+    }
+    buffer.writeln(
+      '<text x="${_n(labelX)}" y="${_n(device.position.y - 5)}" font-size="12" font-weight="600">${_xml(resolver.fullDesignation(component))}</text>',
+    );
+    final function = component.electrical?.functionById(device.functionId);
+    final subtitle = [
+      if (device.mode == OccurrenceMode.reference) 'Reference',
+      if (article?.specification.isNotEmpty ?? false)
+        article!.specification
+      else if (function != null)
+        function.name
+      else if (device.kind != null)
+        _kindName(device.kind!),
+    ].join(' · ');
+    final lines = [
+      ..._wrap(subtitle, 42),
+      ..._wrap(component.description, 42),
+      if (resolver.crossReferences(device).isNotEmpty)
+        ..._wrap('viz ${resolver.crossReferences(device)}', 42),
+    ];
+    for (var i = 0; i < lines.length; i++) {
+      buffer.writeln(
+        '<text x="${_n(labelX)}" y="${_n(device.position.y + 11 + i * 13)}" font-size="9" fill="#526276">${_xml(lines[i])}</text>',
+      );
+    }
+    return buffer.toString();
+  }
+
+  String _continuationSvg(
+    ProjectResolver resolver,
+    Sheet sheet,
+    ContinuationMarker marker,
+  ) {
+    final angle = switch (marker.direction) {
+      PortSide.right => 0,
+      PortSide.bottom => 90,
+      PortSide.left => 180,
+      PortSide.top => 270,
+    };
+    final targets =
+        ContinuationIndex(resolver.project)
+            .targets(sheetId: sheet.id, markerId: marker.id)
+            .map((t) => fullPageDesignation(t.sheet))
+            .toSet()
+            .toList()
+          ..sort(naturalCompare);
+    final label = resolver.project.continuationLinkById(marker.linkId)!.label;
+    final lines = _wrap(
+      '$label -> ${targets.isEmpty ? 'bez protějšku' : targets.join(', ')}',
+      48,
+    );
+    final buffer =
+        StringBuffer()
+          ..writeln(
+            '<g transform="translate(${_n(marker.position.x)} ${_n(marker.position.y)}) rotate($angle)" fill="none" stroke="#26374d" stroke-width="1.8">',
+          )
+          ..writeln(
+            marker.glyph == ContinuationGlyph.earth
+                ? '<path d="M0 0 H14 M14 -10 V10 M19 -7 V7 M24 -4 V4"/>'
+                : '<path d="M0 0 H20 M13 -6 L20 0 L13 6"/>',
+          )
+          ..writeln('</g>');
+    for (var i = 0; i < lines.length; i++) {
+      buffer.writeln(
+        '<text x="${_n(marker.position.x + 8)}" y="${_n(marker.position.y - 12 - (lines.length - 1 - i) * 13)}" font-size="9">${_xml(lines[i])}</text>',
+      );
+    }
+    return buffer.toString();
+  }
+
+  String _mountingSvg(
+    ProjectResolver resolver,
+    Sheet sheet, {
+    _TextMeasure Function(String, bool, double)? measureText,
+  }) {
+    final view = sheet.mountingView!;
+    final layout = resolver.layouts[view.layoutId]!;
+    final transform = MountingTransform(sheet, view);
+    final scale = transform.unitsPerMm;
+    final origin = transform.toSheet(Vec2.zero);
+    final viewport = view.viewport;
+    final clipId = 'mounting_${sheet.id}';
+    final buffer =
+        StringBuffer()
+          ..writeln(
+            '<defs><clipPath id="$clipId"><rect x="${_n(viewport.x)}" y="${_n(viewport.y)}" width="${_n(viewport.width)}" height="${_n(viewport.height)}"/></clipPath></defs>',
+          )
+          ..writeln('<g clip-path="url(#$clipId)">')
+          ..writeln(
+            '<rect data-surface="${_xml(layout.id)}" x="${_n(origin.x)}" y="${_n(origin.y)}" width="${_n(layout.widthMm * scale)}" height="${_n(layout.heightMm * scale)}" fill="none" stroke="#6b7c91" stroke-width="1.2"/>',
+          );
+    for (final placement in layout.placements) {
+      final component = resolver.components[placement.componentId]!;
+      final size = resolver.dimensionsFor(component);
+      if (size.width == null || size.height == null) {
+        throw const FormatException('Chybí rozměry umístěné komponenty.');
+      }
+      final center = transform.toSheet(placement.centerMm);
+      final width = size.width! * scale, height = size.height! * scale;
+      buffer.writeln(
+        '<g data-placement="${_xml(placement.id)}" transform="translate(${_n(center.x)} ${_n(center.y)}) rotate(${_n(placement.rotation)})">'
+        '<rect x="${_n(-width / 2)}" y="${_n(-height / 2)}" width="${_n(width)}" height="${_n(height)}" fill="#edf1f5" stroke="#26374d" stroke-width="1.2"/></g>',
+      );
+      if (view.showComponentDimensions) {
+        final bounds = resolver.mountingBounds(placement)!;
+        final bottom = transform.toSheet(
+          Vec2(placement.centerMm.x, bounds.y + bounds.height),
+        );
+        buffer.writeln(
+          '<text x="${_n(bottom.x)}" y="${_n(bottom.y + 12)}" text-anchor="middle" font-size="9" fill="#526276">${_n(size.width!)} × ${_n(size.height!)} mm</text>',
+        );
+      }
+    }
+    final annotations = layoutMountingAnnotations(resolver, sheet);
+    for (final a in annotations) {
+      if (a.leaderStart case final start?) {
+        buffer.writeln(
+          '<path d="M ${_n(start.dx)} ${_n(start.dy)} L ${_n(a.leaderEnd!.dx)} ${_n(a.leaderEnd!.dy)}" fill="none" stroke="#526276" stroke-width="0.7"/>',
+        );
+      }
+    }
+    for (final a in annotations) {
+      if (a.leaderStart != null) {
+        final b = a.bounds.inflate(1);
+        buffer.writeln(
+          '<rect x="${_n(b.left)}" y="${_n(b.top)}" width="${_n(b.width)}" height="${_n(b.height)}" fill="#ffffff"/>',
+        );
+      }
+      final measured = measureText?.call(a.text, true, mountingLabelSize).width;
+      final correction =
+          measured == null || measured == 0 ? 1.0 : a.textSize.width / measured;
+      final at = a.textOrigin;
+      buffer.writeln(
+        '<g data-mounting-label="${_xml(a.placementId)}" transform="translate(${_n(at.dx)} ${_n(at.dy)}) rotate(${a.rotated ? -90 : 0}) scale(${_n(correction)} 1)">'
+        '<text x="0" y="${_n(a.baseline)}" font-family="Noto Sans" font-size="${_n(mountingLabelSize)}" font-weight="600" textLength="${_n(a.textSize.width)}" lengthAdjust="spacingAndGlyphs">${_xml(a.text)}</text></g>',
+      );
+    }
+    buffer.writeln('</g>');
+    buffer.writeln(
+      '<text x="${_n(viewport.x)}" y="${_n(viewport.y - 9)}" font-size="10">${_xml(layout.name)} · M 1 : ${_n(view.scaleDenominator)}${view.showSurfaceDimensions ? ' · ${_n(layout.widthMm)} × ${_n(layout.heightMm)} mm' : ''}</text>',
+    );
+    return buffer.toString();
+  }
+
+  String csv(EcadProject project, {required String sheetId}) {
+    final sheet = project.sheetById(sheetId);
+    if (sheet == null) {
+      throw const FormatException('List pro export neexistuje.');
+    }
+    final data = buildReport(project, sheet);
+    String row(List<String> cells) =>
+        cells.map((cell) => '"${cell.replaceAll('"', '""')}"').join(',');
+    return '${[row(data.columns), ...data.rows.map((r) => row(r.cells))].join('\r\n')}\r\n';
+  }
+
+  Future<String?> saveCsv(
+    EcadProject project, {
+    required String sheetId,
+  }) => _persistence.saveBytes(
+    Uint8List.fromList(utf8.encode('\ufeff${csv(project, sheetId: sheetId)}')),
+    fileName: '${ProjectPersistence.safeFileName(project.name)}-kusovnik.csv',
+    mimeType: 'text/csv',
+    extension: 'csv',
+  );
 
   String _graphicSvg(
     DrawingElement element, {
@@ -447,63 +657,6 @@ class ProjectExportService {
     );
     painter.dispose();
     return result;
-  }
-
-  _Bounds _bounds(Sheet sheet, List<List<Vec2>> routes) {
-    if (sheet.devices.isEmpty) return const _Bounds(0, 0, 1, 1);
-    var left = double.infinity;
-    var top = double.infinity;
-    var right = -double.infinity;
-    var bottom = -double.infinity;
-    void include(double x, double y) {
-      left = math.min(left, x);
-      right = math.max(right, x);
-      top = math.min(top, y);
-      bottom = math.max(bottom, y);
-    }
-
-    for (final device in sheet.devices) {
-      final definition = SymbolCatalog.definitionFor(device.kind);
-      final angle = device.rotation * math.pi / 180;
-      final halfWidth =
-          (definition.width * math.cos(angle).abs() +
-              definition.height * math.sin(angle).abs()) /
-          2;
-      final halfHeight =
-          (definition.height * math.cos(angle).abs() +
-              definition.width * math.sin(angle).abs()) /
-          2;
-      include(
-        device.position.x - halfWidth - 4,
-        device.position.y - halfHeight - 4,
-      );
-      final descriptionLines = _wrap(device.description, 45);
-      final longestDescription = descriptionLines.fold<int>(
-        0,
-        (longest, line) => math.max(longest, line.length),
-      );
-      final labelWidth = math.max(
-        device.designation.length * 8.0,
-        math.max(
-          (device.rating.isEmpty
-                  ? _kindName(device.kind).length
-                  : device.rating.length) *
-              6.0,
-          longestDescription * 6.0,
-        ),
-      );
-      include(
-        device.position.x + halfWidth + 16 + labelWidth,
-        device.position.y +
-            math.max(halfHeight + 4, 26.0 + descriptionLines.length * 13),
-      );
-    }
-    for (final route in routes) {
-      for (final point in route) {
-        include(point.x, point.y);
-      }
-    }
-    return _Bounds(left, top, right - left, bottom - top);
   }
 
   /// Centered glyph fragment. Port endpoints match [SymbolCatalog] exactly.
@@ -627,12 +780,4 @@ class _TextMeasure {
   final double width;
   final double lineHeight;
   final double ascent;
-}
-
-class _Bounds {
-  const _Bounds(this.left, this.top, this.width, this.height);
-  final double left;
-  final double top;
-  final double width;
-  final double height;
 }

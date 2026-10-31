@@ -1,3 +1,5 @@
+import 'model_fixtures.dart';
+import 'package:open_ecad/services/project_import.dart';
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'dart:async';
 
@@ -19,7 +21,7 @@ DrawingElement _text({String id = 'text'}) => DrawingElement(
   fill: '#000000',
 );
 
-EcadProject _project() => EcadProject(
+EcadProject _project() => testProject(
   id: 'pdf',
   name: 'Import',
   pages: [
@@ -32,8 +34,8 @@ EcadProject _project() => EcadProject(
       showFrame: false,
       sourcePage: 1,
       graphics: [_text()],
-      devices: const [
-        Device(
+      devices: [
+        testBuiltin(
           id: 'device',
           kind: DeviceKind.terminal,
           designation: '-X1',
@@ -44,16 +46,10 @@ EcadProject _project() => EcadProject(
   ],
 );
 
-class _PdfPersistence extends ProjectPersistence {
+class _PdfPersistence extends ProjectImportService {
   final result = Completer<EcadProject?>();
   @override
   Future<EcadProject?> importPdf() => result.future;
-  @override
-  Future<void> saveAutosave(
-    EcadProject project, {
-    int? savedRevision,
-    String? fileName,
-  }) async {}
 }
 
 class _DelayedStartup extends ProjectPersistence {
@@ -61,7 +57,8 @@ class _DelayedStartup extends ProjectPersistence {
   @override
   Future<AiProviderSettings?> loadAiSettings() => settings.future;
   @override
-  Future<WorkingCopy?> loadAutosave() async => WorkingCopy(_project());
+  Future<WorkingCopy?> loadAutosave({String? sessionId}) async =>
+      WorkingCopy(_project(), sessionId: 'test');
 }
 
 void main() {
@@ -107,7 +104,7 @@ void main() {
   test('more devices than one transaction holds rotate in one step', () {
     final terminals = [
       for (var i = 0; i < 1001; i++)
-        Device(
+        testBuiltin(
           id: 'terminal$i',
           kind: DeviceKind.terminal,
           designation: '-X${i + 1}',
@@ -115,6 +112,7 @@ void main() {
         ),
     ];
     final project = _project().copyWith(
+      components: fixtureComponents(terminals),
       pages: [
         _project().pages.single.copyWith(
           devices: terminals,
@@ -147,7 +145,7 @@ void main() {
   });
 
   test('manual duplicate is limited by the engine, not the assistant', () {
-    Device terminal(int i) => Device(
+    Device terminal(int i) => testBuiltin(
       id: 'terminal$i',
       kind: DeviceKind.terminal,
       designation: '-X${i + 1}',
@@ -168,6 +166,7 @@ void main() {
       ),
     ];
     final project = _project().copyWith(
+      components: fixtureComponents([for (var i = 0; i < 61; i++) terminal(i)]),
       pages: [
         _project().pages.single.copyWith(
           devices: [for (var i = 0; i < 61; i++) terminal(i)],
@@ -197,7 +196,7 @@ void main() {
     final newWires = app.sheet.wires.skip(chain.length).toList();
     expect(newWires, hasLength(59));
     for (final wire in newWires) {
-      expect(copyIds, containsAll([wire.from.deviceId, wire.to.deviceId]));
+      expect(copyIds, containsAll([wire.from.ownerId, wire.to.ownerId]));
     }
     expect(newWires.first.waypoints.single, const Vec2(40, 200) + offset);
     expect(
@@ -206,7 +205,7 @@ void main() {
     );
     final designations = app.project.pages
         .expand((page) => page.devices)
-        .map((device) => device.designation);
+        .map((device) => app.componentFor(device).designation);
     expect(designations.toSet(), hasLength(designations.length));
     app.undo();
     expect(app.sheet.devices, hasLength(61));
@@ -216,6 +215,9 @@ void main() {
     final revision = app.project.revision;
     final many = EditorController(
       initialProject: project.copyWith(
+        components: fixtureComponents([
+          for (var i = 0; i < 1001; i++) terminal(i),
+        ]),
         pages: [
           project.pages.single.copyWith(
             devices: [for (var i = 0; i < 1001; i++) terminal(i)],
@@ -269,7 +271,7 @@ void main() {
       expect(app.sheet.graphics, isEmpty);
       app.undo();
       expect(app.sheet.graphics.single.text, 'Přívod');
-      expect(app.sheet.devices.single.designation, '-X1');
+      expect(app.componentFor(app.sheet.devices.single).designation, '-X1');
     },
   );
 
@@ -303,7 +305,7 @@ void main() {
     'PDF import opens an unsaved drawing with the source paper and no grid',
     () async {
       final persistence = _PdfPersistence();
-      final app = EditorController(persistence: persistence);
+      final app = EditorController(importer: persistence);
       addTearDown(app.dispose);
       app.setMode(CanvasMode.wire);
       final importing = app.openProject(importPdf: true);
@@ -320,7 +322,7 @@ void main() {
 
   test('late PDF result cannot replace edits made during conversion', () async {
     final persistence = _PdfPersistence();
-    final app = EditorController(persistence: persistence);
+    final app = EditorController(importer: persistence);
     addTearDown(app.dispose);
     final importing = app.openProject(importPdf: true);
     app.renameProject('Novější práce');
@@ -331,10 +333,12 @@ void main() {
   });
 
   test(
-    'oversized recovery clears stale document and subsequent small autosave succeeds',
+    'oversized recovery preserves previous document and subsequent small autosave succeeds',
     () async {
       final persistence = ProjectPersistence();
-      await persistence.saveAutosave(_project());
+      await persistence.saveWorkingCopy(
+        WorkingCopy(_project(), sessionId: 'test'),
+      );
       final large = _project().copyWith(
         pages: [
           _project().pages.single.copyWith(
@@ -343,11 +347,13 @@ void main() {
         ],
       );
       await expectLater(
-        persistence.saveAutosave(large),
+        persistence.saveWorkingCopy(WorkingCopy(large, sessionId: 'test')),
         throwsA(isA<AutosaveTooLargeException>()),
       );
-      expect(await persistence.loadAutosave(), isNull);
-      await persistence.saveAutosave(_project());
+      expect((await persistence.loadAutosave())!.project.name, 'Import');
+      await persistence.saveWorkingCopy(
+        WorkingCopy(_project(), sessionId: 'test'),
+      );
       expect((await persistence.loadAutosave())!.project.name, 'Import');
     },
   );

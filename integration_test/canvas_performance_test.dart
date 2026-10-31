@@ -14,114 +14,113 @@ import 'package:open_ecad/editor/schematic_canvas.dart';
 /// Run through scripts/run_canvas_benchmark.sh; debug-mode results are rejected.
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-  testWidgets(
-    'profile 1000 devices while panning and zooming',
-    (tester) async {
-      expect(
-        kProfileMode,
-        isTrue,
-        reason: 'Rendering measurements require a native --profile build.',
-      );
-      final controller = SchematicViewportController();
-      final sheet = _busySheet();
-      await tester.pumpWidget(
-        MaterialApp(
-          debugShowCheckedModeBanner: false,
-          home: SchematicCanvas(
-            sheet: sheet,
-            selectedIds: const {},
-            mode: CanvasMode.pan,
-            showGrid: true,
-            palette: const CanvasPalette(
-              background: Colors.white,
-              paper: Colors.white,
-              ink: Colors.black,
-              muted: Colors.black,
-              grid: Colors.black,
-              selection: Colors.black,
-              wire: Colors.black,
-              sheetBorder: Colors.black,
-              highContrast: true,
-            ),
-            controller: controller,
-            onSelectionChanged: (_) {},
-            onMoveDevices: (_) {},
-            onPlaceDevice: (_, _) {},
-            onConnect: (_, _) {},
-            onDeleteWire: (_) {},
+  testWidgets('profile 1000 symbols while panning and zooming', (tester) async {
+    expect(
+      kProfileMode,
+      isTrue,
+      reason: 'Rendering measurements require a native --profile build.',
+    );
+    final controller = SchematicViewportController();
+    final project = _busyProject();
+    final sheet = project.pages.single;
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: SchematicCanvas(
+          project: project,
+          sheet: sheet,
+          selectedIds: const {},
+          mode: CanvasMode.pan,
+          showGrid: true,
+          palette: const CanvasPalette(
+            background: Colors.white,
+            paper: Colors.white,
+            ink: Colors.black,
+            muted: Colors.black,
+            grid: Colors.black,
+            selection: Colors.black,
+            wire: Colors.black,
+            sheetBorder: Colors.black,
+            highContrast: true,
           ),
+          controller: controller,
+          onSelectionChanged: (_) {},
+          onMoveDevices: (_) {},
+          onPlaceDevice: (_, _) {},
+          onConnect: (_, _) {},
+          onDeleteWire: (_) {},
         ),
-      );
-      await tester.pumpAndSettle();
-      final center = tester.getCenter(find.byType(SchematicCanvas));
-      controller.reset();
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
+    final center = tester.getCenter(find.byType(SchematicCanvas));
+    controller.reset();
+    await tester.pumpAndSettle();
 
-      // This policy honors real framework frame requests and does not inject
-      // extra frames for WidgetTester.pump or animated test-pointer crosshairs.
-      binding.framePolicy =
-          LiveTestWidgetsFlutterBindingFramePolicy.benchmarkLive;
-      final working = await _measure(tester, controller, center);
+    // This policy honors real framework frame requests and does not inject
+    // extra frames for WidgetTester.pump or animated test-pointer crosshairs.
+    binding.framePolicy =
+        LiveTestWidgetsFlutterBindingFramePolicy.benchmarkLive;
+    final working = await _measure(tester, controller, center);
 
-      controller.reset();
-      for (var i = 0; i < 12; i++) {
-        controller.zoomOut();
-      }
-      await SchedulerBinding.instance.endOfFrame;
-      // Center the whole 1000-device field at the minimum zoom. This second
-      // workload deliberately draws almost every primitive, exercising paint
-      // costs in addition to the working view's spatial culling.
-      final offsetToSceneCenter = Offset(
-        (550 - 1650) * controller.zoom,
-        (390 - 1800) * controller.zoom,
-      );
-      await tester.dragFrom(center, offsetToSceneCenter);
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      expect(
-        controller.visiblePrimitiveCount,
-        greaterThanOrEqualTo(1600),
-        reason: 'The overview must draw most of the 1800 scene primitives.',
-      );
-      final overview = await _measure(tester, controller, center);
+    controller.reset();
+    for (var i = 0; i < 12; i++) {
+      controller.zoomOut();
+    }
+    await SchedulerBinding.instance.endOfFrame;
+    // Center the whole 1000-device field at the minimum zoom. This second
+    // workload deliberately draws almost every primitive, exercising paint
+    // costs in addition to the working view's spatial culling.
+    final offsetToSceneCenter = Offset(
+      (550 - 1650) * controller.zoom,
+      (390 - 1800) * controller.zoom,
+    );
+    await tester.dragFrom(center, offsetToSceneCenter);
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(
+      controller.visiblePrimitiveCount,
+      greaterThanOrEqualTo(1600),
+      reason: 'The overview must draw most of the 1800 scene primitives.',
+    );
+    final overview = await _measure(tester, controller, center);
 
-      binding.reportData = {
-        'canvas_profile': {
-          'capturedAtUtc': DateTime.now().toUtc().toIso8601String(),
-          'buildMode': 'profile',
-          'platform': defaultTargetPlatform.name,
-          'environment': const String.fromEnvironment(
-            'BENCHMARK_ENV',
-            defaultValue: 'Native desktop; renderer not recorded',
-          ),
-          'deviceCount': sheet.devices.length,
-          'wireCount': sheet.wires.length,
-          'viewportLogicalPixels': {
-            'width':
-                tester.view.physicalSize.width / tester.view.devicePixelRatio,
-            'height':
-                tester.view.physicalSize.height / tester.view.devicePixelRatio,
-          },
-          'budgetMs': _budgetMs,
-          'notes': [
-            'Real engine FrameTiming samples from a native profile build.',
-            'Build plus raster is a sum of CPU/GPU-stage durations, not throughput.',
-            'totalSpan includes scheduling and pipeline waits; no refresh rate is inferred.',
-            '16.7 ms is a comparison budget, not a claim about monitor refresh rate.',
-            'The overview intentionally exposes most of the scene; see visible primitive counts.',
-            'Canvas hides unreadable labels and tiny terminal dots below 45% zoom; all symbols and wires remain.',
-            'Results depend on hardware, renderer, viewport, and competing processes.',
-          ],
-          'working_view': working,
-          'overview': overview,
+    binding.reportData = {
+      'canvas_profile': {
+        'capturedAtUtc': DateTime.now().toUtc().toIso8601String(),
+        'buildMode': 'profile',
+        'platform': defaultTargetPlatform.name,
+        'environment': const String.fromEnvironment(
+          'BENCHMARK_ENV',
+          defaultValue: 'Native desktop; renderer not recorded',
+        ),
+        'deviceCount': sheet.devices.length,
+        'continuationCount': sheet.continuations.length,
+        'wireCount': sheet.wires.length,
+        'viewportLogicalPixels': {
+          'width':
+              tester.view.physicalSize.width / tester.view.devicePixelRatio,
+          'height':
+              tester.view.physicalSize.height / tester.view.devicePixelRatio,
         },
-      };
-      expect(working['frameCount'], greaterThan(0));
-      expect(overview['frameCount'], greaterThan(0));
-      await tester.pumpWidget(const SizedBox.shrink());
-      controller.dispose();
-    },
-    timeout: const Timeout(Duration(seconds: 55)),
-  );
+        'budgetMs': _budgetMs,
+        'notes': [
+          'Real engine FrameTiming samples from a native profile build.',
+          'Build plus raster is a sum of CPU/GPU-stage durations, not throughput.',
+          'totalSpan includes scheduling and pipeline waits; no refresh rate is inferred.',
+          '16.7 ms is a comparison budget, not a claim about monitor refresh rate.',
+          'The overview intentionally exposes most of the scene; see visible primitive counts.',
+          'Canvas hides unreadable labels and tiny terminal dots below 45% zoom; all symbols and wires remain.',
+          'Results depend on hardware, renderer, viewport, and competing processes.',
+        ],
+        'working_view': working,
+        'overview': overview,
+      },
+    };
+    expect(working['frameCount'], greaterThan(0));
+    expect(overview['frameCount'], greaterThan(0));
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  }, timeout: const Timeout(Duration(seconds: 55)));
 }
 
 const _budgetMs = 16.7;
@@ -248,7 +247,10 @@ Map<String, double?> _distribution(List<double> samples) {
   };
 }
 
-Sheet _busySheet() {
+EcadProject _busyProject() {
+  final components = <Component>[];
+  final markers = <ContinuationMarker>[];
+  final links = <ContinuationLink>[];
   final devices = <Device>[];
   final wires = <Wire>[];
   const kinds = [
@@ -263,16 +265,34 @@ Sheet _busySheet() {
     final row = feeder ~/ 25;
     for (var item = 0; item < kinds.length; item++) {
       final kind = kinds[item];
-      devices.add(
-        Device(
-          id: 'f${feeder}_$item',
+      final id = 'f${feeder}_$item';
+      final position = Vec2(90 + column * 130, 140 + row * 430 + item * 76);
+      if (kind == DeviceKind.earth) {
+        links.add(
+          ContinuationLink(id: 'link_$feeder', label: 'PE${feeder + 1}'),
+        );
+        markers.add(
+          ContinuationMarker(
+            id: id,
+            linkId: 'link_$feeder',
+            position: position,
+            glyph: ContinuationGlyph.earth,
+            direction: PortSide.top,
+          ),
+        );
+      } else {
+        final pair = createBuiltinComponent(
+          componentId: 'component_$id',
+          deviceId: id,
           kind: kind,
           designation:
               '-${SymbolCatalog.definitionFor(kind).prefix}${feeder + 1}',
-          position: Vec2(90 + column * 130, 140 + row * 430 + item * 76),
-          rating: item == 0 ? '3~ 400 V' : (item == 3 ? '2.2 kW' : ''),
-        ),
-      );
+          position: position,
+          description: item == 0 ? '3~ 400 V' : (item == 3 ? '2.2 kW' : ''),
+        );
+        components.add(pair.component);
+        devices.add(pair.device);
+      }
       if (item > 0) {
         wires.add(
           Wire(
@@ -281,17 +301,29 @@ Sheet _busySheet() {
               deviceId: 'f${feeder}_${item - 1}',
               portId: item == 4 ? 'pe' : 'out',
             ),
-            to: TerminalRef(deviceId: 'f${feeder}_$item', portId: 'in'),
+            to:
+                kind == DeviceKind.earth
+                    ? ContinuationRef(markerId: id)
+                    : TerminalRef(deviceId: id, portId: 'in'),
           ),
         );
       }
     }
   }
-  return Sheet(
-    id: 'benchmark',
-    name: 'Rendering workload · 200 motor feeders',
-    number: '01',
-    devices: devices,
-    wires: wires,
+  return EcadProject(
+    id: 'benchmark_project',
+    name: 'Rendering workload',
+    components: components,
+    continuationLinks: links,
+    pages: [
+      Sheet(
+        id: 'benchmark',
+        name: 'Rendering workload · 200 motor feeders',
+        number: '01',
+        devices: devices,
+        wires: wires,
+        continuations: markers,
+      ),
+    ],
   );
 }

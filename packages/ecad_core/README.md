@@ -3,13 +3,20 @@
 Pure Dart document model, symbol geometry, validation, atomic commands, undo/redo,
 and command-line tools for Open ECAD. No Flutter dependency.
 
-The version 3 `.ecad.json` format contains `format: "open-ecad"`,
-`formatVersion: 3`, a project ID, name, description, monotonic revision, and
-`pages`. Version 1 documents load transparently with their original 1100 × 780
-sheet bounds, a visible frame, and an empty graphics collection; version 1 and 2
-sheets get the fallback sheet type. Saving writes version 3, so older readers
-report `unsupported_format` instead of misreading the file. Other format
-versions are rejected.
+The version 5 `.oecad` / `.ecad.json` format contains `format: "open-ecad"`,
+`formatVersion: 5`, a project ID, name, description, monotonic revision, and
+`pages`. The reader accepts versions 4 and 5; saving writes version 5. Older
+formats are rejected without automatic migration. The PDF converter emits
+version 4 graphics, which the editor can open and save as version 5.
+
+Articles describe products; components represent physical pieces or material;
+devices are electrical occurrences bound to component functions and terminals.
+Repeated occurrences and mounting views do not increase the physical quantity
+in the BOM. Structure uses function (`=`), location (`+`) and product (`-`)
+aspects. Continuation links join markers by identity across sheets. Circular
+terminal symbols expose one electrical node through one to four connection
+points. Mounting layouts use millimetres, shared placements and explicit scales;
+BOM report sheets derive their rows from the current project.
 
 During early development the format may change without backward compatibility.
 
@@ -28,11 +35,11 @@ exceed the sheet count; it is limited to 1,000,000.
 Graphics remain separate from electrical devices and connections.
 Imported drawing paths and text do not establish electrical connectivity.
 
-A sheet `type` is `multiLine`, `singleLine`, `cabinetLayout`, or `form`. Saving
-always writes it. A missing field (older files, unclassified PDF pages) takes
-the compatibility fallback `multiLine`, which says nothing about the page
-content; any other value is rejected. The type names the page and its frame
-caption; editing and validation rules are the same for every type.
+A sheet `type` is `multiLine`, `singleLine`, `cabinetLayout`, `form`, or
+`billOfMaterials`. Saving always writes it. Unclassified PDF pages use
+`multiLine`, which says nothing about their electrical content. Unknown types
+are rejected. Electrical sheets support symbols and wires; cabinet layouts
+display shared physical placements, and BOM sheets display derived reports.
 `SheetTemplates.blankForm()` returns an original blank table of ordinary
 graphics with generic captions only.
 
@@ -98,8 +105,8 @@ escapes such as `\x1b`; JSON output escapes DEL and C1 controls as well.
   "label": "Rename the project",
   "commands": [
     {"type": "renameProject", "name": "Extraction cabinet"},
-    {"type": "moveDevices", "sheetId": "sheet_power", "positions": {
-      "dev_motor": {"x": 420, "y": 550}
+    {"type": "moveDevices", "sheetId": "sheet_control", "positions": {
+      "dev_coil": {"x": 420, "y": 550}
     }}
   ]
 }
@@ -108,10 +115,14 @@ escapes such as `\x1b`; JSON output escapes DEL and C1 controls as well.
 The engine rejects stale revisions and commits a whole command batch only after
 its final document passes structural validation. Undo and redo also increment
 the revision; a previously prepared proposal becomes stale even after undo.
-Supported types: `addDevice`, `moveDevices`, `updateDevice`, `updateDevices`,
+Common command types include `addArticle`, `updateArticle`, `deleteArticle`,
+`addComponent`, `updateComponent`, `deleteComponent`, `addDevice`, `moveDevices`, `updateDevice`, `updateDevices`,
 `deleteDevices`, `addWire`, `deleteWire`, `addSheet`, `renameSheet`,
 `setSheetType`, `renameProject`, `addGraphics`, `updateGraphic`,
-`updateGraphics`, `moveGraphics`, `deleteGraphics`.
+`updateGraphics`, `moveGraphics`, `deleteGraphics`, plus commands for terminal
+strips, continuation links/markers, wire corners, mounting layouts and structure.
+The full JSON command contract is defined by `EcadCommand.fromJson` in
+`lib/src/commands.dart`.
 Commands apply in order, each seeing the result of the previous ones. A batch
 copies each sheet collection it edits once and validates the result once, so
 many small commands cost about as much as one bulk command.
@@ -125,7 +136,7 @@ once. Other bends are kept when possible. Unsafe bends are dropped, falling back
 to an automatic route if needed to avoid a connected symbol or reach a terminal
 from the correct side.
 `setSheetType` accepts `sheetId` and `sheetType`, for example
-`{"type": "setSheetType", "sheetId": "sheet_power", "sheetType": "singleLine"}`.
+`{"type": "setSheetType", "sheetId": "sheet_control", "sheetType": "singleLine"}`.
 
 `addGraphics` accepts `sheetId` and a nonempty `graphics` array;
 `updateGraphic` accepts `sheetId` and a complete replacement `graphic` with an
@@ -143,7 +154,8 @@ text or collections, and invalid command shapes. The engine additionally rejects
 duplicate identifiers, missing devices/ports, wires to the same endpoint, invalid
 metadata, and out-of-range geometry. Project imports should construct a
 `ProjectEngine` after decoding, or explicitly inspect `validateProject` results.
-Drawing, device, wire, sheet, and project IDs share one unique namespace.
+Persistent object IDs share one unique namespace; symbol port IDs are local
+to their symbol. Components retain their identity when occurrences change.
 Directly constructed Dart objects receive the same structural checks as decoded
 drawing data, and drawing diagnostics identify their `graphicId` and `sheetId`.
 
@@ -161,14 +173,15 @@ not checked again. A `copyWith` copy that keeps the same image payload reuses it
 PNG check, so moving or restyling an image does not decode it again; the copy's
 geometry and style are always checked.
 
-Warnings include duplicate designations, duplicate connections, and unused
-terminals. Warnings allow documents in progress and intentional drawing
-boundaries. Validation is not electrical simulation, engineering certification,
+Warnings allow documents in progress and intentional open drawing boundaries.
+Reference uniqueness, terminal bindings and missing physical dependencies are
+validated before committing a transaction. Validation is not electrical simulation, engineering certification,
 or a check of protection sizing or standards compliance.
 
-The two-page demo is explicitly illustrative: a single-line three-phase feeder
-(sheet type `singleLine`) and a separate 24 V control example. Cross-sheet component associations,
-conductor counts, interlocks, and complete protection design are not modeled.
+The five-sheet demo is illustrative: a coil, a contact with a reference
+occurrence, a mounting view, an article BOM and a component list. All electrical
+occurrences represent one physical relay. It includes open connection points
+and unspecified material; it is not a complete installation design.
 The code and simple symbol definitions are original; no QElectroTech code or
 symbol data is imported.
 

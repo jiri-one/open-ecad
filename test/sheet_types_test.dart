@@ -1,3 +1,4 @@
+import 'model_fixtures.dart';
 import 'dart:convert';
 
 import 'package:ecad_core/ecad_core.dart';
@@ -18,7 +19,7 @@ Future<EditorController> _mount(WidgetTester tester) async {
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final controller = EditorController();
+  final controller = EditorController(initialProject: testDemoProject());
   addTearDown(controller.dispose);
   await tester.pumpWidget(OpenEcadApp(controller: controller));
   await tester.pumpAndSettle();
@@ -29,16 +30,20 @@ Finder _iconButton(String label) => find.byWidgetPredicate(
   (widget) => widget is EcadIconButton && widget.label == label,
 );
 
-Finder _inDialog(String text) =>
-    find.descendant(of: find.byType(AlertDialog), matching: find.text(text));
+Finder _inDialog(String text) => find.descendant(
+  of: find.byType(AlertDialog),
+  matching: find.textContaining(text),
+);
 
-Finder _inSheetList(String text) =>
-    find.descendant(of: find.byType(ProjectPanel), matching: find.text(text));
+Finder _inSheetList(String text) => find.descendant(
+  of: find.byType(ProjectPanel),
+  matching: find.textContaining(text),
+);
 
 void main() {
   group('controller', () {
     test('adds typed sheets as single undoable steps', () {
-      final app = EditorController();
+      final app = EditorController(initialProject: testDemoProject());
       addTearDown(app.dispose);
       final pages = app.project.pages.length;
 
@@ -48,7 +53,7 @@ void main() {
       expect(app.sheet.graphics, isEmpty);
 
       app.addSheet(type: SheetType.cabinetLayout, name: '  Skříň B  ');
-      expect(app.sheet.type, SheetType.cabinetLayout);
+      expect(app.sheet.type, SheetType.cabinetLayout, reason: app.status);
       expect(app.sheet.name, 'Skříň B');
       expect(app.sheet.number, '04');
 
@@ -84,9 +89,10 @@ void main() {
     });
 
     test('changes the active sheet type with undo, redo and no-op', () {
-      final app = EditorController();
+      final app = EditorController(initialProject: testDemoProject());
       addTearDown(app.dispose);
-      final control = app.project.pages[1];
+      app.addSheet(type: SheetType.multiLine);
+      final control = app.sheet;
       app.setSheet(control.id);
       expect(app.sheet.type, SheetType.multiLine);
 
@@ -104,34 +110,32 @@ void main() {
       expect(app.sheet.type, SheetType.form);
     });
 
-    test('persisted types survive save and old files get the default', () {
+    test('persisted v4 types survive save and old formats are rejected', () {
       final persistence = ProjectPersistence();
-      final project = DemoProject.create();
-      final typed = project.copyWith(
+      final typed = EcadProject(
+        id: 'typed',
+        name: 'Typed',
         pages: [
-          for (final (index, sheet) in project.pages.indexed)
-            sheet.copyWith(type: SheetType.values[index + 2]),
+          Sheet(
+            id: 'layout',
+            name: 'Layout',
+            number: '01',
+            type: SheetType.cabinetLayout,
+          ),
+          Sheet(id: 'form', name: 'Form', number: '02', type: SheetType.form),
         ],
       );
       final encoded = persistence.encode(typed);
-      expect(jsonDecode(encoded)['formatVersion'], 3);
-      final restored = persistence.decode(encoded);
-      expect(restored.pages.map((sheet) => sheet.type), [
+      expect(jsonDecode(encoded)['formatVersion'], EcadProject.formatVersion);
+      expect(persistence.decode(encoded).pages.map((s) => s.type), [
         SheetType.cabinetLayout,
         SheetType.form,
       ]);
-
-      final legacy = typed.toJson()..['formatVersion'] = 2;
-      for (final page
-          in (legacy['pages']! as List).cast<Map<String, Object?>>()) {
-        page.remove('type');
-      }
-      final upgraded = persistence.decode(jsonEncode(legacy));
+      final legacy = typed.toJson()..['formatVersion'] = 3;
       expect(
-        upgraded.pages.map((sheet) => sheet.type),
-        everyElement(SheetType.multiLine),
+        () => persistence.decode(jsonEncode(legacy)),
+        throwsA(isA<EcadException>()),
       );
-      expect(jsonDecode(persistence.encode(upgraded))['formatVersion'], 3);
       final invalid = typed.toJson();
       ((invalid['pages']! as List).first as Map<String, Object?>)['type'] =
           'overview';
@@ -139,6 +143,14 @@ void main() {
         () => persistence.decode(jsonEncode(invalid)),
         throwsA(isA<EcadException>()),
       );
+    });
+    test('incompatible type changes keep electrical content visible', () {
+      final app = EditorController(initialProject: testDemoProject());
+      addTearDown(app.dispose);
+      final before = app.project.toJson();
+      app.setSheetType(SheetType.form);
+      expect(app.project.toJson(), before);
+      expect(app.status, contains('Obsah listu neodpovídá'));
     });
   });
 
@@ -154,6 +166,10 @@ void main() {
               name: type.label,
               number: type.name,
               type: type,
+              report:
+                  type == SheetType.billOfMaterials
+                      ? const BomTableSpec(kind: BomReportKind.articles)
+                      : null,
             ),
         ],
       );
@@ -163,7 +179,11 @@ void main() {
       for (final type in SheetType.values) {
         expect(
           exporter.svg(project, sheetId: 'sheet_${type.name}'),
-          contains('>${type.label.toUpperCase()}</text>'),
+          contains(
+            type == SheetType.billOfMaterials
+                ? 'Kusovník'
+                : type.label.toUpperCase(),
+          ),
         );
       }
     });
@@ -191,7 +211,7 @@ void main() {
     ) async {
       final app = await _mount(tester);
       final pages = app.project.pages.length;
-      await tester.tap(_iconButton('Přidat list'));
+      await tester.tap(find.byTooltip('Přidat list').first);
       await tester.pumpAndSettle();
       expect(find.text('Nový list'), findsOneWidget);
       expect(
@@ -228,7 +248,7 @@ void main() {
       final app = await _mount(tester);
       app.setSheet(app.project.pages[1].id);
       await tester.pumpAndSettle();
-      await tester.tap(_iconButton('Nový list'));
+      await tester.tap(find.byTooltip('Přidat list').last);
       await tester.pumpAndSettle();
       expect(_inDialog('Nové schéma'), findsOneWidget);
       await tester.tap(_inDialog(SheetType.cabinetLayout.label));
@@ -243,10 +263,10 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
       expect(app.sheet.name, 'Skříň čerpadel');
-      expect(app.sheet.type, SheetType.cabinetLayout);
+      expect(app.sheet.type, SheetType.cabinetLayout, reason: app.status);
       expect(app.sheet.graphics, isEmpty);
 
-      await tester.tap(_iconButton('Nový list'));
+      await tester.tap(find.byTooltip('Přidat list').last);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Zrušit'));
       await tester.pumpAndSettle();
@@ -259,6 +279,7 @@ void main() {
       tester,
     ) async {
       final app = await _mount(tester);
+      app.addSheet(type: SheetType.singleLine);
       app.setPanel(SidePanel.properties);
       await tester.pumpAndSettle();
       final option = find.descendant(
@@ -266,16 +287,17 @@ void main() {
         matching: find.text(SheetType.cabinetLayout.label),
       );
       await tester.ensureVisible(option);
+      await tester.pumpAndSettle();
       await tester.tap(option);
       await tester.pumpAndSettle();
-      expect(app.sheet.type, SheetType.cabinetLayout);
+      expect(app.sheet.type, SheetType.cabinetLayout, reason: app.status);
       expect(_inSheetList(SheetType.cabinetLayout.label), findsOneWidget);
       expect(
-        find.text('01 / 02 · ${SheetType.cabinetLayout.label}'),
+        find.text('03 / 03 · ${SheetType.cabinetLayout.label}'),
         findsOneWidget,
       );
 
-      await tester.tap(_iconButton('Vrátit · Ctrl Z'));
+      await tester.tap(_iconButton('Vrátit · Ctrl Z\n${app.undoLabel}'));
       await tester.pumpAndSettle();
       expect(app.sheet.type, SheetType.singleLine);
       expect(tester.takeException(), isNull);
@@ -286,6 +308,10 @@ void main() {
       tester,
     ) async {
       final app = await _mount(tester);
+      app.execute([
+        DeleteDevices(app.sheet.id, app.sheet.devices.map((d) => d.id).toSet()),
+      ], 'Remove occurrences');
+      await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Vlastnosti listu'));
       await tester.pumpAndSettle();
       await tester.tap(
@@ -317,7 +343,8 @@ void main() {
       expect(_inSheetList(second), findsNothing);
       await tester.enterText(search, 'výstavba');
       await tester.pump();
-      expect(_inSheetList('Žádný odpovídající list.'), findsOneWidget);
+      expect(_inSheetList(first), findsNothing);
+      expect(_inSheetList(second), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pump(const Duration(milliseconds: 500));
     });

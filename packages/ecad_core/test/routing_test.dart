@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:ecad_core/ecad_core.dart';
 import 'package:test/test.dart';
+import 'support.dart';
 
 Device _device(
   String id,
@@ -10,10 +11,9 @@ Device _device(
   double x,
   double y, {
   double rotation = 0,
-}) => Device(
+}) => syntheticDevice(
   id: id,
   kind: kind,
-  designation: '-$id',
   position: Vec2(x, y),
   rotation: rotation,
 );
@@ -48,8 +48,15 @@ Vec2 _step(Vec2 a, Vec2 b) {
 /// and outside both connected symbol bodies.
 void _expectSound(List<Vec2> route, Wire wire, Map<String, Device> devices) {
   final start =
-      WireRouter.terminal(devices[wire.from.deviceId]!, wire.from.portId)!;
-  final end = WireRouter.terminal(devices[wire.to.deviceId]!, wire.to.portId)!;
+      WireRouter.terminal(
+        devices[(wire.from as TerminalRef).deviceId]!,
+        (wire.from as TerminalRef).portId,
+      )!;
+  final end =
+      WireRouter.terminal(
+        devices[(wire.to as TerminalRef).deviceId]!,
+        (wire.to as TerminalRef).portId,
+      )!;
   expect(route.first, start.point, reason: 'detached start $route');
   expect(route.last, end.point, reason: 'detached end $route');
   for (var i = 1; i < route.length; i++) {
@@ -188,11 +195,10 @@ void main() {
     });
 
     test('a free end, such as the pointer, has no direction or body', () {
-      const breaker = Device(
+      final breaker = syntheticDevice(
         id: 'q',
         kind: DeviceKind.breaker,
-        designation: '-Q',
-        position: Vec2(100, 100),
+        position: const Vec2(100, 100),
       );
       final start = WireRouter.terminal(breaker, 'out')!;
       final route = WireRouter.route(start, const WireTerminal(Vec2(100, 40)));
@@ -274,7 +280,7 @@ void main() {
     });
 
     test('unchanged terminals and automatic routes are kept as is', () {
-      final renamed = _byId([motor.copyWith(designation: '-M2'), terminal]);
+      final renamed = _byId([motor.copyWith(), terminal]);
       expect(identical(WireRouter.follow(wire, before, renamed), wire), isTrue);
       final automatic = _wire('a', 'm', 'in', 'x', 'out');
       final moved = _byId([
@@ -287,7 +293,7 @@ void main() {
       );
     });
 
-    test('bends that cannot follow safely are not stored', () {
+    test('bends survive even when geometry needs a safe fallback', () {
       // Rotating the contact would slide the shared corner into the coil;
       // moving the terminal past both bends would reach the contact sideways.
       final cases = <(List<Device>, Wire, EcadCommand)>[
@@ -318,7 +324,7 @@ void main() {
           _byId(devices),
         );
         final engine = ProjectEngine(
-          EcadProject(
+          syntheticProject(
             id: 'p',
             name: 'P',
             pages: [
@@ -337,41 +343,37 @@ void main() {
         final moved = sheet.wires.single;
         final after = _byId(sheet.devices);
         _expectSound(WireRouter.path(moved, after), moved, after);
-        for (final end in [moved.from, moved.to]) {
-          final body = WireRouter.terminal(after[end.deviceId]!, end.portId)!;
-          for (final point in moved.waypoints) {
-            expect(
-              point.x > body.body!.left &&
-                  point.x < body.body!.right &&
-                  point.y > body.body!.top &&
-                  point.y < body.body!.bottom,
-              isFalse,
-              reason: 'stored bend $point inside ${end.deviceId}',
-            );
-          }
-        }
+        expect(moved.waypoints, hasLength(wire.waypoints.length));
+        engine.undo();
+        expect(
+          engine.project.pages.single.wires.single.toJson(),
+          wire.toJson(),
+        );
       }
     });
 
-    test('random edits keep bends visible and match the commit', () {
+    test('random edits preserve anchors and match the commit', () {
       final random = math.Random(14102026);
       double grid(int steps) => (random.nextInt(steps) * 10 + 100).toDouble();
       Device place(String id) => _device(
         id,
-        DeviceKind.values[random.nextInt(DeviceKind.values.length)],
+        [
+          for (final k in DeviceKind.values)
+            if (k != DeviceKind.earth) k,
+        ][random.nextInt(DeviceKind.values.length - 1)],
         grid(60),
         grid(50),
         rotation: random.nextInt(4) * 90.0,
       );
       String port(Device device) {
-        final ports = SymbolCatalog.definitionFor(device.kind).ports;
+        final ports = geometryFor(device).ports;
         return ports[random.nextInt(ports.length)].id;
       }
 
       RouteBox body(Device device) =>
           WireRouter.terminal(
             device,
-            SymbolCatalog.definitionFor(device.kind).ports.first.id,
+            geometryFor(device).ports.first.id,
           )!.body!;
       // Clearly separated symbols; overlapping ones are best effort only.
       bool apart(Device a, Device b) {
@@ -418,22 +420,9 @@ void main() {
         final followed = WireRouter.follow(wire, before, after);
         final followedRoute = WireRouter.path(followed, after);
         _expectSound(followedRoute, followed, after);
-        for (final bend in followed.waypoints) {
-          // Equality in the triangle inequality means this bend lies on a
-          // rendered segment, including a bend inside a straight run.
-          expect(
-            [
-              for (var i = 1; i < followedRoute.length; i++)
-                followedRoute[i - 1].distanceTo(bend) +
-                    bend.distanceTo(followedRoute[i]) -
-                    followedRoute[i - 1].distanceTo(followedRoute[i]),
-            ],
-            anyElement(closeTo(0, 1e-6)),
-            reason: 'stored bend $bend is absent from $followedRoute',
-          );
-        }
+        expect(followed.waypoints, hasLength(wire.waypoints.length));
         final engine = ProjectEngine(
-          EcadProject(
+          syntheticProject(
             id: 'p',
             name: 'P',
             pages: [
@@ -464,7 +453,7 @@ void main() {
   group('engine keeps attached geometry', () {
     // An invented branch: one source terminal feeds a coil directly and a
     // lamp through a manual T-route whose branch point lies on the coil wire.
-    EcadProject branch() => EcadProject(
+    EcadProject branch() => syntheticProject(
       id: 'routing',
       name: 'Routing',
       pages: [

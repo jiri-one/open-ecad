@@ -32,6 +32,9 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+/.scratch/
+/.ai/
+/private/
 **/.dart_tool/
 /tmp/
 .venv-pdf/

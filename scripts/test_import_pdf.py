@@ -282,8 +282,8 @@ class PrimitiveTests(ConverterTestCase):
         project, report, out, report_path = self.convert(pdf)
 
         self.assertEqual(project['format'], 'open-ecad')
-        self.assertEqual(project['formatVersion'], 3)
-        self.assertEqual(report['output']['formatVersion'], 3)
+        self.assertEqual(project['formatVersion'], 4)
+        self.assertEqual(report['output']['formatVersion'], 4)
         self.assertEqual(project['revision'], 0)
         self.assertEqual(project['description'],
                          'PDF graphic import; connectivity not reconstructed')
@@ -295,9 +295,12 @@ class PrimitiveTests(ConverterTestCase):
                          {tuple(sorted(
                              ['id', 'name', 'number', 'width', 'height',
                               'showFrame', 'sourcePage', 'devices', 'wires',
-                              'graphics']))})
+                              'graphics', 'type', 'paperSizeMm', 'continuations']))})
         for page in project['pages']:
             self.assertEqual(page['devices'], [])
+            self.assertEqual(page['continuations'], [])
+            self.assertAlmostEqual(page['paperSizeMm']['width'], page['width'] * 25.4 / 72, places=4)
+            self.assertAlmostEqual(page['paperSizeMm']['height'], page['height'] * 25.4 / 72, places=4)
             self.assertEqual(page['wires'], [])
             self.assertIs(page['showFrame'], False)
         self.assertEqual(
@@ -986,6 +989,46 @@ class FakeImageDoc:
 class ImageDecodeTests(ConverterTestCase):
     """Images over the size limits are rejected before they are decoded."""
 
+    def test_identical_rgb_xobjects_keep_their_own_soft_masks(self):
+        for nested in (False, True):
+            with self.subTest(nested=nested), pymupdf.open() as doc:
+                page = doc.new_page(width=200, height=100)
+                mask_a = raw_image(doc, 2, 1, bytes([255, 0]))
+                mask_b = raw_image(doc, 2, 1, bytes([0, 255]))
+                image_a = raw_image(doc, 2, 1, bytes(6), 'DeviceRGB',
+                                    f'/SMask {mask_a} 0 R')
+                image_b = raw_image(doc, 2, 1, bytes(6), 'DeviceRGB',
+                                    f'/SMask {mask_b} 0 R')
+                set_xobjects(doc, page, {'A': image_a, 'B': image_b})
+                set_content(doc, page,
+                            'q 80 0 0 40 10 40 cm /A Do Q '
+                            'q 80 0 0 40 110 40 cm /B Do Q '
+                            'q 20 0 0 10 10 10 cm /A Do Q')
+                if nested:
+                    source = pymupdf.open(stream=doc.tobytes(), filetype='pdf')
+                    self.addCleanup(source.close)
+                    doc.delete_page(0)
+                    page = doc.new_page(width=200, height=100)
+                    page.show_pdf_page(page.rect, source, 0)
+                original = page.get_pixmap(alpha=False)
+                self.assertEqual([original.pixel(x, 40) for x in (30, 70, 130, 170)],
+                                 [(0, 0, 0), (255, 255, 255),
+                                  (255, 255, 255), (0, 0, 0)])
+                pdf = self.path('distinct-masks.pdf')
+                doc.save(pdf)
+                project, report, _, _ = self.convert(pdf)
+                graphics = [g for g in project['pages'][0]['graphics']
+                            if g['kind'] == 'image']
+                self.assertEqual(len(graphics), 3)
+                alphas = []
+                for graphic in graphics:
+                    pix = pymupdf.Pixmap(base64.b64decode(graphic['imageData']))
+                    self.assertEqual((pix.width, pix.height, pix.alpha), (2, 1, 1))
+                    alphas.append([pix.pixel(x, 0)[-1] for x in range(2)])
+                self.assertEqual(alphas, [[255, 0], [0, 255], [255, 0]])
+                warnings = {w['code'] for w in report['pages'][0]['warnings']}
+                self.assertTrue(warnings <= {'clipping', 'transparencyGroups'})
+
     def test_declared_sizes_are_checked_before_decoding(self):
         doc = FakeImageDoc({
             7: {'Width': '16385', 'Height': '10'},
@@ -1391,7 +1434,7 @@ class SheetTypeImportTests(ConverterTestCase):
             'Seznam svorek', 'Seznam a výstavba rozvaděče'])
         project, report, _, _ = self.convert(pdf)
         self.assertEqual([page.get('type') for page in project['pages']],
-                         ['cabinetLayout', 'singleLine', None, 'form', None])
+                         ['cabinetLayout', 'singleLine', 'multiLine', 'form', 'multiLine'])
         self.assertEqual([page['sheetType'] for page in report['pages']],
                          ['cabinetLayout', 'singleLine', None, 'form', None])
         self.assertEqual(report['sheetTypes'], {
@@ -1406,7 +1449,7 @@ class SheetTypeImportTests(ConverterTestCase):
     def test_pages_without_bookmarks_stay_untyped(self):
         pdf = self.single_page_pdf('0 0 m 10 10 l S')
         project, report, _, _ = self.convert(pdf)
-        self.assertNotIn('type', project['pages'][0])
+        self.assertEqual(project['pages'][0]['type'], 'multiLine')
         self.assertEqual(report['sheetTypes']['classified'], {})
         self.assertEqual(report['sheetTypes']['unclassified'], 1)
 

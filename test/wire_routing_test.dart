@@ -1,3 +1,4 @@
+import 'model_fixtures.dart';
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
@@ -24,14 +25,14 @@ final _sheet = Sheet(
   id: 'sheet',
   name: 'Routing',
   number: '01',
-  devices: const [
-    Device(
+  devices: [
+    testBuiltin(
       id: 'm',
       kind: DeviceKind.motor,
       designation: '-M7',
       position: Vec2(300, 400),
     ),
-    Device(
+    testBuiltin(
       id: 'x',
       kind: DeviceKind.terminal,
       designation: '-X7',
@@ -49,7 +50,7 @@ final _sheet = Sheet(
 );
 
 EcadProject _project() =>
-    EcadProject(id: 'routing', name: 'Routing', pages: [_sheet]);
+    testProject(id: 'routing', name: 'Routing', pages: [_sheet]);
 
 Map<String, Device> _devices(Sheet sheet) => {
   for (final device in sheet.devices) device.id: device,
@@ -57,11 +58,7 @@ Map<String, Device> _devices(Sheet sheet) => {
 
 class _MemoryPersistence extends ProjectPersistence {
   @override
-  Future<void> saveAutosave(
-    EcadProject project, {
-    int? savedRevision,
-    String? fileName,
-  }) async {}
+  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
 }
 
 /// Painted unselected wires, as recorded from the canvas painter.
@@ -103,8 +100,10 @@ void _expectPainted(Path path, List<Vec2> route) {
 
 void _expectClearOfBodies(List<Vec2> route, Wire wire, Sheet sheet) {
   final devices = _devices(sheet);
-  final start = WireRouter.terminal(devices['m']!, wire.from.portId)!;
-  final end = WireRouter.terminal(devices['x']!, wire.to.portId)!;
+  final start =
+      WireRouter.terminal(devices['m']!, (wire.from as TerminalRef).portId)!;
+  final end =
+      WireRouter.terminal(devices['x']!, (wire.to as TerminalRef).portId)!;
   expect(route.first, start.point);
   expect(route.last, end.point);
   final first = route[1] - route[0];

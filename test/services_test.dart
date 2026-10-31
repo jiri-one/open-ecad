@@ -1,3 +1,4 @@
+import 'model_fixtures.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,7 +15,7 @@ void main() {
   late EcadProject project;
   late AssistantService assistant;
   setUp(() {
-    project = DemoProject.create();
+    project = testDemoProject();
     assistant = AssistantService();
     SharedPreferences.setMockInitialValues({});
   });
@@ -29,21 +30,25 @@ void main() {
       );
       expect(proposal.supported, isTrue, reason: proposal.message);
       expect(proposal.source, AssistantSource.localParser);
-      expect(proposal.commands, hasLength(9));
+      expect(proposal.commands, hasLength(14));
       expect(proposal.baseRevision, project.revision);
       final preview = proposal.preview(project);
       expect(
         preview.pages.first.devices.length,
-        project.pages.first.devices.length + 5,
+        project.pages.first.devices.length + 4,
       );
       expect(
         preview.pages.first.wires.length,
         project.pages.first.wires.length + 4,
       );
       expect(
-        preview.pages.first.devices
-            .lastWhere((device) => device.kind == DeviceKind.motor)
-            .rating,
+        preview
+            .componentById(
+              preview.pages.first.devices
+                  .lastWhere((device) => device.kind == DeviceKind.motor)
+                  .componentId,
+            )!
+            .description,
         '3 kW',
       );
       expect(
@@ -72,8 +77,13 @@ void main() {
         sheetId: 'sheet_power',
       );
       expect(
-        insert.preview(project).pages.first.devices.last.designation,
-        'QF7',
+        insert
+            .preview(project)
+            .componentById(
+              insert.preview(project).pages.first.devices.last.componentId,
+            )!
+            .designation,
+        '-QF7',
       );
       final rename = assistant.propose(
         'Přejmenuj výběr na KM2',
@@ -84,64 +94,75 @@ void main() {
       expect(
         rename
             .preview(project)
-            .pages
-            .first
-            .devices
-            .firstWhere((device) => device.id == 'dev_contactor')
+            .componentById(
+              project.pages.first.deviceById('dev_contactor')!.componentId,
+            )!
             .designation,
         'KM2',
       );
     });
 
-    test(
-      'default designations are global and treat bare labels as aliases',
-      () {
-        final terminal = assistant.propose(
-          'Přidej svorku',
-          project: project,
-          sheetId: 'sheet_power',
-        );
-        expect(
-          terminal.preview(project).pages.first.devices.last.designation,
-          '-X3',
-        );
-        final aliased = project.copyWith(
-          pages: [
-            project.pages.first,
-            project.pages.last.copyWith(
-              devices: [
-                ...project.pages.last.devices,
-                const Device(
-                  id: 'bare_terminal',
-                  kind: DeviceKind.terminal,
-                  designation: 'x3',
-                  position: Vec2(850, 150),
-                ),
-              ],
-            ),
-          ],
-        );
-        final copy = assistant.propose(
-          'Duplikuj výběr',
-          project: aliased,
-          sheetId: 'sheet_power',
-          selectedDeviceIds: {'dev_pe_terminal'},
-        );
-        expect(
-          copy.preview(aliased).pages.first.devices.last.designation,
-          '-X4',
-        );
-        final explicit = assistant.propose(
-          'Přidej jistič QF2',
-          project: project,
-          sheetId: 'sheet_power',
-        );
-        expect(
-          explicit.preview(project).pages.first.devices.last.designation,
-          'QF2',
-        );
-      },
-    );
+    test('empty-context designations reserve opaque bare-label aliases', () {
+      final terminal = assistant.propose(
+        'Přidej svorku',
+        project: project,
+        sheetId: 'sheet_power',
+      );
+      final terminalProject = terminal.preview(project);
+      expect(
+        ProjectResolver(terminalProject).fullDesignation(
+          terminalProject.componentById(
+            terminalProject.pages.first.devices.last.componentId,
+          )!,
+        ),
+        '-X3:1',
+      );
+      final seed = createBuiltinComponent(
+        componentId: 'bare_component',
+        deviceId: 'bare_terminal',
+        kind: DeviceKind.terminal,
+        designation: 'x3',
+        position: const Vec2(850, 150),
+      );
+      final aliased = project.copyWith(
+        components: [...project.components, seed.component],
+        pages: [
+          project.pages.first,
+          project.pages.last.copyWith(
+            devices: [...project.pages.last.devices, seed.device],
+          ),
+        ],
+      );
+      final copy = assistant.propose(
+        'Duplikuj výběr',
+        project: aliased,
+        sheetId: 'sheet_power',
+        selectedDeviceIds: {'dev_pe_terminal'},
+      );
+      expect(
+        copy
+            .preview(aliased)
+            .componentById(
+              copy.preview(aliased).pages.first.devices.last.componentId,
+            )!
+            .designation,
+        '-X4',
+      );
+      final explicit = assistant.propose(
+        'Přidej jistič QF2',
+        project: project,
+        sheetId: 'sheet_power',
+      );
+      expect(
+        explicit
+            .preview(project)
+            .componentById(
+              explicit.preview(project).pages.first.devices.last.componentId,
+            )!
+            .designation,
+        '-QF2',
+      );
+    });
 
     test(
       'repeated automatic insertion stays inside paper without overlapping devices',
@@ -162,9 +183,9 @@ void main() {
           final device = next.pages.first.devices.last;
           expect(device.position.x, inInclusiveRange(48, 980));
           expect(device.position.y, inInclusiveRange(126, 628));
-          final definition = SymbolCatalog.definitionFor(device.kind);
+          final definition = geometryFor(device);
           for (final existing in current.pages.first.devices) {
-            final other = SymbolCatalog.definitionFor(existing.kind);
+            final other = geometryFor(existing);
             final separateX =
                 (device.position.x - existing.position.x).abs() >=
                 (definition.width + other.width) / 2;
@@ -174,7 +195,7 @@ void main() {
             expect(
               separateX || separateY,
               isTrue,
-              reason: '${device.designation} overlaps ${existing.designation}',
+              reason: '${device.id} overlaps ${existing.id}',
             );
             if (existing.kind == DeviceKind.terminal) {
               // Reserve the visible terminal symbol and its short label too.
@@ -209,7 +230,7 @@ void main() {
                 .toList();
         expect(added.first.position.x, lessThan(300));
         for (final device in added) {
-          final definition = SymbolCatalog.definitionFor(device.kind);
+          final definition = geometryFor(device);
           expect(device.position.x - definition.width / 2, greaterThan(32));
           expect(device.position.x + definition.width / 2, lessThan(1068));
           expect(device.position.y - definition.height / 2, greaterThan(100));
@@ -258,7 +279,7 @@ void main() {
         branches++;
       }
       expect(branches, inInclusiveRange(2, 4));
-      expect(current.pages.single.devices, hasLength(branches * 5));
+      expect(current.pages.single.devices, hasLength(branches * 4));
       final explicit = assistant.fromActions(
         [
           {'op': 'insert_device', 'kind': 'terminal', 'x': 2000, 'y': 900},
@@ -287,7 +308,16 @@ void main() {
         expect(result.devices.length, project.pages.first.devices.length + 6);
         expect(result.wires.length, project.pages.first.wires.length + 3);
         expect(
-          result.devices.map((device) => device.designation).toSet().length,
+          result.devices
+              .map(
+                (device) =>
+                    proposal
+                        .preview(project)
+                        .componentById(device.componentId)!
+                        .designation,
+              )
+              .toSet()
+              .length,
           result.devices.length,
         );
         final allDevices = [
@@ -295,13 +325,22 @@ void main() {
           ...project.pages.skip(1).expand((page) => page.devices),
         ];
         expect(
-          allDevices.map((device) => device.designation).toSet().length,
+          allDevices
+              .map(
+                (device) =>
+                    proposal
+                        .preview(project)
+                        .componentById(device.componentId)!
+                        .designation,
+              )
+              .toSet()
+              .length,
           allDevices.length,
         );
         final newWires = result.wires.skip(project.pages.first.wires.length);
         for (final wire in newWires) {
-          expect(wire.from.deviceId, isNot('dev_breaker'));
-          expect(wire.to.deviceId, isNot('dev_contactor'));
+          expect(wire.from.ownerId, isNot('dev_breaker'));
+          expect(wire.to.ownerId, isNot('dev_contactor'));
         }
       },
     );
@@ -334,8 +373,8 @@ void main() {
       expect(
         preview.wires.any(
           (wire) =>
-              wire.from.deviceId == 'dev_breaker' ||
-              wire.to.deviceId == 'dev_breaker',
+              wire.from.ownerId == 'dev_breaker' ||
+              wire.to.ownerId == 'dev_breaker',
         ),
         isFalse,
       );
@@ -432,6 +471,12 @@ void main() {
     test(
       'requests JSON schema only on explicit model call and validates output',
       () async {
+        project = project.copyWith(
+          components: [
+            for (final c in project.components)
+              c.copyWith(note: 'PRIVATE_COMPONENT_NOTE'),
+          ],
+        );
         var requests = 0;
         final client = MockClient((request) async {
           requests++;
@@ -439,6 +484,14 @@ void main() {
           final body = jsonDecode(request.body) as Map<String, dynamic>;
           expect(body['stream'], isFalse);
           expect((body['format'] as Map)['type'], 'object');
+          final context =
+              jsonDecode((body['messages'] as List).last['content'] as String)
+                  as Map;
+          expect(context['components'], isNotEmpty);
+          expect(
+            jsonEncode(context),
+            isNot(contains('PRIVATE_COMPONENT_NOTE')),
+          );
           return http.Response(
             jsonEncode({
               'message': {
@@ -477,8 +530,13 @@ void main() {
         expect(proposal.supported, isTrue, reason: proposal.message);
         expect(proposal.source, AssistantSource.ollama);
         expect(
-          proposal.preview(project).pages.first.devices.last.designation,
-          'M9',
+          proposal
+              .preview(project)
+              .componentById(
+                proposal.preview(project).pages.first.devices.last.componentId,
+              )!
+              .designation,
+          '-M9',
         );
         client.close();
       },
@@ -550,7 +608,7 @@ void main() {
     test('round-trips complete, versioned project documents', () {
       final persistence = ProjectPersistence();
       final encoded = persistence.encode(project);
-      expect(jsonDecode(encoded)['formatVersion'], 3);
+      expect(jsonDecode(encoded)['formatVersion'], EcadProject.formatVersion);
       expect(persistence.decode(encoded).toJson(), project.toJson());
       final invalid = project.toJson()..['formatVersion'] = 900;
       expect(
@@ -580,30 +638,35 @@ void main() {
       final persistence = ProjectPersistence();
       final latest = project.copyWith(name: 'Poslední změna', revision: 4);
       await Future.wait([
-        persistence.saveAutosave(project),
-        persistence.saveAutosave(latest),
+        persistence.saveWorkingCopy(WorkingCopy(project, sessionId: 'test')),
+        persistence.saveWorkingCopy(WorkingCopy(latest, sessionId: 'test')),
       ]);
       expect(
         (await persistence.loadAutosave())?.project.toJson(),
         latest.toJson(),
       );
-      await persistence.clearAutosave();
+      await persistence.removeWorkingCopy('test');
       expect(await persistence.loadAutosave(), isNull);
     });
 
     test('working copy keeps the file state of its own revision', () async {
       final persistence = ProjectPersistence();
       final edited = project.copyWith(revision: 3);
-      await persistence.saveAutosave(
-        edited,
-        savedRevision: 2,
-        fileName: 'Dílna.oecad',
+      await persistence.saveWorkingCopy(
+        WorkingCopy(
+          edited,
+          sessionId: 'test',
+          savedRevision: 2,
+          fileName: 'Dílna.oecad',
+        ),
       );
       final restored = (await persistence.loadAutosave())!;
       expect(restored.project.toJson(), edited.toJson());
       expect(restored.savedRevision, 2);
       expect(restored.fileName, 'Dílna.oecad');
-      await persistence.saveAutosave(edited.copyWith(revision: 1));
+      await persistence.saveWorkingCopy(
+        WorkingCopy(edited.copyWith(revision: 1), sessionId: 'test'),
+      );
       final unsaved = (await persistence.loadAutosave())!;
       expect(unsaved.savedRevision, isNull);
       expect(unsaved.fileName, isNull);
@@ -613,7 +676,10 @@ void main() {
           'savedRevision': 4,
         }),
       });
-      expect((await persistence.loadAutosave())!.savedRevision, isNull);
+      await expectLater(
+        persistence.loadAutosave(),
+        throwsA(isA<FormatException>()),
+      );
     });
   });
 
@@ -624,7 +690,7 @@ void main() {
         final named = project.copyWith(name: 'Řízení <motor> & "1"');
         final exporter = ProjectExportService();
         final svg = exporter.svg(named);
-        expect(svg, contains('height="1560"'));
+        expect(svg, contains('height="594mm"'));
         expect(svg, contains('Řízení &lt;motor&gt; &amp; &quot;1&quot;'));
         expect(svg, contains('1 / 2'));
         expect(svg, contains('2 / 2'));
@@ -632,7 +698,7 @@ void main() {
         expect(svg, contains('<circle'));
         expect(svg, isNot(contains('<image')));
         final single = exporter.svg(project, sheetId: 'sheet_control');
-        expect(single, contains('height="780"'));
+        expect(single, contains('height="297mm"'));
         expect(single, isNot(contains('1 / 2')));
         expect(
           () => exporter.svg(project, sheetId: 'missing'),

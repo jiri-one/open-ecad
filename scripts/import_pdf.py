@@ -3,7 +3,7 @@
 """Offline PDF -> Open ECAD graphics converter.
 
 Converts the visible vector paths, text and raster images of selected PDF pages
-into native Open ECAD (format version 3) page graphics. The import is purely
+into native Open ECAD page graphics. The import is purely
 graphical: no devices or wires are created and electrical connectivity is NOT
 reconstructed. Nothing is executed, fetched or uploaded; PDF JavaScript and
 links are counted, never evaluated. Bookmark titles supply page names and
@@ -31,7 +31,7 @@ from pathlib import Path
 
 PINNED_PYMUPDF = '1.26.7'
 TOOL_VERSION = 1
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 DESCRIPTION = 'PDF graphic import; connectivity not reconstructed'
 MAX_DASH_VALUES = 64
 MAX_IMAGE_DIMENSION = 16384
@@ -791,47 +791,35 @@ def _declared_size(doc, xref):
 
 
 def _image_placements(doc, page, images, mu) -> list[dict]:
-    """page.get_image_info(xrefs=True) without decoding oversized images.
-
-    PyMuPDF finds xrefs by hashing the decoded pixels of every placed and
-    every listed image; here oversized ones are only marked.
-    """
+    """RGB digests cannot distinguish XObjects with different soft masks."""
     lib = mu.mupdf
     textpage = page.get_textpage(flags=mu.TEXT_PRESERVE_IMAGES)
     placements = textpage.extractIMGINFO()
     blocks = list(textpage.this)
-    whole = lib.FzIrect(mu.FZ_MIN_INF_RECT, mu.FZ_MIN_INF_RECT,
-                        mu.FZ_MAX_INF_RECT, mu.FZ_MAX_INF_RECT)
+    pdf = lib.PdfDocument(doc.this)
+    sources = {}
+    seen = set()
+    for xref, _, width, height, *_ in images:
+        if xref in seen or _oversized(width, height):
+            continue
+        seen.add(xref)
+        try:
+            source = lib.pdf_load_image(pdf, lib.pdf_new_indirect(pdf, xref, 0))
+            # Keep native images alive while their pointer identities are keys.
+            sources[source.m_internal_value()] = (xref, source)
+        except Exception:
+            continue
 
-    def xref_digests() -> dict:
-        result = {}
-        known: dict = {}
-        for entry in images:  # (xref, smask, width, height, ...)
-            xref = entry[0]
-            if xref not in known:
-                known[xref] = None
-                if not _oversized(entry[2], entry[3]):
-                    try:
-                        known[xref] = mu.Pixmap(doc, xref).digest
-                    except Exception:
-                        pass
-            if known[xref] is not None:
-                result[known[xref]] = xref  # the last one wins, as in PyMuPDF
-        return result
-
-    digests = None
     for info in placements:
         info['xref'] = 0
         if _oversized(info['width'], info['height']):
             info['oversized'] = True
             continue
-        if digests is None:
-            digests = xref_digests()
         try:
             image = blocks[info['number']].i_image()
-            pix, _, _ = lib.fz_get_pixmap_from_image(
-                image, whole, lib.FzMatrix(image.w(), 0, 0, image.h(), 0, 0))
-            info['xref'] = digests.get(bytes(lib.fz_md5_pixmap2(pix)), 0)
+            source = sources.get(image.m_internal_value())
+            if source is not None:
+                info['xref'] = source[0]
         except Exception:
             info['unreadable'] = True
     return placements
@@ -1264,14 +1252,15 @@ def _convert_page(doc, page, number: int, name: str, page_id: str,
 
     out.write(('' if first_page else ',') + '{')
     head = {'id': page_id, 'name': name, 'number': str(number)}
-    if sheet_type:
-        head['type'] = sheet_type
+    head['type'] = sheet_type or 'multiLine'
     head.update({
         'width': _num(width), 'height': _num(height), 'showFrame': False,
         'sourcePage': number,
+        'paperSizeMm': {'width': _num(width * 25.4 / 72),
+                        'height': _num(height * 25.4 / 72)},
     })
     out.write(json.dumps(head, separators=(',', ':'), ensure_ascii=True)[1:-1])
-    out.write(',"devices":[],"wires":[],"graphics":[')
+    out.write(',"continuations":[],"devices":[],"wires":[],"graphics":[')
     first_graphic = True
 
     def emit(graphic) -> None:
@@ -1492,6 +1481,8 @@ def _convert_document(mu, doc, source, output, report_target, pages_spec,
             'format': 'open-ecad', 'formatVersion': FORMAT_VERSION,
             'id': project_id, 'name': project_name,
             'description': DESCRIPTION, 'revision': 0,
+            'articles': [], 'components': [],
+            'continuationLinks': [], 'mountingLayouts': [],
         }
         writer.write(json.dumps(
             header, separators=(',', ':'), ensure_ascii=True)[:-1]

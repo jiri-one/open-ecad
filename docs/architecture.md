@@ -17,22 +17,60 @@ flowchart LR
   M --> F[JSON / PDF / SVG]
 ```
 
-Doména je v `packages/ecad_core`; Flutter nemá vlastní paralelní model schématu.
-Přístroj obsahuje typ, ID, označení, střed, otočení a textové údaje. Spoj odkazuje
-na ID přístroje a jeho pojmenovaný vývod. Poloha konců se odvozuje z geometrie
-symbolu, takže editace přístroje neodpojuje vodiče. Trasu počítá sdílený
-`WireRouter` jádra pro plátno, náhled tažení i export. Přesun nebo otočení
-přístroje upraví v téže revizi ruční zlomy u dotčeného vývodu. Ostatní zlomy
-zachovává, pokud dovolují napojení bez průchodu připojenou značkou a ze správné
-strany vývodu; jinak postupně přejde až k automatické trase. Dokument obsahuje
-listy a revizi.
-Typ listu (vícepólové a jednopólové schéma, výstavba rozvaděče, formulář) list
-pojmenovává a třídí; pravidla editace, propojení i kontroly jsou pro všechny typy
-stejná. Mění se vratným příkazem `setSheetType`.
-Formát v2 přidal rozměry listu a nezávislé grafické objekty (cesty, texty, PNG),
-formát v3 typ listu.
-Grafika nemá automaticky elektrický význam. Místní Python převodník PDF vytváří
-tyto objekty, editor i export pracují se stejným modelem bez původního PDF.
+Doména je v `packages/ecad_core`; Flutter používá stejný model a příkazy jako CLI.
+Formát v5 odděluje artikl (`Article`), fyzickou komponentu nebo materiál
+(`Component`) a schématické zobrazení funkce (`Device`). Jeden kus může mít více
+funkcí a výskytů; kusovník se počítá z komponent, nikoli ze značek. Materiál může
+mít kusové množství, přesnou metráž nebo neurčené množství. JSON ukládá desetinné
+množství jako řetězec s tečkou; české formuláře a množstevní buňky reportů používají
+čárku. CSV exportuje stejné viditelné buňky, v uvozovkách, takže desetinná čárka
+nenaruší oddělení sloupců. Kódy artiklů a ostatní texty se nepřepisují.
+
+`StructureContext` ukládá explicitní cesty funkčního (`=`), místního (`+`)
+a nadřazeného produktového (`-`) aspektu. Místní označení komponenty je zvlášť
+v `ComponentReference`; číslo listu a volitelný kód dokumentu jsou také samostatné.
+Lomítka a tečky uvnitř úrovně se neštěpí. Identitu určují ID, unikátnost označení
+celá struktura a místní název. Nový kus jednou převezme kontext listu; další
+výskyt ani pozdější změna struktury listu jeho označení nemění. Resolver poskytuje
+plná a relativní označení pro stromy, popisky, mezilistové odkazy, hover a reporty.
+
+Obyčejná průchozí svorka má jednu fyzickou komponentu, jeden vodivý uzel a vlastní
+číslo v logické `TerminalStrip`. Skupina nepřidává další kus do BOM.
+`TerminalSymbolSpec` zobrazuje malý kruh s jedním až čtyřmi směry; jednotlivé
+připojovací body mají vlastní označení a stabilní místní klíče při otočení.
+Konektivita vzniká společným uzlem uvnitř konkrétní svorky, ne shodou svorkovnice.
+Geometrie kruhu a ramen je společná pro canvas a export. Připojený směr nelze
+odstranit bez odpojení. Staré bloky se na tento model automaticky nepřevádějí.
+
+Vodič odkazuje na výskyt a stabilní ID jeho portu, případně na pokračovací značku.
+Přejmenování vývodu ani posun značky spoj neodpojí. `WireRouter` sdílí geometrii
+tras mezi editorem a exportem. Pokračovací značky spojuje explicitní vazba;
+shodný text sám o sobě elektrické spojení nevytváří.
+
+Listy mají typ schématu, montáže, formuláře nebo živého reportu. Montážní plocha
+ukládá skutečné mm, další listy ji mohou zobrazit v jiném měřítku a výřezu. Společné
+rozvržení montážních označení drží text uvnitř tělesa, pokud se vejde, případně
+jej otočí nebo umístí ven s odkazovou čarou. Fyzické rozměry se kvůli textu nemění.
+Canvas, PDF a SVG používají totožné pozice popisků. Živý report má také jediné
+rozvržení pro obrazovku i export; stránkování nemění uložené listy ani množství.
+Grafické objekty z PDF nemají automaticky elektrický význam.
+
+Panel projektu nabízí listy, knihovnu značek, komponenty a artikly. Formuláře
+upravují společný zdroj údajů pro všechna zobrazení. Nové elektrické zobrazení
+existujícího kusu a vytvoření dalšího kusu jsou samostatné operace. Smazání
+výskytu zachová komponentu. Montáž podporuje tažení, otočení, měřítko a sdílené
+pohledy; reporty zpřístupňují všechny odvozené stránky.
+
+Dvojklik na schématický symbol nebo F4 otevře vlastnosti i při skrytém pravém
+panelu. Tlačítko „Zobrazit vlastnosti“ panel opět otevře. Editory komponenty,
+artiklu, funkce a vývodů zachovávají vazby přes ID. Dvojklik na montážní zobrazení
+upravuje stejný fyzický kus. Stromy listů a přístrojů umožňují hledat plná i místní
+označení a přepínat první aspekt seskupení; pohled nemění exportní pořadí listů.
+
+`WorkspaceController` spravuje více dokumentových relací. Tab a životnost plátna
+jsou určené dvojicí relace/list; rozpracovaná gesta nepřecházejí mezi dokumenty.
+Asynchronní formulář upravuje původního vlastníka i při dokončení otevření jiného
+projektu. Souběžná obnova stejné pracovní kopie ponechá jedinou relaci.
 
 Všechna trvalá editace jde přes `ProjectEngine.execute`. Dávka se provede na
 pracovní kopii, zkontroluje a zveřejní jako jedna nová revize. Chyba odmítne celou
@@ -54,9 +92,10 @@ modelový text jako kód. Oba poskytovatelé převádějí záměr na stejné do
 Skutečně obecné AI kreslení vyžaduje další operace, kontext spojů a vyhodnocování
 kvality návrhů. Současný adaptér prokazuje cestu od zadání k vratné úpravě dokumentu.
 
-Výchozí označení generuje společný katalog napříč všemi listy; například `X1`
-a `-X1` rezervují pro automatické číslování totéž číslo. Uživatelova explicitní
-označení se nemění. Automatické vložení hledá místo uvnitř pracovní části listu,
+Výchozí označení generuje společný alokátor v rámci struktury nového kusu.
+Jednoduché staré `X1` a `-X1` rezervují pro automatické číslování v prázdné
+struktuře totéž číslo. Staré neprůhledné označení se při otevření neparsuje ani
+nepřepisuje; převod do struktury vyžaduje výslovnou editaci. Automatické vložení hledá místo uvnitř pracovní části listu,
 rezervuje rozměry symbolů a přibližné rozměry popisků. Propojenou skupinu bere
 konzervativně jako jeden obdélník. Zaplněný list vyvolá zprávu místo vložení mimo
 výkres; nejde o obecný optimalizátor rozložení ani trasování. Ruční duplikace
@@ -97,9 +136,13 @@ si zachovávají krátké přechody; režim nebyl fyzicky měřen na e-ink panel
 `ProjectPersistence` odděluje JSON dokument od platformních dialogů a prohlížečového
 stahování. `.oecad` a `.ecad.json` jsou dvě přípony stejného formátu. Vstup se
 kontroluje při dekódování i podle integrity grafu. GUI i CLI omezují soubor na
-128 MiB. Automatická kopie je jediný dokument v místním úložišti a zápisy
-jsou řazené, aby pomalejší starý zápis nepřepsal novější stav. Je omezená na
+128 MiB. Pracovní kopie jsou oddělené podle relace a zápisy
+jsou řazené, aby pomalejší zápis nepřepsal novější stav. Každá je omezená na
 2 MiB a 15 000 grafických objektů; velké importy vyžadují explicitní uložení.
+Uchovává se deset nejnovějších kopií mimo otevřené relace. Otevřené dokumenty
+mají samostatně počítané držitele, takže ani souběžná obnova neumožní promazat
+jejich kopie. Výslovné zavření po vyřešení změn odstraní kopii až za jejími
+rozpracovanými zápisy; ukončení celé aplikace kopie zachová pro další spuštění.
 Ve stejném záznamu nese revizi naposledy uloženou do souboru a jeho název, takže
 obnova neoznačí uloženou práci za neuloženou ani novější změny za uložené.
 Na desktopu probíhá převod PDF v odděleném procesu a JSON kódování/dekódování přes
@@ -107,10 +150,12 @@ Na desktopu probíhá převod PDF v odděleném procesu a JSON kódování/dekó
 spuštění také přímo v pracovní složce, nikdy v jejích nadřazených složkách.
 Proměnné `ECAD_PDF_IMPORTER` a `ECAD_PDF_PYTHON` mají přednost. Python běží
 v režimu UTF-8, aby chybová zpráva převodníku zůstala čitelná. Ve webovém
-sestavení `compute` zůstává na hlavním vlákně. Čtení v1 doplňuje výchozí rozměry
-listu a prázdnou grafiku, čtení v1 a v2 náhradní typ listu. Nové soubory se
-zapisují jako v3; starší čtečka je tak odmítne jako nepodporovaný formát, místo
-aby hlásila neznámé pole.
+sestavení `compute` zůstává na hlavním vlákně. Zápis používá v5, čtečka přijímá
+v4 i v5. Chybějící struktura je prázdná a původní označení zůstává neprůhledným
+textem. Starší formáty se odmítají bez automatické migrace.
+Přímé spuštění binárky s `--project /cesta/projekt.oecad` má přednost před obnovou.
+Otevření stejné kanonické cesty aktivuje existující dokument a zachová jeho změny.
+
 
 Explicitní uložení pracuje se snímkem a identitou otevřeného dokumentu. Pozdní
 dokončení ukládání nesmí označit mezitím otevřený projekt za uložený. Web vrací
@@ -136,10 +181,8 @@ Pro budoucí nativní algoritmus může vzniknout stabilní dávkové rozhraní;
 příkazů a dokumentu nemusí být závislý na implementačním jazyce. Zavádět druhý
 runtime a další platformní build bez naměřeného důvodu zatím nepřináší výhodu.
 
-## Další ucelený krok
+## Další ověření
 
-Na malém skutečném projektu ověřit ovládání ve Windows a význam doménových prvků.
-Poté rozšířit model o logický přístroj oddělený od jeho zobrazení, vazby mezi listy
-a vlastní symboly. Až tento model bude stabilní, navázat svorkovnice, kusovníky,
-import QET a obecnější příkazy asistenta. Současný formát má číslo verze právě
-proto, aby takový posun šel řešit explicitní migrací.
+Platformní souborové dialogy a přenosné sestavení je potřeba ověřovat na každé
+cílové platformě. Import QET a pokročilé konstrukční kontroly nejsou součástí
+současného modelu.

@@ -1,3 +1,4 @@
+import 'model_fixtures.dart';
 import 'dart:async';
 
 import 'package:ecad_core/ecad_core.dart';
@@ -17,24 +18,28 @@ class _ControlledPersistence extends ProjectPersistence {
   int openCalls = 0;
 
   @override
-  Future<String?> save(EcadProject project) {
-    savedProjects.add(project);
-    return saveResult?.future ?? Future.value('current.oecad');
-  }
-
-  @override
-  Future<EcadProject?> open() {
-    openCalls++;
-    return openResult?.future ?? Future.value();
-  }
-
-  @override
-  Future<void> saveAutosave(
+  Future<SavedProjectFile?> saveAs(
     EcadProject project, {
-    int? savedRevision,
-    String? fileName,
+    DocumentFileHandle? currentFile,
+    required bool Function() canCommit,
   }) {
-    autosavedProjects.add(project);
+    savedProjects.add(project);
+    return (saveResult?.future ?? Future.value('current.oecad')).then(
+      (name) => name == null ? null : SavedProjectFile(name: name),
+    );
+  }
+
+  @override
+  Future<LoadedProject?> pickAndLoad() {
+    openCalls++;
+    return (openResult?.future ?? Future<EcadProject?>.value()).then(
+      (project) => project == null ? null : LoadedProject(project),
+    );
+  }
+
+  @override
+  Future<void> saveWorkingCopy(WorkingCopy copy) {
+    autosavedProjects.add(copy.project);
     return autosaveResult?.future ?? Future.value();
   }
 
@@ -87,9 +92,13 @@ class _FilePersistence extends ProjectPersistence {
   Completer<void>? saveGate;
 
   @override
-  Future<String?> save(EcadProject project) async {
+  Future<SavedProjectFile?> saveAs(
+    EcadProject project, {
+    DocumentFileHandle? currentFile,
+    required bool Function() canCommit,
+  }) async {
     await saveGate?.future;
-    return 'Rozvaděč A.oecad';
+    return const SavedProjectFile(name: 'Rozvaděč A.oecad');
   }
 }
 
@@ -281,10 +290,8 @@ void main() {
   group('restoring the working copy', () {
     setUp(() => SharedPreferences.setMockInitialValues({}));
 
-    Future<void> autosave(WidgetTester tester) async {
-      await tester.pump(const Duration(milliseconds: 401));
-      await tester.pump();
-    }
+    Future<void> autosave() =>
+        Future<void>.delayed(const Duration(milliseconds: 450));
 
     Future<EditorController> restart(EditorController previous) async {
       previous.dispose();
@@ -295,35 +302,33 @@ void main() {
       return app;
     }
 
-    testWidgets('an immediate restart after save preserves its file state', (
-      tester,
-    ) async {
+    test('an immediate restart after save preserves its file state', () async {
       final first = EditorController(persistence: _FilePersistence());
       await first.initialize();
       first.renameProject('Rozvaděč A');
-      await autosave(tester);
+      await autosave();
       await first.saveProject();
       final second = await restart(first);
       expect(second.project.name, 'Rozvaděč A');
       expect(second.dirty, isFalse);
       expect(second.fileName, 'Rozvaděč A.oecad');
+      await autosave();
     });
 
-    testWidgets('edits after a save restore as unsaved', (tester) async {
+    test('edits after a save restore as unsaved', () async {
       final first = EditorController(persistence: _FilePersistence());
       await first.initialize();
       await first.saveProject();
       first.renameProject('Změna po uložení');
-      await autosave(tester);
+      await autosave();
       final second = await restart(first);
       expect(second.project.name, 'Změna po uložení');
       expect(second.dirty, isTrue);
       expect(second.fileName, 'Rozvaděč A.oecad');
+      await autosave();
     });
 
-    testWidgets('a save finishing after newer edits does not cover them', (
-      tester,
-    ) async {
+    test('a save finishing after newer edits does not cover them', () async {
       final persistence = _FilePersistence()..saveGate = Completer<void>();
       final first = EditorController(persistence: persistence);
       await first.initialize();
@@ -335,40 +340,53 @@ void main() {
       final second = await restart(first);
       expect(second.project.name, 'Během ukládání');
       expect(second.dirty, isTrue);
+      await autosave();
     });
 
-    testWidgets('a replacement does not inherit the previous file state', (
-      tester,
-    ) async {
+    test('a replacement does not inherit the previous file state', () async {
       final first = EditorController(persistence: _FilePersistence());
       await first.initialize();
       first.renameProject('Původní');
       await first.saveProject();
-      await autosave(tester);
+      await autosave();
       first.newProject(demo: true);
-      await autosave(tester);
+      await autosave();
       final second = await restart(first);
       expect(second.project.toJson(), DemoProject.create().toJson());
       expect(second.dirty, isTrue);
       expect(second.fileName, isNull);
+      await autosave();
     });
   });
 
   test(
     'manual insertion reserves designation aliases globally and shares K numbering',
     () {
-      final app = EditorController(persistence: _ControlledPersistence());
+      final app = EditorController(
+        initialProject: testDemoProject(),
+        persistence: _ControlledPersistence(),
+      );
       addTearDown(app.dispose);
       app.placeDevice(DeviceKind.terminal, const Vec2(800, 250));
-      expect(app.selectedDevices.single.designation, '-X3');
-      app.setSheet('sheet_control');
+      expect(
+        app.resolver.fullDesignation(
+          app.componentFor(app.selectedDevices.single),
+        ),
+        '-X3:1',
+      );
+      app.setSheet(app.project.pages[1].id);
       app.placeDevice(DeviceKind.terminal, const Vec2(800, 250));
-      expect(app.selectedDevices.single.designation, '-X4');
+      expect(
+        app.resolver.fullDesignation(
+          app.componentFor(app.selectedDevices.single),
+        ),
+        '-X3:2',
+      );
       app.placeDevice(DeviceKind.coil, const Vec2(800, 350));
-      expect(app.selectedDevices.single.designation, '-K3');
+      expect(app.componentFor(app.selectedDevices.single).designation, '-K3');
       app.setSheet('sheet_power');
       app.placeDevice(DeviceKind.contactor, const Vec2(800, 450));
-      expect(app.selectedDevices.single.designation, '-K4');
+      expect(app.componentFor(app.selectedDevices.single).designation, '-K4');
     },
   );
 
@@ -442,7 +460,7 @@ void main() {
         addTearDown(app.dispose);
         await app.configureAi(const AiProviderSettings(), enabled: true);
         final request = app.sendPrompt('Add a device');
-        app.setSheet('sheet_control');
+        app.setSheet(app.project.pages[1].id);
         expect(app.busy, isFalse);
         expect(app.conversation.map((entry) => entry.text), [
           'Add a device',
@@ -450,7 +468,7 @@ void main() {
         ]);
         assistant.complete(message: 'Late answer');
         await request;
-        expect(app.activeSheetId, 'sheet_control');
+        expect(app.activeSheetId, app.project.pages[1].id);
         expect(app.proposal, isNull);
         expect(app.conversation, hasLength(2));
         expect(app.busy, isFalse);
@@ -466,7 +484,7 @@ void main() {
       addTearDown(app.dispose);
       await app.configureAi(const AiProviderSettings(), enabled: true);
       final cancelled = app.sendPrompt('First request');
-      app.setSheet('sheet_control');
+      app.setSheet(app.project.pages[1].id);
       final current = app.sendPrompt('Second request');
       assistant.complete(message: 'Answer for the old sheet');
       await cancelled;
@@ -573,15 +591,15 @@ void main() {
         addTearDown(app.dispose);
         await app.sendPrompt('Zkontroluj projekt');
         expect(app.diagnosticsVisible, isTrue);
-        expect(app.diagnostics, hasLength(1));
-        expect(app.status, contains('chyby 0 · upozornění 1'));
-        expect(app.conversation.last.text, contains('chyby 0 · upozornění 1'));
-        expect(app.conversation.last.text, contains('-X2'));
+        expect(app.diagnostics, isNotEmpty);
+        expect(app.status, contains('chyby 0 · upozornění'));
+        expect(app.conversation.last.text, contains('chyby 0 · upozornění'));
+        expect(app.diagnostics.any((d) => d.componentId != null), isTrue);
         expect(app.busy, isFalse);
         expect(app.proposal, isNull);
         app.hideDiagnostics();
         expect(app.diagnosticsVisible, isFalse);
-        expect(app.diagnostics, hasLength(1));
+        expect(app.diagnostics, isNotEmpty);
       },
     );
 

@@ -1,3 +1,4 @@
+import 'model_fixtures.dart';
 import 'dart:convert';
 import 'dart:ui' as ui;
 
@@ -140,11 +141,46 @@ Future<_Glyph> _paintedGlyph(WidgetTester tester, DeviceKind kind) async {
 }
 
 /// Reads the absolute M/L/H/V/C/S/Z subset written by [ProjectExportService].
-_Glyph _exportedGlyph(DeviceKind kind) {
+_Glyph _exportedGlyph(DeviceKind kind, {bool builtinTerminal = false}) {
   final glyph = _Glyph();
-  final svg = ProjectExportService.symbolSvg(kind);
+  String svg;
+  if (kind == DeviceKind.terminal && !builtinTerminal) {
+    final terminal = createTerminalComponent(
+      componentId: 'piece',
+      deviceId: 'symbol',
+      stripId: 'strip',
+      number: '1',
+      position: Vec2.zero,
+    );
+    final project = EcadProject(
+      id: 'project',
+      name: 'Synthetic',
+      terminalStrips: [
+        TerminalStrip(
+          id: 'strip',
+          reference: ComponentReference(localDesignation: 'X1'),
+        ),
+      ],
+      components: [terminal.component],
+      pages: [
+        Sheet(
+          id: 'sheet',
+          name: 'Sheet',
+          number: '01',
+          devices: [terminal.device],
+        ),
+      ],
+    );
+    svg =
+        RegExp(
+          r'<g data-device="symbol"[^>]*>(.*?)</g>',
+          dotAll: true,
+        ).firstMatch(ProjectExportService().svg(project))!.group(1)!;
+  } else {
+    svg = ProjectExportService.symbolSvg(kind);
+  }
   final elements = RegExp(
-    r'<(path|circle|rect|text)\b([^>]*?)/?>(?:[^<]*</text>)?',
+    r'<(path|circle|rect|text|line)\b([^>]*?)/?>(?:[^<]*</text>)?',
   ).allMatches(svg);
   expect(
     elements.map((element) => element.group(0)).join(),
@@ -162,6 +198,11 @@ _Glyph _exportedGlyph(DeviceKind kind) {
     final stroked = attributes['stroke'] != 'none';
     final filled = (attributes['fill'] ?? 'none') != 'none';
     switch (element.group(1)) {
+      case 'line':
+        glyph.segment(
+          Offset(number('x1'), number('y1')),
+          Offset(number('x2'), number('y2')),
+        );
       case 'circle':
         final center = Offset(number('cx'), number('cy'));
         if (filled) glyph.circle(center, number('r'), filled: true);
@@ -289,7 +330,7 @@ void _readPath(_Glyph glyph, String data, {required bool dashed}) {
 }
 
 Device _device(String designation, DeviceKind kind, double x, double y) =>
-    Device(
+    testBuiltin(
       id: designation.substring(1).toLowerCase(),
       kind: kind,
       designation: designation,
@@ -397,7 +438,15 @@ void main() {
       }
       final endpoints =
           glyph.segments.expand((segment) => segment.split(' ')).toSet();
-      for (final port in definition.ports) {
+      final ports =
+          kind == DeviceKind.terminal
+              ? TerminalSymbolGeometry(
+                sides: const {PortSide.top, PortSide.bottom},
+              ).ports.map((port) => (id: port.key, position: port.position))
+              : definition.ports.map(
+                (port) => (id: port.id, position: port.position),
+              );
+      for (final port in ports) {
         expect(
           endpoints,
           contains(_Glyph._key(Offset(port.position.x, port.position.y))),
@@ -406,6 +455,109 @@ void main() {
       }
     }
   });
+
+  testWidgets(
+    'existing builtin terminals keep their own canvas and export geometry',
+    (tester) async {
+      final seed = createBuiltinComponent(
+        componentId: 'piece',
+        deviceId: 'symbol',
+        kind: DeviceKind.terminal,
+        designation: '-X1:1',
+        position: const Vec2(100, 100),
+      );
+      final project = EcadProject(
+        id: 'project',
+        name: 'Synthetic',
+        components: [seed.component],
+        pages: [
+          Sheet(
+            id: 'sheet',
+            name: 'Sheet',
+            number: '01',
+            devices: [seed.device],
+          ),
+        ],
+      );
+      final viewport = SchematicViewportController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SchematicCanvas(
+            project: project,
+            sheet: project.pages.single,
+            selectedIds: const {},
+            mode: CanvasMode.select,
+            showGrid: false,
+            palette: _palette,
+            controller: viewport,
+            readOnly: true,
+            onSelectionChanged: (_) {},
+            onMoveDevices: (_) {},
+            onPlaceDevice: (_, __) {},
+            onConnect: (_, __) {},
+            onDeleteWire: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      viewport.reset();
+      await tester.pump();
+      final painter =
+          tester
+              .widget<CustomPaint>(
+                find
+                    .descendant(
+                      of: find.byType(SchematicCanvas),
+                      matching: find.byType(CustomPaint),
+                    )
+                    .first,
+              )
+              .painter!;
+      final recorded = TestRecordingCanvas();
+      painter.paint(recorded, const Size(800, 600));
+      final glyph = _Glyph();
+      var inSymbol = false;
+      for (final call in recorded.invocations) {
+        final args = call.invocation.positionalArguments;
+        if (!inSymbol) {
+          if (call.invocation.memberName == #translate &&
+              args[0] == 100 &&
+              args[1] == 100) {
+            inSymbol = true;
+          }
+          continue;
+        }
+        if (call.invocation.memberName == #restore) break;
+        if (call.invocation.memberName == #drawLine) {
+          glyph.segment(args[0] as Offset, args[1] as Offset);
+        }
+        if (call.invocation.memberName == #drawCircle) {
+          glyph.circle(
+            args[0] as Offset,
+            args[1] as double,
+            filled: (args[2] as Paint).style == PaintingStyle.fill,
+          );
+        }
+      }
+      expect(inSymbol, isTrue);
+      final exported = _exportedGlyph(
+        DeviceKind.terminal,
+        builtinTerminal: true,
+      );
+      expect(glyph.segments..sort(), exported.segments..sort());
+      expect(glyph.circles..sort(), exported.circles..sort());
+      final endpoints =
+          glyph.segments.expand((segment) => segment.split(' ')).toSet();
+      for (final port in geometryFor(seed.device).ports) {
+        expect(
+          endpoints,
+          contains(_Glyph._key(Offset(port.position.x, port.position.y))),
+        );
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      viewport.dispose();
+    },
+  );
 
   testWidgets('library finds, describes and places the new symbols', (
     tester,
@@ -418,7 +570,7 @@ void main() {
     addTearDown(app.dispose);
     await tester.pumpWidget(OpenEcadApp(controller: app));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(Tab, 'Přístroje'));
+    await tester.tap(find.widgetWithText(Tab, 'Značky'));
     await tester.pumpAndSettle();
     final search = find.byWidgetPredicate(
       (widget) =>
@@ -467,7 +619,7 @@ void main() {
     expect(app.sheet.devices, hasLength(count + 1));
     final placed = app.sheet.devices.last;
     expect(placed.kind, DeviceKind.threePoleBreaker);
-    expect(placed.designation, matches(RegExp(r'^-Q\d+$')));
+    expect(app.componentFor(placed).designation, matches(RegExp(r'^-Q\d+$')));
     expect(app.selectedIds, {placed.id});
     app.rotateSelection();
     await tester.pumpAndSettle();
@@ -492,7 +644,7 @@ void main() {
       devices: [breaker, fuse],
     );
     final controller = SchematicViewportController();
-    final pairs = <(TerminalRef, TerminalRef)>[];
+    final pairs = <(WireEndpoint, WireEndpoint)>[];
     var selection = <String>{};
     Future<void> mount(CanvasMode mode) async {
       await tester.pumpWidget(
@@ -537,7 +689,7 @@ void main() {
   });
 
   test('local assistant inserts the new kinds from Czech and English', () {
-    final project = DemoProject.create();
+    final project = testDemoProject();
     final assistant = AssistantService();
     for (final (prompt, kind, designation) in [
       ('Přidej pojistku F3', DeviceKind.fuse, 'F3'),
@@ -567,8 +719,11 @@ void main() {
       final device = proposal.preview(project).pages.first.devices.last;
       expect(device.kind, kind, reason: prompt);
       expect(
-        device.designation,
-        designation ??
+        proposal
+            .preview(project)
+            .componentById(device.componentId)!
+            .designation,
+        (designation == null ? null : '-$designation') ??
             matches(
               RegExp('^-${SymbolCatalog.definitionFor(kind).prefix}\\d+\$'),
             ),
@@ -602,7 +757,7 @@ void main() {
       );
     });
     addTearDown(client.close);
-    final project = DemoProject.create();
+    final project = testDemoProject();
     final proposal = await AssistantService(
       httpClient: client,
     ).proposeWithOllama(
@@ -614,7 +769,13 @@ void main() {
     expect(offered, DeviceKind.values.map((kind) => kind.name).toList());
     expect(proposal.supported, isTrue, reason: proposal.message);
     final added = proposal.preview(project).pages.first.devices.reversed;
-    expect(added.first.designation, 'P7');
+    expect(
+      proposal
+          .preview(project)
+          .componentById(added.first.componentId)!
+          .designation,
+      '-P7',
+    );
     expect(added.first.kind, DeviceKind.ammeter);
     expect(added.elementAt(1).kind, DeviceKind.currentTransformer);
   });
@@ -633,7 +794,8 @@ void main() {
     );
     final ammeter = _device('-P1', DeviceKind.ammeter, 420, 200);
     final others = [
-      for (final (index, kind) in DeviceKind.values.indexed)
+      for (final (index, kind)
+          in DeviceKind.values.where((k) => k != DeviceKind.earth).indexed)
         _device(
           '-${SymbolCatalog.definitionFor(kind).prefix}${index + 10}',
           kind,
@@ -647,7 +809,7 @@ void main() {
       _wire('secondary_out', currentTransformer, 's1', ammeter, 'in'),
       _wire('secondary_back', ammeter, 'out', currentTransformer, 's2'),
     ];
-    final project = EcadProject(
+    final project = testProject(
       id: 'export_project',
       name: 'Měření a jištění',
       pages: [
@@ -670,7 +832,7 @@ void main() {
     );
     final exporter = ProjectExportService();
     final svg = exporter.svg(project);
-    for (final kind in DeviceKind.values) {
+    for (final kind in DeviceKind.values.where((k) => k != DeviceKind.earth)) {
       expect(
         svg,
         contains(ProjectExportService.symbolSvg(kind)),
@@ -697,10 +859,13 @@ void main() {
     };
     for (final wire in wires) {
       final from = worldPortPosition(
-        devices[wire.from.deviceId]!,
-        wire.from.portId,
+        devices[wire.from.ownerId]!,
+        (wire.from as TerminalRef).portId,
       );
-      final to = worldPortPosition(devices[wire.to.deviceId]!, wire.to.portId);
+      final to = worldPortPosition(
+        devices[wire.to.ownerId]!,
+        (wire.to as TerminalRef).portId,
+      );
       expect(
         svg,
         contains(

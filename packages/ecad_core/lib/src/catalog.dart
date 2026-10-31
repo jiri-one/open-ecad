@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'model.dart';
+import 'terminal_symbol_geometry.dart';
 
 class PortDefinition {
   const PortDefinition({
     required this.id,
     required this.label,
     required this.position,
+    this.direction,
   });
   final String id;
   final String label;
 
   /// Offset from the symbol's center, before rotation.
   final Vec2 position;
+  final Vec2? direction;
 }
 
 class SymbolDefinition {
@@ -260,15 +263,15 @@ abstract final class SymbolCatalog {
   static SymbolDefinition definitionFor(DeviceKind kind) =>
       definitions.firstWhere((definition) => definition.kind == kind);
 
-  /// Generates a default designation without rewriting existing labels.
-  /// Pass devices from every sheet, including uncommitted batch additions.
-  /// Bare and dash-prefixed labels reserve the same generated number, and
-  /// kinds sharing a prefix (such as contactors and coils) share the sequence.
-  static String nextDesignation(Iterable<Device> devices, DeviceKind kind) {
+  /// Bare and dash-prefixed labels reserve the same generated number.
+  static String nextDesignation(
+    Iterable<Component> components,
+    DeviceKind kind,
+  ) {
     final prefix = definitionFor(kind).prefix.toUpperCase();
     final used =
-        devices
-            .map((device) => device.designation.trim().toUpperCase())
+        components
+            .map((device) => (device.designation ?? '').trim().toUpperCase())
             .toSet();
     var number = 1;
     while (used.contains('$prefix$number') ||
@@ -279,10 +282,10 @@ abstract final class SymbolCatalog {
   }
 
   static Vec2 worldPortPosition(Device device, String portId) {
-    final port = definitionFor(device.kind).portById(portId);
+    final port = geometryFor(device).portById(portId);
     if (port == null) {
       throw EcadException(
-        'Unknown port "$portId" on ${device.kind.name}.',
+        'Unknown port "$portId" on ${device.id}.',
         code: 'invalid_port',
       );
     }
@@ -294,3 +297,174 @@ SymbolDefinition definitionFor(DeviceKind kind) =>
     SymbolCatalog.definitionFor(kind);
 Vec2 worldPortPosition(Device device, String portId) =>
     SymbolCatalog.worldPortPosition(device, portId);
+
+class SymbolGeometry {
+  SymbolGeometry({
+    required this.width,
+    required this.height,
+    required List<PortDefinition> ports,
+  }) : ports = List.unmodifiable(ports);
+  final double width;
+  final double height;
+  final List<PortDefinition> ports;
+  PortDefinition? portById(String id) => findById(ports, id, (p) => p.id);
+}
+
+Vec2 sideDirection(PortSide side) => switch (side) {
+  PortSide.left => const Vec2(-1, 0),
+  PortSide.right => const Vec2(1, 0),
+  PortSide.top => const Vec2(0, -1),
+  PortSide.bottom => const Vec2(0, 1),
+};
+
+SymbolGeometry geometryFor(Device device) {
+  switch (device.symbol) {
+    case TerminalSymbolSpec(:final sides):
+      final geometry = TerminalSymbolGeometry(sides: sides);
+      return SymbolGeometry(
+        width: geometry.portDistance * 2,
+        height: geometry.portDistance * 2,
+        ports: [
+          for (final port in geometry.ports)
+            PortDefinition(
+              id: port.key,
+              label: '',
+              position: port.position,
+              direction: port.normal,
+            ),
+        ],
+      );
+    case BuiltinSymbolSpec(:final kind):
+      final definition = definitionFor(kind);
+      return SymbolGeometry(
+        width: definition.width,
+        height: definition.height,
+        ports: definition.ports,
+      );
+    case PortBlockSpec(:final width, :final height, :final ports):
+      return SymbolGeometry(
+        width: width,
+        height: height,
+        ports: [
+          for (final port in ports)
+            PortDefinition(
+              id: port.id,
+              label: '',
+              direction: sideDirection(port.side),
+              position: switch (port.side) {
+                PortSide.left => Vec2(
+                  -width / 2,
+                  height * (port.fraction - .5),
+                ),
+                PortSide.right => Vec2(
+                  width / 2,
+                  height * (port.fraction - .5),
+                ),
+                PortSide.top => Vec2(width * (port.fraction - .5), -height / 2),
+                PortSide.bottom => Vec2(
+                  width * (port.fraction - .5),
+                  height / 2,
+                ),
+              },
+            ),
+        ],
+      );
+  }
+}
+
+String? terminalIdFor(Device device, String portId) => switch (device.symbol) {
+  TerminalSymbolSpec(:final sides, :final terminalId) =>
+    sides.any((s) => s.name == portId) ? terminalId : null,
+  BuiltinSymbolSpec(:final bindings) => bindings[portId],
+  PortBlockSpec(:final ports) =>
+    findById(ports, portId, (p) => p.id)?.terminalId,
+};
+
+({Component component, Device device}) createTerminalComponent({
+  required String componentId,
+  required String deviceId,
+  required String stripId,
+  required Vec2 position,
+  String number = '1',
+  Set<PortSide> sides = const {PortSide.top, PortSide.bottom},
+  String? articleId,
+  String description = '',
+  OccurrenceMode mode = OccurrenceMode.wiring,
+}) {
+  final terminal = ComponentTerminal(
+    id: newId('terminal'),
+    designation: 'through',
+  );
+  final function = ComponentFunction(
+    id: newId('function'),
+    name: 'Průchozí svorka',
+    terminalIds: [terminal.id],
+  );
+  return (
+    component: Component(
+      id: componentId,
+      terminal: TerminalAssignment(stripId: stripId, number: number),
+      articleId: articleId,
+      description: description,
+      electrical: ElectricalModel(terminals: [terminal], functions: [function]),
+    ),
+    device: Device(
+      id: deviceId,
+      componentId: componentId,
+      functionId: function.id,
+      position: position,
+      mode: mode,
+      symbol: TerminalSymbolSpec(terminalId: terminal.id, sides: sides),
+    ),
+  );
+}
+
+({Component component, Device device}) createBuiltinComponent({
+  required String componentId,
+  required String deviceId,
+  required DeviceKind kind,
+  required String designation,
+  required Vec2 position,
+  String? articleId,
+  String description = '',
+  OccurrenceMode mode = OccurrenceMode.wiring,
+}) {
+  if (kind == DeviceKind.earth)
+    throw const EcadException(
+      'Use a continuation marker for a logical earth.',
+      code: 'logical_symbol',
+    );
+  final definition = definitionFor(kind);
+  final terminals = [
+    for (final port in definition.ports)
+      ComponentTerminal(id: newId('terminal'), designation: port.label),
+  ];
+  final function = ComponentFunction(
+    id: newId('function'),
+    name: definition.label,
+    terminalIds: terminals.map((t) => t.id).toList(),
+  );
+  return (
+    component: Component(
+      id: componentId,
+      designation: designation,
+      articleId: articleId,
+      description: description,
+      electrical: ElectricalModel(terminals: terminals, functions: [function]),
+    ),
+    device: Device(
+      id: deviceId,
+      componentId: componentId,
+      functionId: function.id,
+      position: position,
+      mode: mode,
+      symbol: BuiltinSymbolSpec(
+        kind: kind,
+        bindings: {
+          for (var i = 0; i < terminals.length; i++)
+            definition.ports[i].id: terminals[i].id,
+        },
+      ),
+    ),
+  );
+}

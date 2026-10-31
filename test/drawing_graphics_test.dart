@@ -43,6 +43,10 @@ EcadProject _project() => EcadProject(
       number: '1',
       width: 420,
       height: 300,
+      paperSizeMm: const SizeMm(
+        width: 420 * 25.4 / 72,
+        height: 300 * 25.4 / 72,
+      ),
       showFrame: false,
       sourcePage: 1,
       graphics: [
@@ -376,7 +380,12 @@ void main() {
     () {
       final exporter = ProjectExportService();
       final svg = exporter.svg(_project());
-      expect(svg, contains('width="420" height="300" viewBox="0 0 420 300"'));
+      expect(
+        svg,
+        contains(
+          'width="148.166667mm" height="105.833333mm" viewBox="0 0 148.166667 105.833333"',
+        ),
+      );
       expect(svg, contains('translate(70 130) rotate(0)'));
       expect(svg, contains('C0 0 180 0 180 80'));
       expect(svg, contains('stroke-linecap="round"'));
@@ -397,6 +406,10 @@ void main() {
             number: '2',
             width: 200,
             height: 500,
+            paperSizeMm: const SizeMm(
+              width: 200 * 25.4 / 72,
+              height: 500 * 25.4 / 72,
+            ),
             showFrame: false,
           ),
         ],
@@ -404,9 +417,14 @@ void main() {
       final mixedSvg = exporter.svg(mixed);
       expect(
         mixedSvg,
-        contains('width="420" height="800" viewBox="0 0 420 800"'),
+        contains(
+          'width="148.166667mm" height="282.222222mm" viewBox="0 0 148.166667 282.222222"',
+        ),
       );
-      expect(mixedSvg, contains('<svg x="0" y="300" width="200" height="500"'));
+      expect(
+        mixedSvg,
+        contains('x="0" y="105.833333" width="70.555556" height="176.388889"'),
+      );
     },
   );
 

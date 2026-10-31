@@ -253,16 +253,18 @@ class _AssistantPanelState extends State<AssistantPanel> {
                       padding: const EdgeInsets.fromLTRB(10, 0, 6, 6),
                       child: Row(
                         children: [
-                          Text(
-                            'List ${app.sheet.number}',
-                            style: TextStyle(fontSize: 10, color: c.muted),
+                          Expanded(
+                            child: Text(
+                              'List ${fullPageDesignation(app.sheet)}',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 10, color: c.muted),
+                            ),
                           ),
                           if (app.selectedIds.isNotEmpty)
                             Text(
                               ' · ${app.selectedIds.length} ve výběru',
                               style: TextStyle(fontSize: 10, color: c.muted),
                             ),
-                          const Spacer(),
                           EcadIconButton(
                             icon: Icons.arrow_upward,
                             label: 'Odeslat příkaz',
@@ -332,6 +334,7 @@ class _AssistantPanelState extends State<AssistantPanel> {
   Widget _proposal(BuildContext context) {
     final app = widget.controller;
     final pending = app.proposal!;
+    final resolver = ProjectResolver(app.proposalPreview ?? app.project);
     final c = EcadColors.of(context);
     return Container(
       padding: const EdgeInsets.all(14),
@@ -367,7 +370,7 @@ class _AssistantPanelState extends State<AssistantPanel> {
             Padding(
               padding: const EdgeInsets.only(bottom: 5),
               child: Text(
-                '• ${_commandLabel(command)}',
+                '• ${_commandLabel(command, resolver)}',
                 style: const TextStyle(fontSize: 10, height: 1.5),
               ),
             ),
@@ -416,10 +419,13 @@ class _AssistantPanelState extends State<AssistantPanel> {
     );
   }
 
-  String _commandLabel(EcadCommand command) => switch (command) {
+  String _commandLabel(
+    EcadCommand command,
+    ProjectResolver resolver,
+  ) => switch (command) {
     AddDevice(:final device) =>
-      'Vložit ${device.designation} · ${SymbolCatalog.definitionFor(device.kind).label}',
-    UpdateDevice(:final device) => 'Upravit ${device.designation}',
+      'Vložit zobrazení · ${device.kind == null ? 'Obecný blok' : SymbolCatalog.definitionFor(device.kind!).label}',
+    UpdateDevice() => 'Upravit zobrazení',
     UpdateDevices() => 'Upravit přístroje',
     AddWire() => 'Propojit připojovací body',
     DeleteWire() => 'Odstranit vodič',
@@ -433,6 +439,16 @@ class _AssistantPanelState extends State<AssistantPanel> {
     DeleteGraphics() => 'Odstranit grafiku',
     RenameSheet(:final name) => 'Přejmenovat list na $name',
     SetSheetType(:final sheetType) => 'Změnit typ listu: ${sheetType.label}',
+    AddComponent(:final component) =>
+      'Nový kus ${resolver.fullDesignation(component)}',
+    UpdateComponent(:final component) =>
+      'Upravit kus ${resolver.fullDesignation(component)}',
+    AddTerminalStrip(:final strip) => 'Svorkovnice ${strip.reference.full}',
+    UpdateTerminalStrip(:final strip) =>
+      'Upravit svorkovnici ${strip.reference.full}',
+    AddContinuationMarker() => 'Vložit pokračování',
+    AddContinuationLink() => 'Založit síť pokračování',
     RenameProject(:final name) => 'Přejmenovat projekt na $name',
+    _ => 'Upravit projekt',
   };
 }

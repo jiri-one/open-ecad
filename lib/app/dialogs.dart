@@ -7,6 +7,67 @@ import '../widgets/sheet_types.dart';
 import 'controller.dart';
 import 'theme.dart';
 
+Future<ConnectionCorner?> showCornerEditor(
+  BuildContext context,
+  ConnectionCorner corner,
+) {
+  var orientation = corner.orientation;
+  return showDialog<ConnectionCorner>(
+    context: context,
+    builder:
+        (context) => StatefulBuilder(
+          builder:
+              (context, setState) => AlertDialog(
+                title: const Text('Upravit spojovací roh'),
+                content: SizedBox(
+                  width: 320,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'X ${corner.position.x} · Y ${corner.position.y} · polohu změníte tažením v kresbě',
+                      ),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<CornerOrientation>(
+                        initialValue: orientation,
+                        decoration: const InputDecoration(
+                          labelText: 'Orientace rohu',
+                        ),
+                        items: [
+                          for (final value in CornerOrientation.values)
+                            DropdownMenuItem(
+                              value: value,
+                              child: Text(value.glyph),
+                            ),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() => orientation = value);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Zrušit'),
+                  ),
+                  FilledButton(
+                    onPressed:
+                        () => Navigator.pop(
+                          context,
+                          corner.copyWith(orientation: orientation),
+                        ),
+                    child: const Text('Uložit'),
+                  ),
+                ],
+              ),
+        ),
+  );
+}
+
 Future<String?> editNameDialog(
   BuildContext context, {
   required String title,
@@ -180,30 +241,32 @@ Future<bool> confirmReplaceProject(
   EditorController controller,
 ) async {
   if (!controller.dirty) return true;
-  return await showDialog<bool>(
-        context: context,
-        builder:
-            (context) => AlertDialog(
-              title: const Text('Otevřít jiný projekt?'),
-              content: const SizedBox(
-                width: 380,
-                child: Text(
-                  'Aktuální změny nejsou uložené do souboru. Otevřením jiného projektu nahradíte i jeho automatickou pracovní kopii.',
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Zůstat v projektu'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Pokračovat'),
-                ),
-              ],
+  final decision = await showDialog<String>(
+    context: context,
+    builder:
+        (context) => AlertDialog(
+          title: Text('Neuložené změny · ${controller.project.name}'),
+          content: const Text(
+            'Před zavřením projektu můžete změny uložit do souboru. Pracovní kopie ostatních projektů zůstanou zachovány.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'cancel'),
+              child: const Text('Zrušit'),
             ),
-      ) ??
-      false;
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'discard'),
+              child: const Text('Zahodit změny'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, 'save'),
+              child: const Text('Uložit'),
+            ),
+          ],
+        ),
+  );
+  if (decision == 'save') return controller.saveProject();
+  return decision == 'discard';
 }
 
 Future<void> showAiSettings(
@@ -286,7 +349,7 @@ class _AiSettingsDialogState extends State<_AiSettingsDialog> {
             ),
             const SizedBox(height: 18),
             const Text(
-              'Model obdrží zadání, výběr a nejvýše 200 přístrojů z aktuálního listu. Návrhy se kontrolují stejnými pravidly jako ruční úpravy. Model se v této aplikaci automaticky nestahuje.',
+              'Na nastavený server se odešle zadání, výběr a nejvýše 200 zobrazení z aktuálního listu s údaji jejich komponent a vývodů. Poznámky komponent se neposílají. Návrhy se kontrolují stejnými pravidly jako ruční úpravy. Model se v této aplikaci automaticky nestahuje.',
               style: TextStyle(fontSize: 11, height: 1.65),
             ),
             if (error != null)
@@ -343,8 +406,35 @@ Future<void> showCommandPalette(
   required VoidCallback openProject,
   required VoidCallback focusAssistant,
   required ValueChanged<SheetType> addSheet,
+  required VoidCallback addContinuation,
+  required VoidCallback followContinuation,
+  required VoidCallback editSelection,
+  required VoidCallback editHistory,
+  required VoidCallback undoEdit,
+  required VoidCallback redoEdit,
+  required VoidCallback copySelection,
+  required VoidCallback pasteSelection,
 }) async {
   final commands = <PaletteCommand>[
+    PaletteCommand('Historie úprav', Icons.history, editHistory),
+    PaletteCommand(
+      'Kopírovat výběr',
+      Icons.content_copy,
+      copySelection,
+      shortcut: 'Ctrl C',
+    ),
+    PaletteCommand(
+      'Vložit ze schránky',
+      Icons.content_paste,
+      pasteSelection,
+      shortcut: 'Ctrl V',
+    ),
+    PaletteCommand(
+      'Uložit projekt jako…',
+      Icons.save_as_outlined,
+      app.saveProjectAs,
+      shortcut: 'Ctrl Shift S',
+    ),
     PaletteCommand(
       'Uložit projekt',
       Icons.save_outlined,
@@ -379,15 +469,37 @@ Future<void> showCommandPalette(
       'Přizpůsobit list oknu',
       Icons.fit_screen,
       app.viewport.fit,
+      shortcut: 'Home',
+    ),
+    PaletteCommand(
+      'Vložit pokračovací odkaz',
+      Icons.arrow_forward,
+      addContinuation,
+    ),
+    PaletteCommand(
+      'Přejít na protějšek odkazu',
+      Icons.subdirectory_arrow_right,
+      followContinuation,
       shortcut: 'F',
     ),
     PaletteCommand(
-      'Vrátit poslední změnu',
+      'Vlastnosti výběru',
+      Icons.edit_outlined,
+      editSelection,
+      shortcut: 'F4',
+    ),
+    PaletteCommand(
+      'Vrátit poslední změnu${app.undoLabel == null ? '' : ' · ${app.undoLabel}'}',
       Icons.undo,
-      app.undo,
+      undoEdit,
       shortcut: 'Ctrl Z',
     ),
-    PaletteCommand('Obnovit změnu', Icons.redo, app.redo, shortcut: 'Ctrl Y'),
+    PaletteCommand(
+      'Obnovit změnu${app.redoLabel == null ? '' : ' · ${app.redoLabel}'}',
+      Icons.redo,
+      redoEdit,
+      shortcut: 'Ctrl Y / Ctrl Shift Z',
+    ),
     PaletteCommand(
       'Přidat nový list…',
       Icons.note_add_outlined,
@@ -538,7 +650,7 @@ Future<void> showHelpDialog(BuildContext context) => showDialog<void>(
                 Text('Výkres', style: TextStyle(fontWeight: FontWeight.w600)),
                 SizedBox(height: 10),
                 Text(
-                  'V — výběr\nW — vodič mezi připojovacími body\nH nebo mezerník + tažení — posun\nKolečko — zoom pod kurzorem\nF — celý list do okna\nR — otočit výběr\nDelete — odstranit výběr\nShift + kliknutí — rozšířit výběr',
+                  'V — výběr\nDvojklik nebo F4 — vlastnosti objektu či odkazu\nW — vodič mezi připojovacími body\nH nebo mezerník + tažení — posun\nKolečko — zoom pod kurzorem\nF — protějšek vybraného odkazu nebo odkazu pod myší\nHome — celý list do okna\nR — otočit výběr\nDelete — odstranit výběr\nShift + kliknutí — rozšířit výběr',
                   style: TextStyle(fontSize: 12, height: 1.9),
                 ),
                 SizedBox(height: 20),
@@ -548,7 +660,7 @@ Future<void> showHelpDialog(BuildContext context) => showDialog<void>(
                 ),
                 SizedBox(height: 10),
                 Text(
-                  'Ctrl + S — uložit .oecad\nCtrl + O — otevřít .oecad\nCtrl + Z / Y — vrátit / obnovit\nCtrl + D — duplikovat výběr\nCtrl + K — vyhledat příkaz\nCtrl + L — psát asistentovi',
+                  'Ctrl + S — uložit .oecad\nCtrl + Shift + S — uložit jako\nCtrl + O — otevřít .oecad\nCtrl + Z / Y (Shift Z) — vrátit / obnovit\nHistorie úprav — seznam kroků na liště nebo v paletě\nCtrl + C / V — kopírovat / umístit kopii kliknutím (Esc zruší)\nCtrl + D — nové fyzické kusy z výběru\nCtrl + K — vyhledat příkaz\nCtrl + L — psát asistentovi',
                   style: TextStyle(fontSize: 12, height: 1.9),
                 ),
                 SizedBox(height: 20),

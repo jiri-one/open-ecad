@@ -2,42 +2,72 @@
 import 'dart:convert';
 
 import 'package:ecad_core/ecad_core.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'file_download.dart';
+import 'project_files.dart';
 import 'provider_settings.dart';
-import 'pdf_import.dart';
+
+export 'project_file_types.dart';
 
 class AutosaveTooLargeException implements Exception {
   const AutosaveTooLargeException();
 }
 
-/// The recovery document with the revision last written to [fileName], if
-/// any. Both travel in one stored record so they cannot describe different
-/// documents.
-class WorkingCopy {
-  const WorkingCopy(this.project, {this.savedRevision, this.fileName});
+class LoadedProject {
+  const LoadedProject(this.project, {this.origin, this.fileName});
   final EcadProject project;
+  final DocumentFileHandle? origin;
+  final String? fileName;
+}
+
+class WorkingCopy {
+  const WorkingCopy(
+    this.project, {
+    required this.sessionId,
+    this.savedRevision,
+    this.fileName,
+    this.currentFile,
+  });
+  final EcadProject project;
+  final String sessionId;
   final int? savedRevision;
   final String? fileName;
+  final DocumentFileHandle? currentFile;
 }
 
 EcadProject _decodeProject(String source) =>
     ProjectPersistence().decode(source);
 String _encodeProject(EcadProject project) => jsonEncode(project.toJson());
 
-/// Portable, versioned project files and a single local recovery copy.
-/// Provider settings contain a URL and model name only; never API credentials.
 class ProjectPersistence {
+  ProjectPersistence({ProjectFiles? files})
+    : files = files ?? createProjectFiles();
+  final ProjectFiles files;
   static const autosaveKey = 'open_ecad.autosave.v2';
+  static const recoveryIndexKey = 'open_ecad.recovery.v1.index';
+  static const recoveryPrefix = 'open_ecad.recovery.v1.';
   static const settingsKey = 'open_ecad.ollama.v1';
   static const maxFileBytes = ProjectLimits.maxFileBytes;
   static const maxAutosaveBytes = 2 * 1024 * 1024;
+  static const maxRetainedRecoveryCopies = 10;
 
-  Future<void> _autosaveQueue = Future<void>.value();
-  List<String> pdfImportWarnings = const [];
+  static Future<void> _autosaveQueue = Future<void>.value();
+  static final _openRecoverySessions = <String, int>{};
+
+  void retainRecoverySession(String sessionId) =>
+      _openRecoverySessions.update(sessionId, (n) => n + 1, ifAbsent: () => 1);
+
+  void releaseRecoverySession(String sessionId) {
+    final users = _openRecoverySessions[sessionId];
+    if (users == null) return;
+    if (users == 1) {
+      _openRecoverySessions.remove(sessionId);
+    } else {
+      _openRecoverySessions[sessionId] = users - 1;
+    }
+  }
 
   String encode(EcadProject project) => jsonEncode(project.toJson());
 
@@ -50,58 +80,50 @@ class ProjectPersistence {
     return project;
   }
 
-  Future<EcadProject?> open() async {
-    final file = await openFile(
-      acceptedTypeGroups: const [
-        XTypeGroup(
-          label: 'Open ECAD project',
-          extensions: ['oecad', 'json'],
-          mimeTypes: ['application/json', 'application/octet-stream'],
-        ),
-      ],
-    );
-    if (file == null) return null;
-    if (await file.length() > maxFileBytes) {
-      throw const FormatException('Projekt je větší než povolených 128 MiB.');
-    }
-    return compute(_decodeProject, await file.readAsString());
+  Future<LoadedProject?> pickAndLoad() async {
+    final file = await files.pick();
+    return file == null ? null : _load(file);
   }
 
-  Future<EcadProject?> importPdf() async {
-    pdfImportWarnings = const [];
-    if (kIsWeb) {
-      final converted = await convertPdfToProject('');
-      return compute(_decodeProject, converted.projectJson);
-    }
-    final file = await openFile(
-      acceptedTypeGroups: const [
-        XTypeGroup(
-          label: 'PDF',
-          extensions: ['pdf'],
-          mimeTypes: ['application/pdf'],
-        ),
-      ],
-    );
-    if (file == null) return null;
-    if (await file.length() > maxFileBytes) {
-      throw const FormatException('PDF je větší než povolených 128 MiB.');
-    }
-    final converted = await convertPdfToProject(file.path);
-    pdfImportWarnings = converted.warnings;
-    return compute(_decodeProject, converted.projectJson);
-  }
+  Future<LoadedProject> loadPath(String path) async =>
+      _load(await files.readPath(path));
 
-  Future<String?> save(EcadProject project) async {
+  Future<LoadedProject> _load(ProjectFileData file) async => LoadedProject(
+    await compute(_decodeProject, utf8.decode(file.bytes)),
+    origin: file.origin,
+    fileName: file.origin?.path ?? file.name,
+  );
+
+  Future<SavedProjectFile?> saveTo(
+    EcadProject project,
+    DocumentFileHandle target, {
+    required bool Function() canCommit,
+  }) => _save(project, target: target, canCommit: canCommit);
+
+  Future<SavedProjectFile?> saveAs(
+    EcadProject project, {
+    DocumentFileHandle? currentFile,
+    required bool Function() canCommit,
+  }) => _save(project, currentFile: currentFile, canCommit: canCommit);
+
+  Future<SavedProjectFile?> _save(
+    EcadProject project, {
+    DocumentFileHandle? target,
+    DocumentFileHandle? currentFile,
+    required bool Function() canCommit,
+  }) async {
     final encoded = await compute(_encodeProject, project);
     final bytes = Uint8List.fromList(utf8.encode(encoded));
     if (bytes.length > maxFileBytes) {
       throw const FormatException('Projekt je větší než povolených 128 MiB.');
     }
-    return saveBytes(
+    if (!canCommit()) throw const DocumentOperationSuperseded();
+    return files.save(
       bytes,
-      fileName: '${safeFileName(project.name)}.oecad',
-      mimeType: 'application/json',
-      extension: 'oecad',
+      suggestedName: '${safeFileName(project.name)}.oecad',
+      target: target,
+      currentFile: currentFile,
+      canCommit: canCommit,
     );
   }
 
@@ -117,14 +139,8 @@ class ProjectPersistence {
     extension: extension,
   );
 
-  Future<void> saveAutosave(
-    EcadProject project, {
-    int? savedRevision,
-    String? fileName,
-  }) {
-    // Preference storage has small quotas on browsers. Do not repeatedly
-    // serialize hundreds of thousands of primitives or leave an older recovery
-    // document behind while claiming that a large import was saved.
+  Future<void> saveWorkingCopy(WorkingCopy copy) {
+    final project = copy.project;
     final graphicCount = project.pages.fold<int>(
       0,
       (n, page) => n + page.graphics.length,
@@ -143,56 +159,111 @@ class ProjectPersistence {
         graphicCount > 15000 || payloadChars > maxAutosaveBytes
             ? null
             : jsonEncode({
+              'version': 1,
+              'sessionId': copy.sessionId,
               'project': project.toJson(),
-              if (savedRevision != null) 'savedRevision': savedRevision,
-              if (fileName != null) 'fileName': fileName,
+              if (copy.savedRevision != null)
+                'savedRevision': copy.savedRevision,
+              if (copy.fileName != null) 'fileName': copy.fileName,
+              if (copy.currentFile != null) 'file': copy.currentFile!.toJson(),
             });
     final tooLarge =
         json == null || utf8.encode(json).length > maxAutosaveBytes;
-    // Serializing writes prevents a slower older revision replacing a new one.
+    // Ordered writes keep a slow older snapshot from replacing a newer one.
     final next = _autosaveQueue.then((_) async {
+      if (tooLarge) throw const AutosaveTooLargeException();
       final preferences = await SharedPreferences.getInstance();
-      if (tooLarge) {
-        await preferences.remove(autosaveKey);
-        throw const AutosaveTooLargeException();
-      }
-      if (!await preferences.setString(autosaveKey, json)) {
+      if (!await preferences.setString(
+        '$recoveryPrefix${copy.sessionId}',
+        json,
+      )) {
         throw StateError('Automatické uložení se nezdařilo.');
+      }
+      final ids =
+          <String>{
+            copy.sessionId,
+            ...?preferences.getStringList(recoveryIndexKey),
+          }.toList();
+      // Open documents remain recoverable even when their snapshot is older.
+      final expired =
+          ids
+              .where((id) => !_openRecoverySessions.containsKey(id))
+              .skip(maxRetainedRecoveryCopies)
+              .toSet();
+      ids.removeWhere(expired.contains);
+      if (!await preferences.setStringList(recoveryIndexKey, ids)) {
+        throw StateError('Seznam pracovních kopií se nepodařilo uložit.');
+      }
+      for (final id in expired) {
+        if (!await preferences.remove('$recoveryPrefix$id')) {
+          throw StateError('Starší pracovní kopii se nepodařilo odstranit.');
+        }
       }
     });
     _autosaveQueue = next.catchError((Object _) {});
     return next;
   }
 
-  Future<WorkingCopy?> loadAutosave() async {
+  Future<List<String>> listRecoveryIds() async {
     await _autosaveQueue;
     final preferences = await SharedPreferences.getInstance();
-    final source = preferences.getString(autosaveKey);
-    if (source == null) return null;
+    return List.unmodifiable(preferences.getStringList(recoveryIndexKey) ?? []);
+  }
+
+  Future<WorkingCopy?> loadAutosave({String? sessionId}) async {
+    await _autosaveQueue;
+    final preferences = await SharedPreferences.getInstance();
+    final ids = preferences.getStringList(recoveryIndexKey) ?? [];
+    final id = sessionId ?? (ids.isEmpty ? null : ids.first);
+    if (id == null) {
+      if (preferences.containsKey(autosaveKey)) {
+        throw const FormatException(
+          'Starší pracovní kopie není podporována; zůstala beze změny v místním úložišti.',
+        );
+      }
+      return null;
+    }
+    final source = preferences.getString('$recoveryPrefix$id');
+    if (source == null) throw const FormatException('Pracovní kopie chybí.');
     final record = jsonDecode(source);
-    if (record is! Map<String, dynamic>) {
-      throw const FormatException('Pracovní kopie je poškozená.');
+    if (record is! Map<String, dynamic> ||
+        record['version'] != 1 ||
+        record['sessionId'] != id) {
+      throw const FormatException(
+        'Pracovní kopie je poškozená nebo nepodporovaná.',
+      );
     }
     final project = EcadProject.fromJson(record['project']);
     requireValidProject(project);
     final saved = record['savedRevision'];
     final fileName = record['fileName'];
-    // An impossible marker is dropped: the copy restores as unsaved, never as
-    // falsely saved.
     return WorkingCopy(
       project,
+      sessionId: id,
       savedRevision:
           saved is int && saved >= 0 && saved <= project.revision
               ? saved
               : null,
       fileName: fileName is String ? fileName : null,
+      currentFile:
+          record['file'] == null
+              ? null
+              : DocumentFileHandle.fromJson(record['file']),
     );
   }
 
-  Future<void> clearAutosave() async {
-    await _autosaveQueue;
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.remove(autosaveKey);
+  Future<void> removeWorkingCopy(String sessionId) {
+    final next = _autosaveQueue.then((_) async {
+      final preferences = await SharedPreferences.getInstance();
+      final ids = preferences.getStringList(recoveryIndexKey) ?? [];
+      ids.remove(sessionId);
+      if (!await preferences.setStringList(recoveryIndexKey, ids) ||
+          !await preferences.remove('$recoveryPrefix$sessionId')) {
+        throw StateError('Pracovní kopii se nepodařilo odstranit.');
+      }
+    });
+    _autosaveQueue = next.catchError((Object _) {});
+    return next;
   }
 
   Future<AiProviderSettings?> loadAiSettings() async {

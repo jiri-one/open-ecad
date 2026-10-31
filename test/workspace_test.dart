@@ -1,3 +1,5 @@
+import 'model_fixtures.dart';
+import 'package:open_ecad/widgets/diagnostic_text.dart';
 import 'dart:ui' show SemanticsAction;
 
 import 'package:ecad_core/ecad_core.dart';
@@ -18,7 +20,7 @@ Future<EditorController> mountWorkspace(WidgetTester tester) async {
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final controller = EditorController();
+  final controller = EditorController(initialProject: testDemoProject());
   addTearDown(controller.dispose);
   await tester.pumpWidget(OpenEcadApp(controller: controller));
   await tester.pumpAndSettle();
@@ -39,7 +41,7 @@ void main() {
       for (final appearance in EcadAppearance.values) {
         await app.setAppearance(appearance);
         await tester.pumpAndSettle();
-        for (final tab in ['Listy projektu', 'Přístroje']) {
+        for (final tab in ['Listy', 'Značky', 'Přístroje', 'Artikly']) {
           await tester.tap(find.widgetWithText(Tab, tab));
           await tester.pumpAndSettle();
           expect(find.byType(SchematicCanvas), findsOneWidget);
@@ -74,12 +76,12 @@ void main() {
     app.select({device.id});
     app.setPanel(SidePanel.properties);
     await tester.pumpAndSettle();
-    await tester.enterText(fieldWithLabel('Parametry'), '230 V');
+    await tester.enterText(fieldWithLabel('Popis'), '230 V');
     await tester.ensureVisible(find.text('Použít vlastnosti'));
     await tester.tap(find.text('Použít vlastnosti'));
     await tester.pumpAndSettle();
     final changed = app.selectedDevices.single;
-    expect(changed.rating, '230 V');
+    expect(app.componentFor(changed).description, '230 V');
     expect(changed.position.x, 400.25);
     expect(changed.position.y, 150.75);
     expect(tester.takeException(), isNull);
@@ -107,7 +109,7 @@ void main() {
     await tester.enterText(fieldWithLabel('Označení'), 'Q' * 65);
     await apply();
     expect(app.project.revision, 0);
-    expect(app.status, contains('EcadException'));
+    expect(app.status, contains('dodržte délku textových polí'));
     expect(inline(app.status), findsOneWidget);
 
     await app.sendPrompt('Vlož svorku');
@@ -115,9 +117,12 @@ void main() {
     expect(app.showingProposal, isTrue);
     app.setPanel(SidePanel.properties);
     await tester.pumpAndSettle();
-    await tester.enterText(fieldWithLabel('Parametry'), '16 A');
+    await tester.enterText(fieldWithLabel('Popis'), '16 A');
     await apply();
-    expect(app.selectedDevices.single.rating, device.rating);
+    expect(
+      app.componentFor(app.selectedDevices.single).description,
+      app.componentFor(device).description,
+    );
     expect(inline(app.status), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(milliseconds: 500));
@@ -161,7 +166,10 @@ void main() {
     final app = await mountWorkspace(tester);
     final first = app.project.pages.first;
     final second = app.project.pages[1];
-    final tab = find.text(second.name).last;
+    app.setSheet(second.id);
+    app.setSheet(first.id);
+    await tester.pumpAndSettle();
+    final tab = find.textContaining('· ${second.number} ${second.name}').last;
     await tester.tap(tab);
     await tester.pump(const Duration(milliseconds: 50));
     await tester.tap(tab);
@@ -220,7 +228,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('2 objektů ve výběru'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    await tester.tap(find.text(selected.first.designation));
+    await tester.tap(find.text(app.componentFor(selected.first).designation!));
     await tester.pumpAndSettle();
     expect(app.selectedIds, {selected.first.id});
     expect(tester.takeException(), isNull);
@@ -296,8 +304,24 @@ void main() {
     await tester.pumpAndSettle();
     expect(app.diagnostics, isNotEmpty);
     expect(find.textContaining('Kontrola projektu ·'), findsOneWidget);
-    final diagnostic = app.diagnostics.first;
-    await tester.tap(find.text(diagnostic.message));
+    final diagnostic = app.diagnostics.firstWhere(
+      (d) => d.sheetId != null && d.deviceId != null,
+    );
+    await tester.scrollUntilVisible(
+      find.text(diagnosticText(app.project, diagnostic)),
+      90,
+      scrollable: find.descendant(
+        of: find.byKey(const ValueKey('diagnostics-list')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.drag(
+      find.byKey(const ValueKey('diagnostics-list')),
+      const Offset(0, -50),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(diagnosticText(app.project, diagnostic)));
     await tester.pumpAndSettle();
     expect(app.activeSheetId, diagnostic.sheetId);
     expect(app.selectedIds, contains(diagnostic.deviceId));

@@ -1,3 +1,4 @@
+import 'model_fixtures.dart';
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -21,14 +22,14 @@ final _sheet = Sheet(
   id: 'test',
   name: 'Interaction test',
   number: '01',
-  devices: const [
-    Device(
+  devices: [
+    testBuiltin(
       id: 'q1',
       kind: DeviceKind.breaker,
       designation: '-Q1',
       position: Vec2(400, 300),
     ),
-    Device(
+    testBuiltin(
       id: 'k1',
       kind: DeviceKind.contactor,
       designation: '-K1',
@@ -48,7 +49,7 @@ Future<void> _mount(
   ValueChanged<Set<String>>? selectionChanged,
   ValueChanged<Map<String, Vec2>>? moved,
   void Function(DeviceKind, Vec2)? placed,
-  void Function(TerminalRef, TerminalRef)? connected,
+  void Function(WireEndpoint, WireEndpoint)? connected,
   ValueChanged<String>? deleted,
   SelectionMoveCallback? movedSelection,
   ValueChanged<DrawingElement>? graphicCreated,
@@ -122,7 +123,7 @@ void main() {
   testWidgets('wire tool connects exact terminals and Escape cancels a start', (
     tester,
   ) async {
-    final pairs = <(TerminalRef, TerminalRef)>[];
+    final pairs = <(WireEndpoint, WireEndpoint)>[];
     await _mount(
       tester,
       controller: SchematicViewportController(),
@@ -204,7 +205,7 @@ void main() {
     final sheet = _sheet.copyWith(
       devices: [
         ..._sheet.devices,
-        const Device(
+        testBuiltin(
           id: 'far',
           kind: DeviceKind.lamp,
           designation: '-H1',
@@ -276,7 +277,12 @@ void main() {
         sheet: _sheet.copyWith(showFrame: false, graphics: graphics),
         showGrid: false,
         selectionChanged: (ids) => selection = ids,
-        movedSelection: ({required devices, required graphics}) {
+        movedSelection: ({
+          required devices,
+          required graphics,
+          required markers,
+          required corners,
+        }) {
           commits.add((devices, graphics));
         },
       );

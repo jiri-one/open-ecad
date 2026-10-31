@@ -4,21 +4,21 @@ import 'dart:math' as math;
 
 import 'package:ecad_core/ecad_core.dart';
 import 'package:test/test.dart';
+import 'support.dart';
 
 Matcher _error(String code) =>
     isA<EcadException>().having((error) => error.code, 'code', code);
 
-Device _breaker(int index) => Device(
+Device _breaker(int index) => syntheticDevice(
   id: 'q$index',
   kind: DeviceKind.breaker,
-  designation: '-Q$index',
   position: Vec2(100.0 + index % 20 * 80, 100.0 + index ~/ 20 * 120),
 );
 
 /// Pairs of breakers joined by a wire with a manual bend beside the pair.
 EcadProject _pairs(int count) {
   final devices = List.generate(count, _breaker);
-  return EcadProject(
+  return syntheticProject(
     id: 'batch_project',
     name: 'Dávky',
     pages: [
@@ -137,7 +137,14 @@ void main() {
         (UpdateDevices('missing_sheet', [first]), 'missing_sheet'),
         // The breaker's wired ports do not exist on a coil.
         (
-          UpdateDevices('sheet', [first.copyWith(kind: DeviceKind.coil)]),
+          UpdateDevices('sheet', [
+            first.copyWith(
+              symbol: BuiltinSymbolSpec(
+                kind: DeviceKind.coil,
+                bindings: {'a1': 'terminal_q0_out', 'a2': 'terminal_q0_in'},
+              ),
+            ),
+          ]),
           'invalid_port',
         ),
       ]) {
@@ -246,7 +253,7 @@ void main() {
     test('later commands see earlier ones in the same batch', () {
       final engine = ProjectEngine(_pairs(4));
       final sheet = engine.project.pages.single;
-      final replacement = _breaker(0).copyWith(designation: '-Q100');
+      final replacement = _breaker(0);
       engine.execute([
         AddGraphics('sheet', [_mark('mark', 10)]),
         MoveGraphics('sheet', {'mark': const Vec2(70, 80)}),
@@ -258,14 +265,14 @@ void main() {
         AddWire('sheet', sheet.wires.first),
         MoveDevices('sheet', {'q0': const Vec2(900, 900)}),
         const RenameSheet('sheet', 'První název'),
-        const SetSheetType('sheet', SheetType.form),
+        const SetSheetType('sheet', SheetType.singleLine),
         const RenameSheet('sheet', 'Konečný název'),
       ]);
       final after = engine.project.pages.single;
-      expect((after.name, after.type), ('Konečný název', SheetType.form));
+      expect((after.name, after.type), ('Konečný název', SheetType.singleLine));
       expect(after.graphics.single.position, const Vec2(500, 40));
       expect(after.graphics.single.strokeWidth, 1);
-      expect(after.devices.last.designation, '-Q100');
+      expect(after.devices.last.componentId, 'component_q0');
       expect(after.devices.last.position, const Vec2(900, 900));
       expect(after.devices.map((device) => device.id), [
         'q1',
@@ -318,7 +325,7 @@ void main() {
         ),
       );
 
-      final twin = _breaker(7);
+      final twin = _breaker(0).copyWith(id: 'q7');
       Sheet repeated() => Sheet(
         id: 'sheet_added',
         name: 'Přidaný',
@@ -340,7 +347,7 @@ void main() {
       );
       engine.execute([
         AddSheet(repeated()),
-        AddDevice('sheet_added', _breaker(8)),
+        AddDevice('sheet_added', _breaker(0).copyWith(id: 'q8')),
         MoveDevices('sheet_added', {'q7': const Vec2(300, 300)}),
         MoveGraphics('sheet_added', {'mark_twin': const Vec2(5, 5)}),
         DeleteDevices('sheet_added', {'q7'}),
@@ -469,7 +476,7 @@ EcadCommand _randomCommand(
       final id = random.nextBool() ? 'q${random.nextInt(40)}' : 'n${serial()}';
       return AddDevice(
         sheet.id,
-        Device(id: id, kind: kind, designation: '-N$id', position: point()),
+        syntheticDevice(id: id, kind: kind, position: point()),
       );
     case 4 when devices.isNotEmpty:
       return DeleteDevices(sheet.id, {pick(devices).id});
@@ -482,11 +489,11 @@ EcadCommand _randomCommand(
           id: 'w${serial()}',
           from: TerminalRef(
             deviceId: a.id,
-            portId: pick(definitionFor(a.kind).ports).id,
+            portId: pick(geometryFor(a).ports).id,
           ),
           to: TerminalRef(
             deviceId: b.id,
-            portId: pick(definitionFor(b.kind).ports).id,
+            portId: pick(geometryFor(b).ports).id,
           ),
           waypoints: [
             if (random.nextBool()) point(),
