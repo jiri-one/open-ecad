@@ -1,10 +1,13 @@
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../app/controller.dart';
 import '../app/workspace_controller.dart';
+import '../services/sheet_navigation.dart';
+import '../services/keyboard_shortcuts.dart';
 import 'inventory.dart';
 import 'structure_tree.dart';
-import 'sheet_settings.dart';
+import 'sheet_context_menu.dart';
 import '../app/theme.dart';
 import '../editor/schematic_canvas.dart';
 import 'components.dart';
@@ -18,8 +21,10 @@ class ProjectPanel extends StatefulWidget {
     required this.onAddSheet,
     this.workspace,
     this.onCloseProject,
+    this.shortcuts = const KeyboardShortcuts.defaults(),
   });
   final EditorController controller;
+  final KeyboardShortcuts shortcuts;
   final WorkspaceController? workspace;
   final ValueChanged<EditorController>? onCloseProject;
   final VoidCallback onRenameSheet;
@@ -156,6 +161,9 @@ class _ProjectPanelState extends State<ProjectPanel> {
                 ),
                 children: [
                   StructureTree<Sheet>(
+                    initialFirst:
+                        widget.workspace?.sheetNavigationAspect(doc) ??
+                        StructureAspect.function,
                     items:
                         doc.project.pages
                             .where(
@@ -167,16 +175,12 @@ class _ProjectPanelState extends State<ProjectPanel> {
                             )
                             .toList(),
                     contextFor: (s) => s.structure,
-                    compare: (a, b) {
-                      final left = fullPageDesignation(a),
-                          right = fullPageDesignation(b);
-                      final n = naturalCompare(left, right);
-                      return n != 0
-                          ? n
-                          : left != right
-                          ? left.compareTo(right)
-                          : a.id.compareTo(b.id);
-                    },
+                    compare: compareSheetDesignations,
+                    onFirstChanged:
+                        (aspect) => widget.workspace?.setSheetNavigationAspect(
+                          doc,
+                          aspect,
+                        ),
                     onRename:
                         (aspect, path) => renameStructureBranchDialog(
                           context,
@@ -185,30 +189,50 @@ class _ProjectPanelState extends State<ProjectPanel> {
                           path,
                         ),
                     leaf:
-                        (sheet) => ListTile(
-                          dense: true,
-                          selected: doc == app && sheet.id == app.activeSheetId,
-                          leading: Icon(sheetTypeIcon(sheet.type), size: 16),
-                          title: Text(
-                            '${fullPageDesignation(sheet)} · ${sheet.name}',
-                            style: const TextStyle(fontSize: 11),
+                        (sheet) => SheetContextMenu(
+                          controller: doc,
+                          sheet: sheet,
+                          workspace: widget.workspace,
+                          onRenameSheet: widget.onRenameSheet,
+                          child: ListTile(
+                            dense: true,
+                            selected:
+                                doc == app && sheet.id == app.activeSheetId,
+                            leading: Icon(sheetTypeIcon(sheet.type), size: 16),
+                            title: Text(
+                              '${fullPageDesignation(sheet)} · ${sheet.name}',
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                            subtitle: Text(
+                              sheet.type.label,
+                              style: const TextStyle(fontSize: 9),
+                            ),
+                            onTap:
+                                () =>
+                                    widget.workspace == null
+                                        ? app.setSheet(sheet.id)
+                                        : widget.workspace!.openSheet(
+                                          doc,
+                                          sheet.id,
+                                          newTab:
+                                              HardwareKeyboard
+                                                  .instance
+                                                  .isControlPressed ||
+                                              HardwareKeyboard
+                                                  .instance
+                                                  .isMetaPressed,
+                                        ),
+                            trailing: SheetContextMenu(
+                              controller: doc,
+                              sheet: sheet,
+                              workspace: widget.workspace,
+                              onRenameSheet: widget.onRenameSheet,
+                              tooltip:
+                                  doc == app && sheet.id == app.activeSheetId
+                                      ? 'Vlastnosti listu'
+                                      : null,
+                            ),
                           ),
-                          subtitle: Text(
-                            sheet.type.label,
-                            style: const TextStyle(fontSize: 9),
-                          ),
-                          onTap:
-                              () =>
-                                  widget.workspace == null
-                                      ? app.setSheet(sheet.id)
-                                      : widget.workspace!.openSheet(
-                                        doc,
-                                        sheet.id,
-                                      ),
-                          trailing:
-                              doc == app && sheet.id == app.activeSheetId
-                                  ? _sheetMenu(app, c)
-                                  : null,
                         ),
                   ),
                 ],
@@ -218,55 +242,6 @@ class _ProjectPanelState extends State<ProjectPanel> {
       ),
     ],
   );
-
-  Widget _sheetMenu(EditorController app, EcadColors c) =>
-      PopupMenuButton<String>(
-        tooltip: 'Vlastnosti listu',
-        onSelected: (value) {
-          if (value == 'rename') {
-            widget.onRenameSheet();
-          } else if (value == 'settings') {
-            editSheetSettings(context, app);
-          } else if (value == 'up') {
-            app.reorderSheet(-1);
-          } else if (value == 'down') {
-            app.reorderSheet(1);
-          } else if (value == 'delete') {
-            confirmDeleteSheet(context, app);
-          } else {
-            app.setSheetType(SheetType.values.byName(value));
-          }
-        },
-        itemBuilder:
-            (_) => [
-              const PopupMenuItem(
-                value: 'rename',
-                child: Text('Přejmenovat list…'),
-              ),
-              const PopupMenuItem(
-                value: 'settings',
-                child: Text('Číslo, papír a vlastnosti…'),
-              ),
-              const PopupMenuItem(value: 'up', child: Text('Posunout výše')),
-              const PopupMenuItem(value: 'down', child: Text('Posunout níže')),
-              PopupMenuItem(
-                value: 'delete',
-                enabled: app.project.pages.length > 1,
-                child: const Text('Odstranit list…'),
-              ),
-              const PopupMenuDivider(),
-              for (final type in SheetType.values)
-                CheckedPopupMenuItem(
-                  value: type.name,
-                  checked: app.sheet.type == type,
-                  child: Text(type.label),
-                ),
-            ],
-        child: Padding(
-          padding: const EdgeInsets.all(3),
-          child: Icon(Icons.more_vert, size: 16, color: c.foreground),
-        ),
-      );
 
   Widget _buildLibrary(EditorController app, EcadColors c) {
     final kinds =
@@ -404,7 +379,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
               const SizedBox(width: 9),
               Expanded(
                 child: Text(
-                  'Značka vytvoří nový fyzický kus. Další zobrazení existujícího kusu přidejte přes Přístroje. PE je pokračování bez kusu. Esc ukončí vkládání.',
+                  'Značka vytvoří nový fyzický kus. Další zobrazení existujícího kusu přidejte přes Přístroje. PE je pokračování bez kusu. ${widget.shortcuts.labelFor(EditorCommand.cancelTool)} ukončí vkládání.',
                   style: TextStyle(fontSize: 10, color: c.muted, height: 1.6),
                 ),
               ),

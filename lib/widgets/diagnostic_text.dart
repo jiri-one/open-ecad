@@ -85,6 +85,8 @@ String diagnosticCodeText(String code, String fallback) => switch (code) {
     'Konec vodiče odkazuje na neexistující pokračování na listu.',
   'invalid_corner_endpoint' =>
     'Konec vodiče odkazuje na neexistující port spojovacího rohu.',
+  'corner_clearance' =>
+    'Rameno spojovacího rohu se nevejde před konec vodiče nebo zalomení. Posuňte roh dále.',
   'wire_waypoints_bypassed' =>
     'Trasa obchází některé ruční body kvůli poloze vývodů; uložené body zůstaly zachovány.',
   'duplicate_connection' => 'Tyto koncové body již spojuje vodič.',

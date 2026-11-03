@@ -170,6 +170,8 @@ void main() {
     app.setSheet(first.id);
     await tester.pumpAndSettle();
     final tab = find.textContaining('· ${second.number} ${second.name}').last;
+    await tester.ensureVisible(tab);
+    await tester.pumpAndSettle();
     await tester.tap(tab);
     await tester.pump(const Duration(milliseconds: 50));
     await tester.tap(tab);

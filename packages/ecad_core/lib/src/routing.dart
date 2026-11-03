@@ -50,7 +50,9 @@ class WireTerminal {
 abstract final class WireRouter {
   /// Preferred distance from a terminal or symbol body before a turn.
   static const clearance = 10.0;
-  static const _epsilon = 0.01;
+  // Shorter runs collapse during routing.
+  static const tolerance = 0.01;
+  static const _epsilon = tolerance;
   static const _grid = 10.0;
   static const _maxBends = 4;
 

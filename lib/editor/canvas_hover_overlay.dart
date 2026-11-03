@@ -1,0 +1,292 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui' show ViewFocusEvent, ViewFocusState;
+
+import 'package:flutter/material.dart';
+
+import '../services/canvas_hover_info.dart';
+
+class CanvasHoverOverlay extends StatefulWidget {
+  const CanvasHoverOverlay({
+    super.key,
+    required this.child,
+    required this.info,
+    required this.localPosition,
+    required this.contextIdentity,
+    this.active = true,
+    this.suppressed = false,
+    this.delay = const Duration(milliseconds: 350),
+    this.maxWidth = 320,
+    this.maxLines = 5,
+    this.avoidRect,
+  }) : assert(delay >= Duration.zero),
+       assert(maxLines > 0),
+       assert(maxWidth > 0 && maxWidth < double.infinity);
+
+  final Widget child;
+  final CanvasHoverInfo? info;
+  final Offset? localPosition;
+  final Object contextIdentity;
+  final bool active;
+  final bool suppressed;
+  final Duration delay;
+  final double maxWidth;
+  final int maxLines;
+  final Rect? avoidRect;
+
+  @override
+  State<CanvasHoverOverlay> createState() => _CanvasHoverOverlayState();
+}
+
+class _CanvasHoverOverlayState extends State<CanvasHoverOverlay>
+    with WidgetsBindingObserver {
+  Timer? _timer;
+  bool _visible = false;
+  bool _appActive = true, _viewFocused = true, _routeActive = true;
+  bool _dismissed = false;
+
+  bool _eligible(CanvasHoverOverlay value) =>
+      !_dismissed &&
+      _appActive &&
+      _viewFocused &&
+      _routeActive &&
+      value.active &&
+      !value.suppressed &&
+      value.info != null &&
+      value.localPosition != null &&
+      value.localPosition!.dx.isFinite &&
+      value.localPosition!.dy.isFinite &&
+      value.localPosition!.dx >= 0 &&
+      value.localPosition!.dy >= 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _appActive = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    _restart();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final active =
+        TickerMode.valuesOf(context).enabled &&
+        ModalRoute.isCurrentOf(context) != false;
+    if (_routeActive != active) {
+      _routeActive = active;
+      if (!active) _dismissed = true;
+      _restart();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    setState(() {
+      _appActive = state == AppLifecycleState.resumed;
+      _dismissed = true;
+      _restart();
+    });
+  }
+
+  @override
+  void didChangeViewFocus(ViewFocusEvent event) {
+    if (event.viewId != View.of(context).viewId) return;
+    setState(() {
+      _viewFocused = event.state == ViewFocusState.focused;
+      _dismissed = true;
+      _restart();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant CanvasHoverOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final wasDismissed = _dismissed;
+    if (widget.localPosition != oldWidget.localPosition ||
+        widget.info?.targetIdentity != oldWidget.info?.targetIdentity) {
+      _dismissed = false;
+    }
+    if (wasDismissed != _dismissed ||
+        !_eligible(widget) ||
+        !_eligible(oldWidget) ||
+        !identical(widget.contextIdentity, oldWidget.contextIdentity) ||
+        !identical(widget.info?.project, oldWidget.info?.project) ||
+        widget.info?.sheetId != oldWidget.info?.sheetId ||
+        widget.info?.targetIdentity != oldWidget.info?.targetIdentity ||
+        widget.info?.tooltip != oldWidget.info?.tooltip ||
+        widget.delay != oldWidget.delay) {
+      _restart();
+    }
+  }
+
+  void _restart() {
+    _timer?.cancel();
+    _timer = null;
+    _visible = false;
+    if (!_eligible(widget)) return;
+    _timer = Timer(widget.delay, () {
+      _timer = null;
+      if (mounted && _eligible(widget)) setState(() => _visible = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    fit: StackFit.passthrough,
+    children: [
+      widget.child,
+      if (_visible && _eligible(widget))
+        Positioned.fill(
+          child: IgnorePointer(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final size = constraints.biggest;
+                final position = widget.localPosition!;
+                if (!size.isFinite ||
+                    size.width < 80 ||
+                    size.height < 48 ||
+                    !(Offset.zero & size).contains(position)) {
+                  return const SizedBox.shrink();
+                }
+                return CustomSingleChildLayout(
+                  delegate: _BubbleLayout(
+                    position: position,
+                    maxWidth: widget.maxWidth,
+                    maxHeight: math.max(180.0, widget.maxLines * 18.0 + 14),
+                    avoidRect: widget.avoidRect,
+                  ),
+                  child: _Bubble(info: widget.info!, maxLines: widget.maxLines),
+                );
+              },
+            ),
+          ),
+        ),
+    ],
+  );
+}
+
+class _Bubble extends StatelessWidget {
+  const _Bubble({required this.info, required this.maxLines});
+
+  final CanvasHoverInfo info;
+  final int maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: info.semanticsLabel,
+      child: ExcludeSemantics(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colors.inverseSurface,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            child: Text.rich(
+              TextSpan(
+                text: info.label,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+                children: [
+                  if (info.detail.isNotEmpty)
+                    TextSpan(
+                      text: '\n${info.detail}',
+                      style: const TextStyle(fontWeight: FontWeight.normal),
+                    ),
+                ],
+              ),
+              style: (theme.textTheme.bodySmall ?? const TextStyle()).copyWith(
+                color: colors.onInverseSurface,
+                fontSize: 12,
+                height: 1.3,
+              ),
+              maxLines: maxLines,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BubbleLayout extends SingleChildLayoutDelegate {
+  _BubbleLayout({
+    required this.position,
+    required this.maxWidth,
+    required this.maxHeight,
+    required this.avoidRect,
+  });
+
+  final Offset position;
+  final double maxWidth;
+  final Rect? avoidRect;
+  final double maxHeight;
+  static const _margin = 8.0;
+  static const _gap = 18.0;
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) =>
+      BoxConstraints.loose(
+        Size(
+          math.min(maxWidth, math.max(0, constraints.maxWidth - 2 * _margin)),
+          math.min(maxHeight, math.max(0, constraints.maxHeight - 2 * _margin)),
+        ),
+      );
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) {
+    final candidates = [
+      position + const Offset(_gap, _gap),
+      position + Offset(_gap, -_gap - childSize.height),
+      position + Offset(-_gap - childSize.width, _gap),
+      position + Offset(-_gap - childSize.width, -_gap - childSize.height),
+    ].map(
+      (candidate) => Offset(
+        candidate.dx.clamp(_margin, size.width - childSize.width - _margin),
+        candidate.dy.clamp(_margin, size.height - childSize.height - _margin),
+      ),
+    );
+    final pointerArea = Rect.fromCircle(center: position, radius: 10);
+    var best = candidates.first;
+    var bestOverlap = double.infinity;
+    for (final candidate in candidates) {
+      final bubble = candidate & childSize;
+      final overlap =
+          _overlap(bubble, pointerArea) +
+          (avoidRect == null ? 0 : _overlap(bubble, avoidRect!.inflate(4)));
+      if (overlap < bestOverlap) {
+        best = candidate;
+        bestOverlap = overlap;
+      }
+      if (overlap == 0) break;
+    }
+    return best;
+  }
+
+  static double _overlap(Rect a, Rect b) {
+    final intersection = a.intersect(b);
+    return intersection.isEmpty ? 0 : intersection.width * intersection.height;
+  }
+
+  @override
+  bool shouldRelayout(_BubbleLayout oldDelegate) =>
+      oldDelegate.position != position ||
+      oldDelegate.maxWidth != maxWidth ||
+      oldDelegate.maxHeight != maxHeight ||
+      oldDelegate.avoidRect != avoidRect;
+}

@@ -129,6 +129,12 @@ navíc podléhá pravidlům pro CORS a HTTP/HTTPS; povolení konkrétního půvo
 
 ## Klávesnice
 
+Zkratky se mění přes **Nastavení programu → Klávesové zkratky…**. Příkaz
+může mít více zkratek nebo žádnou; kolize je nutné vyřešit před uložením.
+Nastavení platí pro všechny projekty, uchovává se po restartu a lze obnovit
+výchozí hodnoty. Popisky nástrojů, paleta příkazů a nápověda ukazují aktuální
+zkratky. Následující tabulka uvádí výchozí nastavení.
+
 | Zkratka | Akce |
 | --- | --- |
 | Ctrl/Cmd + K | Paleta příkazů |
@@ -143,10 +149,24 @@ navíc podléhá pravidlům pro CORS a HTTP/HTTPS; povolení konkrétního půvo
 | Dvojklik / F4 | Vlastnosti přístroje, odkazu, grafiky nebo spojovacího rohu |
 | F | Přejít na protějšek vybraného odkazu nebo odkazu pod myší |
 | Home | Přizpůsobit celý list oknu |
+| PgUp / PgDown | Předchozí / následující list aktivního projektu v pořadí stromu |
 | Esc | Ukončit vkládání, spojování nebo náhled; návrh asistenta zůstane k použití |
 | Kolečko | Zoom kolem ukazatele |
 | Prostřední/pravé tlačítko, případně mezerník + tažení | Posun plochy |
 | Enter / Shift + Enter v asistentovi | Odeslat / nový řádek |
+
+Pravý klik na list ve stromu nebo na horní tab otevře nabídku pro otevření,
+otevření v novém tabu, přejmenování a vlastnosti listu. Stejná nabídka je
+dostupná přes tři tečky u každého listu. Běžný klik používá aktuální tab;
+**Ctrl/Cmd + kliknutí** otevře další tab. Přecházení po listech nevytváří nové
+taby a na prvním nebo posledním listu se zastaví. Při psaní do pole nebo
+rozpracovaném tažení se listy klávesnicí nepřepínají.
+
+Najetí na přístroj ve schématu nebo výstavbě zobrazí informační bublinu
+s označením, popisem a dostupnými údaji artiklu. Při kreslení a tažení se
+bublina skryje. Vložení spojovacího rohu do existujícího ručního vodiče
+přeruší původní průchozí spoj a zachová pouze návaznosti ve směrech ramen
+rohu. Vložení i přepojení se vrací společně jedním krokem undo.
 
 ## Kopírování a historie úprav
 

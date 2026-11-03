@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'package:ecad_core/ecad_core.dart';
 
+import 'canvas_hover_info.dart';
+
 class WireHoverEndpointInfo {
   const WireHoverEndpointInfo({required this.label, this.detail});
 
@@ -23,7 +25,7 @@ typedef WireHoverWireResolver =
       required String wireId,
     });
 
-class WireHoverInfo {
+class WireHoverInfo implements CanvasHoverInfo {
   const WireHoverInfo({
     required this.project,
     required this.sheetId,
@@ -32,21 +34,30 @@ class WireHoverInfo {
     required this.to,
   });
 
+  @override
   final EcadProject project;
+  @override
   final String sheetId;
   final String wireId;
   final WireHoverEndpointInfo from;
   final WireHoverEndpointInfo to;
 
+  @override
+  Object get targetIdentity => ('wire', wireId);
+
+  @override
   String get label => '${from.label} → ${to.label}';
 
+  @override
   String get detail => [
     if (_text(from.detail) case final text?) 'Odkud: $text',
     if (_text(to.detail) case final text?) 'Kam: $text',
   ].join('\n');
 
+  @override
   String get tooltip => [label, if (detail.isNotEmpty) detail].join('\n');
 
+  @override
   String get semanticsLabel => [
     'Spoj z ${from.label} do ${to.label}.',
     if (detail.isNotEmpty) detail,

@@ -1,6 +1,7 @@
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
 import '../app/controller.dart';
+import '../services/keyboard_shortcuts.dart';
 import '../app/theme.dart';
 import '../editor/schematic_canvas.dart';
 import 'graphic_inspector.dart';
@@ -63,8 +64,10 @@ class PropertiesPanel extends StatelessWidget {
     this.onAddContinuation,
     this.onAddContinuationPeer,
     this.onFollowContinuation,
+    this.shortcuts = const KeyboardShortcuts.defaults(),
   });
   final EditorController controller;
+  final KeyboardShortcuts shortcuts;
   final ValueChanged<String>? onEditContinuation, onAddContinuationPeer;
   final VoidCallback? onAddContinuation;
   final void Function(String, ContinuationTarget?)? onFollowContinuation;
@@ -100,7 +103,9 @@ class PropertiesPanel extends StatelessWidget {
                 onFollowContinuation == null
                     ? null
                     : () => onFollowContinuation!(marker.id, null),
-            child: const Text('Přejít na protějšek · F'),
+            child: Text(
+              'Přejít na protějšek${shortcuts.labelFor(EditorCommand.followContinuation).isEmpty ? '' : ' · ${shortcuts.labelFor(EditorCommand.followContinuation)}'}',
+            ),
           ),
           OutlinedButton(
             onPressed:

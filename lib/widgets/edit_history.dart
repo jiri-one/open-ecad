@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
+import '../services/keyboard_shortcuts.dart';
 
 Future<void> showEditHistoryDialog({
   required BuildContext context,
@@ -9,6 +10,7 @@ Future<void> showEditHistoryDialog({
   required ValueChanged<int> onUndoSteps,
   required ValueChanged<int> onRedoSteps,
   int historyLimit = 100,
+  KeyboardShortcuts shortcuts = const KeyboardShortcuts.defaults(),
 }) {
   final undo = List<EditHistoryEntry>.unmodifiable(undoHistory);
   final redo = List<EditHistoryEntry>.unmodifiable(redoHistory);
@@ -33,6 +35,7 @@ Future<void> showEditHistoryDialog({
             undoHistory: undo,
             redoHistory: redo,
             historyLimit: historyLimit,
+            shortcuts: shortcuts,
             onUndoSteps: (count) => choose(count, onUndoSteps),
             onRedoSteps: (count) => choose(count, onRedoSteps),
           ),
@@ -56,6 +59,7 @@ class EditHistoryView extends StatelessWidget {
     this.onUndoSteps,
     this.onRedoSteps,
     this.historyLimit = 100,
+    this.shortcuts = const KeyboardShortcuts.defaults(),
   });
 
   final List<EditHistoryEntry> undoHistory;
@@ -63,6 +67,7 @@ class EditHistoryView extends StatelessWidget {
   final ValueChanged<int>? onUndoSteps;
   final ValueChanged<int>? onRedoSteps;
   final int historyLimit;
+  final KeyboardShortcuts shortcuts;
 
   @override
   Widget build(BuildContext context) {
@@ -107,11 +112,25 @@ class EditHistoryView extends StatelessWidget {
           builder: (context, constraints) {
             final undo = _HistorySection(
               undo: true,
+              shortcut:
+                  shortcuts
+                      .bindings(EditorCommand.undo)
+                      .firstOrNull
+                      ?.label
+                      .replaceAll(' ', '+') ??
+                  '',
               entries: undoHistory,
               onSteps: onUndoSteps,
             );
             final redo = _HistorySection(
               undo: false,
+              shortcut:
+                  shortcuts
+                      .bindings(EditorCommand.redo)
+                      .firstOrNull
+                      ?.label
+                      .replaceAll(' ', '+') ??
+                  '',
               entries: redoHistory,
               onSteps: onRedoSteps,
             );
@@ -148,9 +167,11 @@ class _HistorySection extends StatefulWidget {
     required this.undo,
     required this.entries,
     required this.onSteps,
+    required this.shortcut,
   });
 
   final bool undo;
+  final String shortcut;
   final List<EditHistoryEntry> entries;
   final ValueChanged<int>? onSteps;
 
@@ -174,7 +195,7 @@ class _HistorySectionState extends State<_HistorySection> {
     final onSteps = widget.onSteps;
     final empty = undo ? 'Není co vrátit.' : 'Není co obnovit.';
     final verb = undo ? 'Vrátit' : 'Obnovit';
-    final shortcut = undo ? 'Ctrl+Z' : 'Ctrl+Y';
+    final shortcut = widget.shortcut.isEmpty ? '' : ' (${widget.shortcut})';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -189,8 +210,8 @@ class _HistorySectionState extends State<_HistorySection> {
             IconButton(
               tooltip:
                   entries.isEmpty
-                      ? '$empty ($shortcut)'
-                      : '$verb: ${_label(entries.first)} ($shortcut)',
+                      ? '$empty$shortcut'
+                      : '$verb: ${_label(entries.first)}$shortcut',
               onPressed:
                   entries.isEmpty || onSteps == null
                       ? null

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'commands.dart';
+import 'corner_wiring.dart';
 import 'autoconnect.dart';
 import 'catalog.dart';
 import 'edit_history.dart';
@@ -260,6 +261,7 @@ class _Draft {
           command.corner,
           command.corner.id,
         );
+        _sheet(command.sheetId).insertCorner(command.corner);
       case UpdateConnectionCorner():
         _sheet(command.sheetId).changeCorner(command.corner);
       case DeleteConnectionCorner():
@@ -281,8 +283,22 @@ class _Draft {
       case UpdateWire():
         _sheet(command.sheetId).updateWire(command.wire);
       case UpdateSheet():
-        _sheet(command.sheet.id);
-        _pages[_pageIndex[command.sheet.id]!] = command.sheet;
+        final before = {
+          for (final corner in _sheet(command.sheet.id).corners.toList())
+            corner.id: corner,
+        };
+        var replacement = command.sheet;
+        for (final corner in command.sheet.corners) {
+          final previous = before[corner.id];
+          if (previous == null ||
+              previous.position != corner.position ||
+              previous.orientation != corner.orientation) {
+            replacement = replacement.copyWith(
+              wires: insertCornerIntoWires(replacement, corner),
+            );
+          }
+        }
+        _pages[_pageIndex[command.sheet.id]!] = replacement;
         _edited.remove(_pageIndex[command.sheet.id]);
       case DeleteSheet():
         _sheet(command.sheetId);
@@ -727,6 +743,20 @@ class _SheetDraft {
         ),
       );
     }
+    insertCorner(corner);
+  }
+
+  void insertCorner(ConnectionCorner corner) {
+    final previous = wires.toList();
+    final next = insertCornerIntoWires(build(), corner);
+    if (previous.length == next.length &&
+        previous.indexed.every(
+          (entry) => identical(entry.$2, next[entry.$1]),
+        )) {
+      return;
+    }
+    _wires = _Items(next, (wire) => wire.id);
+    _wiresByDevice = null;
   }
 
   void deleteDevices(Iterable<String> ids) {

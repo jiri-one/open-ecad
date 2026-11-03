@@ -11,7 +11,10 @@ import 'drawing_graphics.dart';
 import 'drawing_cursor.dart';
 import 'terminal_symbol_painter.dart';
 import 'wire_hover_overlay.dart';
+import 'canvas_hover_overlay.dart';
+import '../services/device_hover_info.dart';
 import '../services/wire_route_description.dart';
+import '../services/keyboard_shortcuts.dart';
 import '../services/schematic_annotations.dart';
 import '../services/pointer_warp.dart';
 import '../services/schematic_clipboard.dart';
@@ -72,7 +75,9 @@ class SchematicViewportController extends ChangeNotifier {
   double get zoom => _zoom;
   int get visiblePrimitiveCount => _visiblePrimitiveCount;
   int get totalPrimitiveCount => _totalPrimitiveCount;
-  bool get hasActiveGesture => _canvas?._hasActiveGesture ?? false;
+  bool get hasActiveGesture =>
+      (_externalHasActiveGesture?.call() ?? false) ||
+      (_canvas?._hasActiveGesture ?? false);
   bool get canInteract => _canvas?._canInteract ?? false;
   String? get hoveredContinuationId {
     return _canvas?._hoveredContinuationId;
@@ -158,14 +163,17 @@ class SchematicViewportController extends ChangeNotifier {
   Object? _navigationOwner;
   VoidCallback? _externalFit;
   ValueChanged<double>? _externalZoom;
+  bool Function()? _externalHasActiveGesture;
   void bindNavigation(
     Object owner, {
     required VoidCallback fit,
     required ValueChanged<double> zoom,
+    bool Function()? hasActiveGesture,
   }) {
     _navigationOwner = owner;
     _externalFit = fit;
     _externalZoom = zoom;
+    _externalHasActiveGesture = hasActiveGesture;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_navigationOwner == owner) _update(1, 0, 0);
     });
@@ -176,6 +184,7 @@ class SchematicViewportController extends ChangeNotifier {
     _navigationOwner = null;
     _externalFit = null;
     _externalZoom = null;
+    _externalHasActiveGesture = null;
   }
 
   void reportZoom(double zoom) => _update(zoom, 0, 0);
@@ -257,6 +266,7 @@ class SchematicCanvas extends StatefulWidget {
     this.onPlaceCorner,
     this.documentIdentity,
     this.readOnly = false,
+    this.shortcuts = const KeyboardShortcuts.defaults(),
   });
 
   final ClipboardPlacement? pastePreview;
@@ -271,6 +281,7 @@ class SchematicCanvas extends StatefulWidget {
   final ValueChanged<Vec2>? onPlaceCorner;
   final Object? documentIdentity;
   final bool readOnly;
+  final KeyboardShortcuts shortcuts;
   final bool showGrid;
   final CanvasPalette palette;
   final SchematicViewportController controller;
@@ -306,7 +317,8 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   Offset _pan = Offset.zero;
   double _zoom = 1;
   bool _initialFit = false;
-  bool _spacePressed = false;
+  bool _temporaryPanPressed = false;
+  LogicalKeyboardKey? _temporaryPanKey;
   bool _statsScheduled = false;
   int? _activePointer;
   _DragKind _drag = _DragKind.none;
@@ -325,6 +337,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   String? _hoverDevice;
   String? _selectedWire;
   String? _hoverWire;
+  String? _hoverInfoDevice;
   Offset? _hoverLocal;
   double _panZoomStartScale = 1;
   DrawingElement? _drawingPreview;
@@ -337,7 +350,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       _activePointer != null ||
       _drag != _DragKind.none ||
       _wireStart != null ||
-      _spacePressed ||
+      _temporaryPanPressed ||
       _panZoomActive;
   bool get _canInteract =>
       !widget.readOnly &&
@@ -380,13 +393,14 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       ...?preview?.pages.single.graphics,
     ]);
     widget.controller._canvas = this;
+    FocusManager.instance.addListener(_dismissHover);
   }
 
   @override
   void didUpdateWidget(covariant SchematicCanvas oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.sheet.id != widget.sheet.id ||
-        oldWidget.documentIdentity != widget.documentIdentity ||
+        !identical(oldWidget.documentIdentity, widget.documentIdentity) ||
         oldWidget.controller != widget.controller ||
         oldWidget.project?.id != widget.project?.id) {
       _cancelGesture();
@@ -405,13 +419,13 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
         ...?preview?.pages.single.graphics,
       ]);
       _lastDeviceTap = null;
-      _clearWireHover();
+      _clearHover();
     }
 
     if (!identical(oldWidget.sheet, widget.sheet) ||
         !identical(oldWidget.project, widget.project)) {
       _continuationFocus = null;
-      _clearWireHover();
+      _clearHover();
       _scene.dispose();
       _scene = _Scene(widget.sheet, widget.project);
       _images.update(widget.sheet.graphics);
@@ -442,7 +456,8 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     if (oldWidget.mode != widget.mode ||
         oldWidget.readOnly != widget.readOnly ||
         oldWidget.placingKind != widget.placingKind ||
-        oldWidget.cornerOrientation != widget.cornerOrientation) {
+        oldWidget.cornerOrientation != widget.cornerOrientation ||
+        oldWidget.shortcuts != widget.shortcuts) {
       _cancelGesture();
     }
     if (oldWidget.controller != widget.controller) {
@@ -454,6 +469,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
 
   @override
   void dispose() {
+    FocusManager.instance.removeListener(_dismissHover);
     _cancelGesture();
     if (widget.controller._canvas == this) widget.controller._canvas = null;
     _focus.dispose();
@@ -551,7 +567,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   }
 
   void _fit({bool rebuild = true}) {
-    _clearWireHover();
+    _clearHover();
     if (_viewport.isEmpty) return;
     void update() {
       const gutter = 60.0;
@@ -591,7 +607,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   }
 
   void _reset() {
-    _clearWireHover();
+    _clearHover();
     if (_viewport.isEmpty) return;
     setState(() {
       _zoom = 1;
@@ -604,11 +620,11 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   }
 
   void _zoomAt(Offset anchor, double factor) {
-    _clearWireHover();
+    _clearHover();
     final world = _toWorld(anchor);
     final next = (_zoom * factor).clamp(0.15, 3.5);
     if (next == _zoom) {
-      setState(_clearWireHover);
+      setState(_clearHover);
       return;
     }
     setState(() {
@@ -618,8 +634,13 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     _scheduleStats();
   }
 
-  void _clearWireHover() {
+  void _dismissHover() {
+    if (mounted && _hoverLocal != null) setState(_clearHover);
+  }
+
+  void _clearHover() {
     _hoverWire = null;
+    _hoverInfoDevice = null;
     _hoverLocal = null;
   }
 
@@ -628,7 +649,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     _panZoomActive = false;
     _lastDeviceTap = null;
     _tapDevice = null;
-    _clearWireHover();
+    _clearHover();
     _activePointer = null;
     _drag = _DragKind.none;
     _marquee = null;
@@ -644,7 +665,8 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     _panOrigin = null;
     _pointerWorld = null;
     _hoverDevice = null;
-    _spacePressed = false;
+    _temporaryPanPressed = false;
+    _temporaryPanKey = null;
   }
 
   WireEndpoint? _portAt(Offset point) {
@@ -818,7 +840,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     if (_activePointer != null) return;
     _continuationFocus = null;
     _tapDevice = null;
-    setState(_clearWireHover);
+    setState(_clearHover);
     _focus.requestFocus();
     final world = _toWorld(event.localPosition);
     _pointerWorld = world;
@@ -828,7 +850,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
 
     if (event.buttons & (kMiddleMouseButton | kSecondaryMouseButton) != 0 ||
         widget.mode == CanvasMode.pan ||
-        _spacePressed) {
+        _temporaryPanPressed) {
       setState(() {
         _drag = _DragKind.pan;
         _panOrigin = _pan;
@@ -1106,11 +1128,14 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     final hoverAllowed =
         widget.mode == CanvasMode.select &&
         widget.pastePreview == null &&
-        _drag == _DragKind.none &&
-        !_spacePressed;
+        !_hasActiveGesture;
     final world = _toWorld(event.localPosition);
-    final wire = hoverAllowed ? _wireAt(world) : null;
     final device = _deviceAt(world) ?? _graphicAt(world);
+    final infoDevice =
+        hoverAllowed && _scene.devices.containsKey(device) ? device : null;
+    final wire = hoverAllowed && infoDevice == null ? _wireAt(world) : null;
+    final hoverLocal =
+        wire != null || infoDevice != null ? event.localPosition : null;
     final port =
         !widget.readOnly && widget.mode == CanvasMode.wire
             ? _portAt(world)
@@ -1123,14 +1148,16 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
             widget.mode == CanvasMode.place);
     if ((!tracksPointer || world == _pointerWorld) &&
         wire == _hoverWire &&
-        (wire == null || event.localPosition == _hoverLocal) &&
+        infoDevice == _hoverInfoDevice &&
+        hoverLocal == _hoverLocal &&
         device == _hoverDevice &&
         _samePort(port, _hoverPort)) {
       return;
     }
     setState(() {
       _hoverWire = wire;
-      _hoverLocal = wire == null ? null : event.localPosition;
+      _hoverInfoDevice = infoDevice;
+      _hoverLocal = hoverLocal;
       _pointerWorld = world;
       _hoverDevice = device;
       _hoverPort = port;
@@ -1138,27 +1165,32 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
-    if (event.logicalKey == LogicalKeyboardKey.space) {
+    if (event is KeyUpEvent && event.logicalKey == _temporaryPanKey) {
       setState(() {
-        _clearWireHover();
-        _spacePressed = event is! KeyUpEvent;
+        _temporaryPanPressed = false;
+        _temporaryPanKey = null;
       });
       return KeyEventResult.handled;
     }
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    final keyboard = HardwareKeyboard.instance;
-    final unmodified =
-        !keyboard.isControlPressed &&
-        !keyboard.isMetaPressed &&
-        !keyboard.isAltPressed &&
-        !keyboard.isShiftPressed;
-    if (unmodified && event.logicalKey == LogicalKeyboardKey.f4) {
+    if (event is! KeyDownEvent || ModalRoute.isCurrentOf(context) == false) {
+      return KeyEventResult.ignored;
+    }
+    final command = widget.shortcuts.commandFor(event);
+    if (command == EditorCommand.temporaryPan) {
+      setState(() {
+        _clearHover();
+        _temporaryPanPressed = true;
+        _temporaryPanKey = event.logicalKey;
+      });
+      return KeyEventResult.handled;
+    }
+    if (command == EditorCommand.editProperties) {
       if (_canInteract && widget.selectedIds.length == 1) {
         _editObject(widget.selectedIds.single);
       }
       return KeyEventResult.handled;
     }
-    if (unmodified && event.logicalKey == LogicalKeyboardKey.keyF) {
+    if (command == EditorCommand.followContinuation) {
       if (_canInteract) {
         final selected =
             widget.selectedIds.where(_scene.markers.containsKey).toList();
@@ -1168,17 +1200,16 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       }
       return KeyEventResult.handled;
     }
-    if (event.logicalKey == LogicalKeyboardKey.escape) {
+    if (command == EditorCommand.cancelTool) {
       setState(() {
         _cancelGesture();
         _selectedWire = null;
       });
-      // Let the application also return the active tool to selection.
+      // The workspace also returns the active tool to selection.
       return KeyEventResult.ignored;
     }
     if (!widget.readOnly &&
-        (event.logicalKey == LogicalKeyboardKey.delete ||
-            event.logicalKey == LogicalKeyboardKey.backspace) &&
+        command == EditorCommand.deleteSelection &&
         _selectedWire != null) {
       widget.onDeleteWire(_selectedWire!);
       setState(() => _selectedWire = null);
@@ -1190,7 +1221,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   MouseCursor get _cursor {
     if (widget.pastePreview != null) return SystemMouseCursors.precise;
     if (_drag == _DragKind.pan) return SystemMouseCursors.grabbing;
-    if (widget.mode == CanvasMode.pan || _spacePressed) {
+    if (widget.mode == CanvasMode.pan || _temporaryPanPressed) {
       return SystemMouseCursors.grab;
     }
     if (!widget.readOnly &&
@@ -1216,7 +1247,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       builder: (context, constraints) {
         final nextSize = constraints.biggest;
         if (_viewport != nextSize) {
-          _clearWireHover();
+          _clearHover();
           final previous = _viewport;
           _viewport = nextSize;
           if (!_initialFit) {
@@ -1232,168 +1263,201 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
         }
         final selected =
             _drag == _DragKind.marquee ? _marqueeSelection : widget.selectedIds;
-        return WireHoverOverlay(
+        return CanvasHoverOverlay(
           contextIdentity: widget.documentIdentity ?? widget.controller,
           info:
-              _hoverWire == null || _scene.resolver == null
+              _hoverInfoDevice == null || _scene.resolver == null
                   ? null
-                  : resolveWireRouteHoverInfo(
+                  : resolveDeviceHoverInfo(
                     resolver: _scene.resolver!,
-                    sheet: widget.sheet,
-                    wireId: _hoverWire!,
+                    sheetId: widget.sheet.id,
+                    deviceId: _hoverInfoDevice!,
                   ),
           localPosition: _hoverLocal,
-          active: _hoverLocal != null,
+          maxWidth: 360,
+          maxLines: 12,
           suppressed:
               widget.pastePreview != null ||
-              _drag != _DragKind.none ||
               widget.mode != CanvasMode.select ||
-              _spacePressed,
-          child: Semantics(
-            label: '${widget.sheet.type.label}, ${widget.sheet.name}',
-            hint:
-                widget.readOnly
-                    ? 'Náhled pouze ke čtení. Kliknutím vyberte přístroj. '
-                        'Kolečkem přibližujte, s mezerníkem posouvejte výkres.'
-                    : 'Dvojklikem nebo F4 upravíte vybraný objekt. F přejde na protějšek, Home zobrazí celý list. Kolečkem přibližujte. '
-                        'S mezerníkem posouvejte výkres. Nástroj Vodič propojí '
-                        'připojovací body. Escape zruší rozpracovanou akci.',
-            child: Focus(
-              focusNode: _focus,
-              onKeyEvent: _onKey,
-              onFocusChange: (focused) {
-                if (!focused && _spacePressed) {
-                  setState(() => _spacePressed = false);
-                }
-              },
-              child: MouseRegion(
-                cursor: DrawingCursorRegion.cursorOf(
-                  context,
-                  fallback: _cursor,
-                ),
-                onExit:
-                    (_) => setState(() {
-                      _clearWireHover();
-                      _pointerWorld = null;
-                      _lastPointerGlobal = null;
-                      _hoverDevice = null;
-                      _hoverPort = null;
-                    }),
-                child: Listener(
-                  behavior: HitTestBehavior.opaque,
-                  onPointerDown: _pointerDown,
-                  onPointerMove: _pointerMove,
-                  onPointerUp: _pointerUp,
-                  onPointerCancel: (_) {
-                    if (mounted) setState(_cancelGesture);
-                  },
-                  onPointerHover: _pointerHover,
-                  onPointerSignal: (event) {
-                    if (event is PointerScrollEvent) {
-                      GestureBinding.instance.pointerSignalResolver.register(
-                        event,
-                        (resolved) {
-                          final scroll = resolved as PointerScrollEvent;
-                          _zoomAt(
-                            scroll.localPosition,
-                            math.exp(-scroll.scrollDelta.dy * 0.0015),
-                          );
-                        },
-                      );
-                    }
-                  },
-                  onPointerPanZoomStart: (_) {
+              _hasActiveGesture,
+          child: WireHoverOverlay(
+            contextIdentity: widget.documentIdentity ?? widget.controller,
+            info:
+                _hoverWire == null || _scene.resolver == null
+                    ? null
+                    : resolveWireRouteHoverInfo(
+                      resolver: _scene.resolver!,
+                      sheet: widget.sheet,
+                      wireId: _hoverWire!,
+                    ),
+            localPosition: _hoverLocal,
+            active: _hoverLocal != null,
+            suppressed:
+                widget.pastePreview != null ||
+                widget.mode != CanvasMode.select ||
+                _hasActiveGesture,
+            child: Semantics(
+              label: '${widget.sheet.type.label}, ${widget.sheet.name}',
+              hint:
+                  widget.readOnly
+                      ? 'Náhled pouze ke čtení. Kliknutím vyberte přístroj. '
+                          'Kolečkem přibližujte, tažením s ${widget.shortcuts.labelFor(EditorCommand.temporaryPan)} posouvejte výkres.'
+                      : 'Dvojklikem nebo ${widget.shortcuts.labelFor(EditorCommand.editProperties)} upravíte vybraný objekt. '
+                          '${widget.shortcuts.labelFor(EditorCommand.followContinuation)} přejde na protějšek, '
+                          '${widget.shortcuts.labelFor(EditorCommand.fitSheet)} zobrazí celý list. Kolečkem přibližujte. '
+                          'Tažením s ${widget.shortcuts.labelFor(EditorCommand.temporaryPan)} posouvejte výkres. '
+                          'Nástroj Vodič propojí připojovací body. '
+                          '${widget.shortcuts.labelFor(EditorCommand.cancelTool)} zruší rozpracovanou akci.',
+              child: Focus(
+                focusNode: _focus,
+                onKeyEvent: _onKey,
+                onFocusChange: (focused) {
+                  if (!focused) {
                     setState(() {
-                      _clearWireHover();
-                      _panZoomActive = true;
+                      _clearHover();
+                      _temporaryPanPressed = false;
+                      _temporaryPanKey = null;
                     });
-                    _panZoomStartScale = _zoom;
-                  },
-                  onPointerPanZoomEnd:
-                      (_) => setState(() => _panZoomActive = false),
-                  onPointerPanZoomUpdate: (event) {
-                    if (!mounted) return;
-                    final factor =
-                        (_panZoomStartScale * event.scale).clamp(0.15, 3.5) /
-                        _zoom;
-                    final anchor = event.localPosition;
-                    final world = _toWorld(anchor);
-                    setState(() {
-                      _clearWireHover();
-                      _zoom *= factor;
-                      _pan = anchor - world * _zoom + event.panDelta;
-                    });
-                    _scheduleStats();
-                  },
-                  child: RepaintBoundary(
-                    child: CustomPaint(
-                      foregroundPainter: _pastePainter,
-                      painter: _SchematicPainter(
-                        scene: _scene,
-                        palette: _canvasPalette,
-                        images: _images,
-                        drawingPreview: _drawingPreview,
-                        pan: _pan,
-                        zoom: _zoom,
-                        showGrid: widget.showGrid,
-                        selectedIds: selected,
-                        previewPositions: _previewPositions,
-                        marquee: _marquee,
-                        placingCorner:
-                            !widget.readOnly && widget.mode == CanvasMode.corner
-                                ? widget.cornerOrientation
-                                : null,
-                        wireStart: _wireStart,
-                        hoverPort: _hoverPort,
-                        pointerWorld: _pointerWorld,
-                        placingKind:
-                            !widget.readOnly && widget.mode == CanvasMode.place
-                                ? widget.placingKind
-                                : null,
-                        terminalSides: widget.terminalSides,
-                        wireMode:
-                            !widget.readOnly && widget.mode == CanvasMode.wire,
-                        selectedWire: _selectedWire,
-                        onSelectDevice: (id) => widget.onSelectionChanged({id}),
-                      ),
-                      child: Stack(
-                        clipBehavior: Clip.hardEdge,
-                        children: [
-                          const SizedBox.expand(),
-                          if (widget.pastePreview != null)
-                            const Positioned(
-                              left: 12,
-                              top: 12,
-                              child: IgnorePointer(
-                                child: Card(
-                                  child: Padding(
-                                    padding: EdgeInsets.all(8),
-                                    child: Text(
-                                      'Kliknutím vložit · Esc zrušit',
-                                      key: ValueKey('clipboard-preview'),
+                  }
+                },
+                child: MouseRegion(
+                  cursor: DrawingCursorRegion.cursorOf(
+                    context,
+                    fallback: _cursor,
+                  ),
+                  onExit:
+                      (_) => setState(() {
+                        _clearHover();
+                        _pointerWorld = null;
+                        _lastPointerGlobal = null;
+                        _hoverDevice = null;
+                        _hoverPort = null;
+                      }),
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: _pointerDown,
+                    onPointerMove: _pointerMove,
+                    onPointerUp: _pointerUp,
+                    onPointerCancel: (_) {
+                      if (mounted) setState(_cancelGesture);
+                    },
+                    onPointerHover: _pointerHover,
+                    onPointerSignal: (event) {
+                      if (event is PointerScrollEvent) {
+                        GestureBinding.instance.pointerSignalResolver.register(
+                          event,
+                          (resolved) {
+                            final scroll = resolved as PointerScrollEvent;
+                            _zoomAt(
+                              scroll.localPosition,
+                              math.exp(-scroll.scrollDelta.dy * 0.0015),
+                            );
+                          },
+                        );
+                      }
+                    },
+                    onPointerPanZoomStart: (_) {
+                      setState(() {
+                        _clearHover();
+                        _panZoomActive = true;
+                      });
+                      _panZoomStartScale = _zoom;
+                    },
+                    onPointerPanZoomEnd:
+                        (_) => setState(() => _panZoomActive = false),
+                    onPointerPanZoomUpdate: (event) {
+                      if (!mounted) return;
+                      final factor =
+                          (_panZoomStartScale * event.scale).clamp(0.15, 3.5) /
+                          _zoom;
+                      final anchor = event.localPosition;
+                      final world = _toWorld(anchor);
+                      setState(() {
+                        _clearHover();
+                        _zoom *= factor;
+                        _pan = anchor - world * _zoom + event.panDelta;
+                      });
+                      _scheduleStats();
+                    },
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        foregroundPainter: _pastePainter,
+                        painter: _SchematicPainter(
+                          scene: _scene,
+                          palette: _canvasPalette,
+                          images: _images,
+                          drawingPreview: _drawingPreview,
+                          pan: _pan,
+                          zoom: _zoom,
+                          showGrid: widget.showGrid,
+                          selectedIds: selected,
+                          previewPositions: _previewPositions,
+                          marquee: _marquee,
+                          placingCorner:
+                              !widget.readOnly &&
+                                      widget.mode == CanvasMode.corner
+                                  ? widget.cornerOrientation
+                                  : null,
+                          wireStart: _wireStart,
+                          hoverPort: _hoverPort,
+                          pointerWorld: _pointerWorld,
+                          placingKind:
+                              !widget.readOnly &&
+                                      widget.mode == CanvasMode.place
+                                  ? widget.placingKind
+                                  : null,
+                          terminalSides: widget.terminalSides,
+                          wireMode:
+                              !widget.readOnly &&
+                              widget.mode == CanvasMode.wire,
+                          selectedWire: _selectedWire,
+                          onSelectDevice:
+                              (id) => widget.onSelectionChanged({id}),
+                        ),
+                        child: Stack(
+                          clipBehavior: Clip.hardEdge,
+                          children: [
+                            const SizedBox.expand(),
+                            if (widget.pastePreview != null)
+                              Positioned(
+                                left: 12,
+                                top: 12,
+                                child: IgnorePointer(
+                                  child: Card(
+                                    child: Padding(
+                                      padding: EdgeInsets.all(8),
+                                      child: Text(
+                                        'Kliknutím vložit · ${widget.shortcuts.labelFor(EditorCommand.cancelTool)} zrušit',
+                                        key: ValueKey('clipboard-preview'),
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          if (_continuationFocus != null)
-                            Positioned(
-                              left:
-                                  _continuationFocus!.x * _zoom + _pan.dx - 22,
-                              top: _continuationFocus!.y * _zoom + _pan.dy - 22,
-                              child: IgnorePointer(
-                                child: Semantics(
-                                  label: 'Cíl pokračování · kreslicí fokus',
-                                  child: Icon(
-                                    Icons.center_focus_strong,
-                                    key: const ValueKey('continuation-focus'),
-                                    size: 44,
-                                    color: widget.palette.selection,
+                            if (_continuationFocus != null)
+                              Positioned(
+                                left:
+                                    _continuationFocus!.x * _zoom +
+                                    _pan.dx -
+                                    22,
+                                top:
+                                    _continuationFocus!.y * _zoom +
+                                    _pan.dy -
+                                    22,
+                                child: IgnorePointer(
+                                  child: Semantics(
+                                    label: 'Cíl pokračování · kreslicí fokus',
+                                    child: Icon(
+                                      Icons.center_focus_strong,
+                                      key: const ValueKey('continuation-focus'),
+                                      size: 44,
+                                      color: widget.palette.selection,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),

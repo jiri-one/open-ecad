@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/foundation.dart';
+import '../services/sheet_navigation.dart';
 import 'controller.dart';
 
 class SheetTab {
@@ -25,6 +27,7 @@ class WorkspaceController extends ChangeNotifier {
   final Set<EditorController> _owned = {};
   final Map<EditorController, VoidCallback> _listeners = {};
   final Map<EditorController, SheetTab> _lastSheets = {};
+  final Map<EditorController, StructureAspect> _sheetNavigationAspects = {};
   late EditorController _active;
   SheetTab? activeTab;
   int navigationGeneration = 0;
@@ -67,6 +70,7 @@ class WorkspaceController extends ChangeNotifier {
     EditorController document,
     String sheetId, {
     bool fitViewport = true,
+    bool newTab = true,
   }) {
     if (!_documents.contains(document) ||
         document.project.sheetById(sheetId) == null) {
@@ -76,13 +80,49 @@ class WorkspaceController extends ChangeNotifier {
         activeTab != SheetTab(document.documentSessionId, sheetId)) {
       navigationGeneration++;
     }
-    _active = document;
     final tab = SheetTab(document.documentSessionId, sheetId);
-    if (!_tabs.contains(tab)) _tabs.add(tab);
+    if (!_tabs.contains(tab)) {
+      final current = activeTab == null ? -1 : _tabs.indexOf(activeTab!);
+      if (!newTab && current >= 0) {
+        _tabs[current] = tab;
+      } else {
+        _tabs.add(tab);
+      }
+    }
+    _active = document;
     activeTab = tab;
     _lastSheets[document] = tab;
     document.setSheet(sheetId, fitViewport: fitViewport);
     notifyListeners();
+  }
+
+  void setSheetNavigationAspect(EditorController doc, StructureAspect aspect) {
+    if (!_documents.contains(doc) || sheetNavigationAspect(doc) == aspect) {
+      return;
+    }
+    _sheetNavigationAspects[doc] = aspect;
+    notifyListeners();
+  }
+
+  StructureAspect sheetNavigationAspect(EditorController doc) =>
+      _sheetNavigationAspects[doc] ?? StructureAspect.function;
+
+  Sheet? adjacentSheet(int delta) {
+    if (activeTab == null) return null;
+    final sheets = orderedSheets(
+      active.project.pages,
+      first: sheetNavigationAspect(active),
+    );
+    final index = sheets.indexWhere((s) => s.id == active.activeSheetId);
+    final target = index + delta;
+    return index < 0 || target < 0 || target >= sheets.length
+        ? null
+        : sheets[target];
+  }
+
+  void navigateSheet(int delta) {
+    final target = adjacentSheet(delta);
+    if (target != null) openSheet(active, target.id, newTab: false);
   }
 
   void activate(SheetTab tab) {
@@ -109,6 +149,7 @@ class WorkspaceController extends ChangeNotifier {
     _tabs.removeWhere((t) => t.sessionId == doc.documentSessionId);
     doc.removeListener(_listeners.remove(doc)!);
     _lastSheets.remove(doc);
+    _sheetNavigationAspects.remove(doc);
     _documents.remove(doc);
     _owned.remove(doc);
     doc.dispose();

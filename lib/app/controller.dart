@@ -238,13 +238,13 @@ class EditorController extends ChangeNotifier {
     status = switch (value) {
       CanvasMode.select => 'Výběr · Shift přidá do výběru',
       CanvasMode.corner =>
-        'Spojovací roh ${cornerOrientation.glyph} · klikněte do mřížky, R otočí, Esc ukončí',
+        'Spojovací roh ${cornerOrientation.glyph} · klikněte do mřížky; orientaci změníte nástrojem Otočit',
       CanvasMode.wire => 'Vodič · klikněte na dva připojovací body',
       CanvasMode.continuation =>
-        'Pokračovací odkaz · klikněte na místo ve výkrese, Esc ukončí',
+        'Pokračovací odkaz · klikněte na místo ve výkrese',
       CanvasMode.pan => 'Posun · táhněte výkresem',
       CanvasMode.place =>
-        '${SymbolCatalog.definitionFor(kind!).label} · klikněte do výkresu, Esc ukončí vkládání',
+        '${SymbolCatalog.definitionFor(kind!).label} · klikněte do výkresu',
       CanvasMode.drawLine => 'Čára · tažením určete oba konce',
       CanvasMode.drawRectangle => 'Obdélník · tažením určete velikost',
       CanvasMode.drawText => 'Text · klikněte do výkresu a upravte vlastnosti',
@@ -785,7 +785,7 @@ class EditorController extends ChangeNotifier {
       );
       await Clipboard.setData(ClipboardData(text: fragment.encode()));
       if (current()) {
-        reportStatus('Výběr zkopírován · Ctrl+V a kliknutí vloží kopii');
+        reportStatus('Výběr zkopírován do schránky');
       }
     } catch (error) {
       if (current()) {
@@ -830,9 +830,7 @@ class EditorController extends ChangeNotifier {
       if (!current()) return;
       _pasteCurrent = current;
       _pastePreview = placement;
-      reportStatus(
-        'Vložit výběr · pohybem určete polohu, kliknutím vložte, Esc zruší',
-      );
+      reportStatus('Vložit výběr · pohybem určete polohu, kliknutím vložte');
     } catch (error) {
       if (current()) reportStatus('Vložení selhalo: ${_clipboardError(error)}');
     }

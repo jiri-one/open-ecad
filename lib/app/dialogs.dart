@@ -2,6 +2,7 @@ import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
 import '../editor/schematic_canvas.dart';
 import '../services/ecad_services.dart';
+import '../services/keyboard_shortcuts.dart';
 import '../widgets/components.dart';
 import '../widgets/sheet_types.dart';
 import 'controller.dart';
@@ -414,6 +415,7 @@ Future<void> showCommandPalette(
   required VoidCallback redoEdit,
   required VoidCallback copySelection,
   required VoidCallback pasteSelection,
+  KeyboardShortcuts shortcuts = const KeyboardShortcuts.defaults(),
 }) async {
   final commands = <PaletteCommand>[
     PaletteCommand('Historie úprav', Icons.history, editHistory),
@@ -421,55 +423,55 @@ Future<void> showCommandPalette(
       'Kopírovat výběr',
       Icons.content_copy,
       copySelection,
-      shortcut: 'Ctrl C',
+      shortcut: shortcuts.labelFor(EditorCommand.copy),
     ),
     PaletteCommand(
       'Vložit ze schránky',
       Icons.content_paste,
       pasteSelection,
-      shortcut: 'Ctrl V',
+      shortcut: shortcuts.labelFor(EditorCommand.paste),
     ),
     PaletteCommand(
       'Uložit projekt jako…',
       Icons.save_as_outlined,
       app.saveProjectAs,
-      shortcut: 'Ctrl Shift S',
+      shortcut: shortcuts.labelFor(EditorCommand.saveProjectAs),
     ),
     PaletteCommand(
       'Uložit projekt',
       Icons.save_outlined,
       app.saveProject,
-      shortcut: 'Ctrl S',
+      shortcut: shortcuts.labelFor(EditorCommand.saveProject),
     ),
     PaletteCommand(
       'Otevřít projekt',
       Icons.folder_open_outlined,
       openProject,
-      shortcut: 'Ctrl O',
+      shortcut: shortcuts.labelFor(EditorCommand.openProject),
     ),
     PaletteCommand(
       'Zadat příkaz asistentovi',
       Icons.terminal_outlined,
       focusAssistant,
-      shortcut: 'Ctrl L',
+      shortcut: shortcuts.labelFor(EditorCommand.focusAssistant),
     ),
     PaletteCommand(
       'Vybrat přístroje',
       Icons.near_me_outlined,
       () => app.setMode(CanvasMode.select),
-      shortcut: 'V',
+      shortcut: shortcuts.labelFor(EditorCommand.selectTool),
     ),
     PaletteCommand(
       'Propojit přístroje vodičem',
       Icons.polyline_outlined,
       () => app.setMode(CanvasMode.wire),
-      shortcut: 'W',
+      shortcut: shortcuts.labelFor(EditorCommand.wireTool),
     ),
     PaletteCommand(
       'Přizpůsobit list oknu',
       Icons.fit_screen,
       app.viewport.fit,
-      shortcut: 'Home',
+      shortcut: shortcuts.labelFor(EditorCommand.fitSheet),
     ),
     PaletteCommand(
       'Vložit pokračovací odkaz',
@@ -480,25 +482,25 @@ Future<void> showCommandPalette(
       'Přejít na protějšek odkazu',
       Icons.subdirectory_arrow_right,
       followContinuation,
-      shortcut: 'F',
+      shortcut: shortcuts.labelFor(EditorCommand.followContinuation),
     ),
     PaletteCommand(
       'Vlastnosti výběru',
       Icons.edit_outlined,
       editSelection,
-      shortcut: 'F4',
+      shortcut: shortcuts.labelFor(EditorCommand.editProperties),
     ),
     PaletteCommand(
       'Vrátit poslední změnu${app.undoLabel == null ? '' : ' · ${app.undoLabel}'}',
       Icons.undo,
       undoEdit,
-      shortcut: 'Ctrl Z',
+      shortcut: shortcuts.labelFor(EditorCommand.undo),
     ),
     PaletteCommand(
       'Obnovit změnu${app.redoLabel == null ? '' : ' · ${app.redoLabel}'}',
       Icons.redo,
       redoEdit,
-      shortcut: 'Ctrl Y / Ctrl Shift Z',
+      shortcut: shortcuts.labelFor(EditorCommand.redo),
     ),
     PaletteCommand(
       'Přidat nový list…',
@@ -635,13 +637,16 @@ class _CommandPaletteState extends State<_CommandPalette> {
   }
 }
 
-Future<void> showHelpDialog(BuildContext context) => showDialog<void>(
+Future<void> showHelpDialog(
+  BuildContext context, {
+  KeyboardShortcuts shortcuts = const KeyboardShortcuts.defaults(),
+}) => showDialog<void>(
   context: context,
   builder:
       (context) => AlertDialog(
         title: const Text('Ovládání Open ECAD'),
-        content: const SizedBox(
-          width: 470,
+        content: SizedBox(
+          width: 540,
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -650,17 +655,20 @@ Future<void> showHelpDialog(BuildContext context) => showDialog<void>(
                 Text('Výkres', style: TextStyle(fontWeight: FontWeight.w600)),
                 SizedBox(height: 10),
                 Text(
-                  'V — výběr\nDvojklik nebo F4 — vlastnosti objektu či odkazu\nW — vodič mezi připojovacími body\nH nebo mezerník + tažení — posun\nKolečko — zoom pod kurzorem\nF — protějšek vybraného odkazu nebo odkazu pod myší\nHome — celý list do okna\nR — otočit výběr\nDelete — odstranit výběr\nShift + kliknutí — rozšířit výběr',
+                  'Dvojklik — vlastnosti objektu či odkazu\nKolečko — zoom pod kurzorem\nProstřední/pravé tlačítko + tažení — posun\nShift + kliknutí — rozšířit výběr\nPravý klik na list nebo tab — možnosti listu\nCtrl/Cmd + kliknutí na list — otevřít v novém tabu',
                   style: TextStyle(fontSize: 12, height: 1.9),
                 ),
                 SizedBox(height: 20),
                 Text(
-                  'Projekt a příkazy',
+                  'Aktuální klávesové zkratky',
                   style: TextStyle(fontWeight: FontWeight.w600),
                 ),
                 SizedBox(height: 10),
                 Text(
-                  'Ctrl + S — uložit .oecad\nCtrl + Shift + S — uložit jako\nCtrl + O — otevřít .oecad\nCtrl + Z / Y (Shift Z) — vrátit / obnovit\nHistorie úprav — seznam kroků na liště nebo v paletě\nCtrl + C / V — kopírovat / umístit kopii kliknutím (Esc zruší)\nCtrl + D — nové fyzické kusy z výběru\nCtrl + K — vyhledat příkaz\nCtrl + L — psát asistentovi',
+                  [
+                    for (final command in EditorCommand.values)
+                      '${shortcuts.labelFor(command).isEmpty ? 'Bez zkratky' : shortcuts.labelFor(command)} — ${command.label}',
+                  ].join('\n'),
                   style: TextStyle(fontSize: 12, height: 1.9),
                 ),
                 SizedBox(height: 20),

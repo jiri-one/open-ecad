@@ -4,8 +4,11 @@ import 'package:flutter/services.dart';
 import '../editor/schematic_canvas.dart';
 import '../editor/drawing_cursor.dart';
 import '../services/drawing_cursor_settings.dart';
+import '../services/keyboard_shortcuts.dart';
 import '../services/pointer_warp.dart';
 import '../widgets/drawing_cursor_dialog.dart';
+import '../widgets/keyboard_shortcuts_dialog.dart';
+import '../widgets/sheet_context_menu.dart';
 import '../editor/mounting_canvas.dart';
 import '../widgets/report_view.dart';
 import '../widgets/recovery_dialog.dart';
@@ -80,14 +83,17 @@ class EditorWorkspace extends StatefulWidget {
 
 class _EditorWorkspaceState extends State<EditorWorkspace> {
   final drawingCursor = DrawingCursorPreferences();
+  final keyboardShortcuts = KeyboardShortcutPreferences();
   @override
   void initState() {
     super.initState();
-    drawingCursor.addListener(_cursorChanged);
+    drawingCursor.addListener(_preferencesChanged);
     drawingCursor.load().catchError((Object _) {});
+    keyboardShortcuts.addListener(_preferencesChanged);
+    keyboardShortcuts.load().catchError((Object _) {});
   }
 
-  void _cursorChanged() {
+  void _preferencesChanged() {
     if (mounted) setState(() {});
   }
 
@@ -99,8 +105,10 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
   EditorController get app => workspace.active;
   @override
   void dispose() {
-    drawingCursor.removeListener(_cursorChanged);
+    drawingCursor.removeListener(_preferencesChanged);
     drawingCursor.dispose();
+    keyboardShortcuts.removeListener(_preferencesChanged);
+    keyboardShortcuts.dispose();
     localWorkspace?.dispose();
     promptFocus.dispose();
     super.dispose();
@@ -477,6 +485,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
               editSelectedDevice();
             }
           }),
+      shortcuts: keyboardShortcuts.value,
     );
   }
 
@@ -521,6 +530,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
       undoHistory: owner.undoHistory,
       redoHistory: owner.redoHistory,
       historyLimit: owner.historyLimit,
+      shortcuts: keyboardShortcuts.value,
       onUndoSteps: (count) => apply(count, redo: false),
       onRedoSteps: (count) => apply(count, redo: true),
     );
@@ -530,6 +540,23 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
       FocusManager.instance.primaryFocus?.context
           ?.findAncestorWidgetOfExactType<EditableText>() !=
       null;
+
+  bool _nativeTextShortcut(KeyEvent event) {
+    var matches = false;
+    context.visitAncestorElements((element) {
+      final widget = element.widget;
+      if (widget is DefaultTextEditingShortcuts) return false;
+      if (widget is Shortcuts &&
+          widget.shortcuts.keys.any(
+            (activator) => activator.accepts(event, HardwareKeyboard.instance),
+          )) {
+        matches = true;
+        return false;
+      }
+      return true;
+    });
+    return matches;
+  }
 
   void copySelection() {
     final guard = continuationContext();
@@ -550,129 +577,103 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    if (event.logicalKey != LogicalKeyboardKey.keyF) {
+    final command = keyboardShortcuts.value.commandFor(event);
+    if (command != EditorCommand.followContinuation) {
       _continuationNavigationRequest++;
     }
-    if (ModalRoute.isCurrentOf(context) == false) return KeyEventResult.ignored;
-    final keyboard = HardwareKeyboard.instance;
-    final ctrl = keyboard.isControlPressed || keyboard.isMetaPressed;
-    final key = event.logicalKey;
-    if (ctrl) {
-      if (key == LogicalKeyboardKey.keyS) {
-        keyboard.isShiftPressed ? app.saveProjectAs() : app.saveProject();
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.keyO) {
-        openProject();
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.keyK) {
-        commandPalette();
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.keyL) {
-        focusAssistant();
-        return KeyEventResult.handled;
-      }
-    }
-    final focusContext = FocusManager.instance.primaryFocus?.context;
-    if (focusContext?.findAncestorWidgetOfExactType<EditableText>() != null) {
+    if (command == null || ModalRoute.isCurrentOf(context) == false) {
       return KeyEventResult.ignored;
     }
-    if (!ctrl &&
-        !keyboard.isAltPressed &&
-        !keyboard.isShiftPressed &&
-        key == LogicalKeyboardKey.f4) {
-      editSelectedDevice();
-      return KeyEventResult.handled;
-    }
-    if (ctrl &&
-        !keyboard.isAltPressed &&
-        !keyboard.isShiftPressed &&
-        (key == LogicalKeyboardKey.keyC || key == LogicalKeyboardKey.keyV)) {
-      if (app.mode != CanvasMode.select ||
-          app.viewport.hasActiveGesture ||
-          app.ioBusy) {
+    if (_editingText) {
+      final keyboard = HardwareKeyboard.instance;
+      // Native text editing keeps its standard chords even after remapping.
+      if (!command.allowWhileEditingText ||
+          !(keyboard.isControlPressed || keyboard.isMetaPressed) ||
+          _nativeTextShortcut(event)) {
         return KeyEventResult.ignored;
       }
-      key == LogicalKeyboardKey.keyC ? copySelection() : pasteSelection();
-      return KeyEventResult.handled;
     }
-    if (ctrl) {
-      if (key == LogicalKeyboardKey.keyZ) {
-        keyboard.isShiftPressed ? redoEdit() : undoEdit();
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.keyY) {
+    switch (command) {
+      case EditorCommand.saveProject:
+        app.saveProject();
+      case EditorCommand.saveProjectAs:
+        app.saveProjectAs();
+      case EditorCommand.openProject:
+        openProject();
+      case EditorCommand.commandPalette:
+        commandPalette();
+      case EditorCommand.focusAssistant:
+        focusAssistant();
+      case EditorCommand.editProperties:
+        editSelectedDevice();
+      case EditorCommand.copy:
+      case EditorCommand.paste:
+        if (app.mode != CanvasMode.select ||
+            app.viewport.hasActiveGesture ||
+            app.ioBusy) {
+          return KeyEventResult.ignored;
+        }
+        command == EditorCommand.copy ? copySelection() : pasteSelection();
+      case EditorCommand.undo:
+        undoEdit();
+      case EditorCommand.redo:
         redoEdit();
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.keyD) {
+      case EditorCommand.duplicate:
         app.duplicateSelection();
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.keyA) {
+      case EditorCommand.selectAll:
         app.selectAll();
-        return KeyEventResult.handled;
-      }
-      return KeyEventResult.ignored;
+      case EditorCommand.cancelTool:
+        app.cancelTool();
+      case EditorCommand.temporaryPan:
+        return KeyEventResult.ignored;
+      default:
+        if (app.viewport.hasActiveGesture || app.ioBusy) {
+          return KeyEventResult.ignored;
+        }
+        switch (command) {
+          case EditorCommand.selectTool:
+            app.setMode(CanvasMode.select);
+          case EditorCommand.lineTool:
+            app.setMode(CanvasMode.drawLine);
+          case EditorCommand.rectangleTool:
+            app.setMode(CanvasMode.drawRectangle);
+          case EditorCommand.textTool:
+            app.setMode(CanvasMode.drawText);
+          case EditorCommand.wireTool:
+            app.setMode(CanvasMode.wire);
+          case EditorCommand.panTool:
+            app.setMode(CanvasMode.pan);
+          case EditorCommand.followContinuation:
+            followSelectedContinuation();
+          case EditorCommand.fitSheet:
+            app.viewport.fit();
+          case EditorCommand.rotate:
+            app.rotateSelection();
+          case EditorCommand.deleteSelection:
+            app.deleteSelection();
+          case EditorCommand.previousSheet:
+            workspace.navigateSheet(-1);
+          case EditorCommand.nextSheet:
+            workspace.navigateSheet(1);
+          default:
+            return KeyEventResult.ignored;
+        }
     }
-    if (key == LogicalKeyboardKey.escape) {
-      app.cancelTool();
-      return KeyEventResult.handled;
-    }
-    if (keyboard.isAltPressed ||
-        keyboard.isShiftPressed ||
-        app.viewport.hasActiveGesture) {
-      return KeyEventResult.ignored;
-    }
-    if (key == LogicalKeyboardKey.keyV) {
-      app.setMode(CanvasMode.select);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyL) {
-      app.setMode(CanvasMode.drawLine);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyB) {
-      app.setMode(CanvasMode.drawRectangle);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyT) {
-      app.setMode(CanvasMode.drawText);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyW) {
-      app.setMode(CanvasMode.wire);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyH) {
-      app.setMode(CanvasMode.pan);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyF) {
-      followSelectedContinuation();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.home) {
-      app.viewport.fit();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyR) {
-      app.rotateSelection();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.delete ||
-        key == LogicalKeyboardKey.backspace) {
-      app.deleteSelection();
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
+    return KeyEventResult.handled;
+  }
+
+  String actionLabel(String label, EditorCommand command) {
+    final shortcut = keyboardShortcuts.value.labelFor(command);
+    return shortcut.isEmpty ? label : '$label · $shortcut';
   }
 
   @override
   Widget build(BuildContext context) {
     final c = EcadColors.of(context);
+    return PrimaryScrollController.none(child: _buildWorkspace(c));
+  }
+
+  Widget _buildWorkspace(EcadColors c) {
     return Listener(
       onPointerDown: (_) => _continuationNavigationRequest++,
       child: Focus(
@@ -703,6 +704,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                                 onCloseProject: closeProject,
                                 onRenameSheet: renameSheet,
                                 onAddSheet: addSheet,
+                                shortcuts: keyboardShortcuts.value,
                               ),
                             ),
                             VerticalDivider(
@@ -809,6 +811,8 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                                                     showGrid: app.showGrid,
                                                     palette: c.canvasPalette,
                                                     controller: app.viewport,
+                                                    shortcuts:
+                                                        keyboardShortcuts.value,
                                                     onSelectionChanged: (ids) {
                                                       if (!app
                                                           .showingProposal) {
@@ -975,7 +979,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                                             child: Text(
                                               app.mode == CanvasMode.wire
                                                   ? 'Klikněte na první a druhý připojovací bod'
-                                                  : 'Klikněte do výkresu · Esc ukončí vkládání',
+                                                  : 'Klikněte do výkresu · ${keyboardShortcuts.value.labelFor(EditorCommand.cancelTool)} ukončí vkládání',
                                               style: TextStyle(
                                                 color: c.onAccent,
                                                 fontSize: 10,
@@ -1052,6 +1056,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                                           ),
                                           PropertiesPanel(
                                             controller: app,
+                                            shortcuts: keyboardShortcuts.value,
                                             onEditContinuation:
                                                 editContinuationMarker,
                                             onAddContinuation:
@@ -1187,11 +1192,18 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
           OutlinedButton.icon(
             onPressed: commandPalette,
             icon: const Icon(Icons.search, size: 15),
-            label: const Row(
+            label: Row(
               children: [
-                Text('Příkazy'),
-                SizedBox(width: 14),
-                Keycap('Ctrl K'),
+                const Text('Příkazy'),
+                const SizedBox(width: 14),
+                if (keyboardShortcuts.value
+                    .labelFor(EditorCommand.commandPalette)
+                    .isNotEmpty)
+                  Keycap(
+                    keyboardShortcuts.value.labelFor(
+                      EditorCommand.commandPalette,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -1250,14 +1262,19 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                         }
                       },
                       itemBuilder:
-                          (_) => const [
-                            PopupMenuItem(
+                          (_) => [
+                            const PopupMenuItem(
                               value: 'new',
                               child: Text('Nový projekt'),
                             ),
                             PopupMenuItem(
                               value: 'open',
-                              child: Text('Otevřít projekt…'),
+                              child: Text(
+                                actionLabel(
+                                  'Otevřít projekt…',
+                                  EditorCommand.openProject,
+                                ),
+                              ),
                             ),
                             PopupMenuItem(
                               value: 'recovery',
@@ -1269,11 +1286,21 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                             ),
                             PopupMenuItem(
                               value: 'save',
-                              child: Text('Uložit projekt'),
+                              child: Text(
+                                actionLabel(
+                                  'Uložit projekt',
+                                  EditorCommand.saveProject,
+                                ),
+                              ),
                             ),
                             PopupMenuItem(
                               value: 'saveAs',
-                              child: Text('Uložit jako… · Ctrl Shift S'),
+                              child: Text(
+                                actionLabel(
+                                  'Uložit jako…',
+                                  EditorCommand.saveProjectAs,
+                                ),
+                              ),
                             ),
                             PopupMenuItem(
                               value: 'close',
@@ -1311,13 +1338,13 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                     EcadIconButton(
                       icon: Icons.undo,
                       label:
-                          'Vrátit · Ctrl Z${app.undoLabel == null ? '' : '\n${app.undoLabel}'}',
+                          '${actionLabel('Vrátit', EditorCommand.undo)}${app.undoLabel == null ? '' : '\n${app.undoLabel}'}',
                       onPressed: app.canUndo ? undoEdit : null,
                     ),
                     EcadIconButton(
                       icon: Icons.redo,
                       label:
-                          'Obnovit · Ctrl Y / Ctrl Shift Z${app.redoLabel == null ? '' : '\n${app.redoLabel}'}',
+                          '${actionLabel('Obnovit', EditorCommand.redo)}${app.redoLabel == null ? '' : '\n${app.redoLabel}'}',
                       onPressed: app.canRedo ? redoEdit : null,
                     ),
                     EcadIconButton(
@@ -1329,14 +1356,14 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                     _tool(
                       Icons.near_me_outlined,
                       'Výběr',
-                      'V',
+                      EditorCommand.selectTool,
                       CanvasMode.select,
                       compact,
                     ),
                     _tool(
                       Icons.polyline_outlined,
                       'Vodič',
-                      'W',
+                      EditorCommand.wireTool,
                       CanvasMode.wire,
                       compact,
                     ),
@@ -1349,7 +1376,10 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                     ),
                     EcadIconButton(
                       icon: Icons.subdirectory_arrow_right,
-                      label: 'Přejít na protějšek · F',
+                      label: actionLabel(
+                        'Přejít na protějšek',
+                        EditorCommand.followContinuation,
+                      ),
                       onPressed: followSelectedContinuation,
                     ),
                     EcadIconButton(
@@ -1393,7 +1423,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                     _tool(
                       Icons.pan_tool_outlined,
                       'Posun',
-                      'H',
+                      EditorCommand.panTool,
                       CanvasMode.pan,
                       compact,
                     ),
@@ -1402,25 +1432,34 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                       icon: const Icon(Icons.draw_outlined, size: 18),
                       onSelected: app.setMode,
                       itemBuilder:
-                          (_) => const [
+                          (_) => [
                             PopupMenuItem(
                               value: CanvasMode.drawLine,
-                              child: Text('Čára · L'),
+                              child: Text(
+                                actionLabel('Čára', EditorCommand.lineTool),
+                              ),
                             ),
                             PopupMenuItem(
                               value: CanvasMode.drawRectangle,
-                              child: Text('Obdélník · B'),
+                              child: Text(
+                                actionLabel(
+                                  'Obdélník',
+                                  EditorCommand.rectangleTool,
+                                ),
+                              ),
                             ),
                             PopupMenuItem(
                               value: CanvasMode.drawText,
-                              child: Text('Text · T'),
+                              child: Text(
+                                actionLabel('Text', EditorCommand.textTool),
+                              ),
                             ),
                           ],
                     ),
                     _toolbarDivider(c),
                     EcadIconButton(
                       icon: Icons.rotate_right,
-                      label: 'Otočit výběr · R',
+                      label: actionLabel('Otočit výběr', EditorCommand.rotate),
                       onPressed:
                           app.selectedIds.isEmpty &&
                                   app.mode != CanvasMode.corner
@@ -1429,7 +1468,10 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                     ),
                     EcadIconButton(
                       icon: Icons.copy_all_outlined,
-                      label: 'Duplikovat výběr · Ctrl D',
+                      label: actionLabel(
+                        'Duplikovat výběr',
+                        EditorCommand.duplicate,
+                      ),
                       onPressed:
                           app.selectedIds.isEmpty
                               ? null
@@ -1437,17 +1479,23 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                     ),
                     EcadIconButton(
                       icon: Icons.content_copy,
-                      label: 'Kopírovat výběr · Ctrl C',
+                      label: actionLabel('Kopírovat výběr', EditorCommand.copy),
                       onPressed: app.selectedIds.isEmpty ? null : copySelection,
                     ),
                     EcadIconButton(
                       icon: Icons.content_paste,
-                      label: 'Vložit ze schránky · Ctrl V',
+                      label: actionLabel(
+                        'Vložit ze schránky',
+                        EditorCommand.paste,
+                      ),
                       onPressed: pasteSelection,
                     ),
                     EcadIconButton(
                       icon: Icons.delete_outline,
-                      label: 'Odstranit výběr · Delete',
+                      label: actionLabel(
+                        'Odstranit výběr',
+                        EditorCommand.deleteSelection,
+                      ),
                       onPressed:
                           app.selectedIds.isEmpty ? null : app.deleteSelection,
                     ),
@@ -1483,7 +1531,10 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                     const Spacer(),
                     EcadIconButton(
                       icon: Icons.edit_outlined,
-                      label: 'Upravit vybraný objekt · F4',
+                      label: actionLabel(
+                        'Upravit vybraný objekt',
+                        EditorCommand.editProperties,
+                      ),
                       onPressed:
                           !app.showingProposal &&
                                   (app.selectedDevices.length == 1 ||
@@ -1523,11 +1574,43 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                       onPressed:
                           () => setState(() => showAssistant = !showAssistant),
                     ),
+                    PopupMenuButton<String>(
+                      tooltip: 'Nastavení programu',
+                      icon: const Icon(Icons.settings_outlined, size: 18),
+                      onSelected: (value) {
+                        if (value == 'keyboard') {
+                          showKeyboardShortcutsDialog(
+                            context,
+                            preferences: keyboardShortcuts,
+                          );
+                        } else {
+                          showDrawingCursorDialog(
+                            context,
+                            preferences: drawingCursor,
+                          );
+                        }
+                      },
+                      itemBuilder:
+                          (_) => const [
+                            PopupMenuItem(
+                              value: 'keyboard',
+                              child: Text('Klávesové zkratky…'),
+                            ),
+                            PopupMenuItem(
+                              value: 'cursor',
+                              child: Text('Kreslicí kurzor…'),
+                            ),
+                          ],
+                    ),
                     const SizedBox(width: 4),
                     EcadIconButton(
                       icon: Icons.help_outline,
                       label: 'Ovládání a klávesové zkratky',
-                      onPressed: () => showHelpDialog(context),
+                      onPressed:
+                          () => showHelpDialog(
+                            context,
+                            shortcuts: keyboardShortcuts.value,
+                          ),
                     ),
                   ],
                 ),
@@ -1546,7 +1629,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
   Widget _tool(
     IconData icon,
     String name,
-    String key,
+    EditorCommand command,
     CanvasMode mode,
     bool compact,
   ) {
@@ -1555,13 +1638,13 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     if (compact) {
       return EcadIconButton(
         icon: icon,
-        label: '$name · $key',
+        label: actionLabel(name, command),
         selected: selected,
         onPressed: () => app.setMode(mode),
       );
     }
     return Tooltip(
-      message: '$name · $key',
+      message: actionLabel(name, command),
       child: Semantics(
         button: true,
         selected: selected,
@@ -1604,6 +1687,30 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     color: c.panel,
     child: Row(
       children: [
+        IconButton(
+          tooltip: actionLabel('Předchozí list', EditorCommand.previousSheet),
+          onPressed:
+              workspace.adjacentSheet(-1) == null || app.ioBusy
+                  ? null
+                  : () {
+                    if (!app.viewport.hasActiveGesture && !app.ioBusy) {
+                      workspace.navigateSheet(-1);
+                    }
+                  },
+          icon: const Icon(Icons.keyboard_arrow_up, size: 18),
+        ),
+        IconButton(
+          tooltip: actionLabel('Následující list', EditorCommand.nextSheet),
+          onPressed:
+              workspace.adjacentSheet(1) == null || app.ioBusy
+                  ? null
+                  : () {
+                    if (!app.viewport.hasActiveGesture && !app.ioBusy) {
+                      workspace.navigateSheet(1);
+                    }
+                  },
+          icon: const Icon(Icons.keyboard_arrow_down, size: 18),
+        ),
         Expanded(
           child: ListView(
             scrollDirection: Axis.horizontal,
@@ -1613,39 +1720,46 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                   builder: (context) {
                     final doc = workspace.document(tab.sessionId)!;
                     final sheet = doc.project.sheetById(tab.sheetId)!;
-                    return Container(
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color:
-                                workspace.activeTab == tab
-                                    ? c.foreground
-                                    : c.border,
-                            width: 2,
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          InkWell(
-                            onTap: () => activateTab(tab),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 12,
-                              ),
-                              child: Text(
-                                '${doc.project.name}${doc.dirty ? ' ●' : ''} · ${fullPageDesignation(sheet)} ${sheet.name}',
-                                style: const TextStyle(fontSize: 11),
-                              ),
+                    return SheetContextMenu(
+                      controller: doc,
+                      sheet: sheet,
+                      workspace: workspace,
+                      onRenameSheet: renameSheet,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(
+                              color:
+                                  workspace.activeTab == tab
+                                      ? c.foreground
+                                      : c.border,
+                              width: 2,
                             ),
                           ),
-                          IconButton(
-                            tooltip: 'Zavřít tab ${fullPageDesignation(sheet)}',
-                            onPressed: () => workspace.closeTab(tab),
-                            icon: const Icon(Icons.close, size: 14),
-                          ),
-                        ],
+                        ),
+                        child: Row(
+                          children: [
+                            InkWell(
+                              onTap: () => activateTab(tab),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 12,
+                                ),
+                                child: Text(
+                                  '${doc.project.name}${doc.dirty ? ' ●' : ''} · ${fullPageDesignation(sheet)} ${sheet.name}',
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip:
+                                  'Zavřít tab ${fullPageDesignation(sheet)}',
+                              onPressed: () => workspace.closeTab(tab),
+                              icon: const Icon(Icons.close, size: 14),
+                            ),
+                          ],
+                        ),
                       ),
                     );
                   },
@@ -1706,7 +1820,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
         ),
         EcadIconButton(
           icon: Icons.fit_screen,
-          label: 'Celý list · Home',
+          label: actionLabel('Celý list', EditorCommand.fitSheet),
           onPressed: app.viewport.fit,
           size: 27,
           iconSize: 17,

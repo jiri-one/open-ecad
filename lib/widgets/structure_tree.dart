@@ -12,18 +12,22 @@ class StructureTree<T> extends StatefulWidget {
     required this.leaf,
     required this.compare,
     required this.onRename,
+    this.onFirstChanged,
+    this.initialFirst = StructureAspect.function,
   });
   final List<T> items;
   final StructureContext Function(T) contextFor;
   final Widget Function(T) leaf;
   final Comparator<T> compare;
   final void Function(StructureAspect, List<String>) onRename;
+  final ValueChanged<StructureAspect>? onFirstChanged;
+  final StructureAspect initialFirst;
   @override
   State<StructureTree<T>> createState() => _StructureTreeState<T>();
 }
 
 class _StructureTreeState<T> extends State<StructureTree<T>> {
-  StructureAspect first = StructureAspect.function;
+  late StructureAspect first = widget.initialFirst;
   @override
   Widget build(BuildContext context) {
     final order = [first, ...StructureAspect.values.where((a) => a != first)];
@@ -100,7 +104,11 @@ class _StructureTreeState<T> extends State<StructureTree<T>> {
                 child: Text('Struktura: produkty'),
               ),
             ],
-            onChanged: (v) => setState(() => first = v!),
+            onChanged: (v) {
+              if (v == null) return;
+              setState(() => first = v);
+              widget.onFirstChanged?.call(v);
+            },
           ),
         ),
         ...level([...widget.items], 0, [], ''),
