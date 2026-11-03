@@ -88,6 +88,10 @@ cívku, kontakt s opakovaným pohledem, výstavbu a dva živé přehledy. Ukazuj
 Obsahuje záměrně otevřené připojovací body a neurčený materiál.
 Je sestavený přímo z kódu aplikace; uživatelské projektové soubory se nezveřejňují.
 
+Při návrhu výstavby používejte [zásady rozmístění v rozvaděči](docs/cabinet-layout.md):
+svorkovnice k místu vstupu kabelů a přístroje s největším ztrátovým teplem
+co nejvýše, se zachováním chladicích odstupů a přístupu pro zapojení.
+
 ## Asistent: místní příkazy a model
 
 Bez nastavování fungují **místní příkazy**. Je to omezený parser češtiny a

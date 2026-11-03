@@ -16,7 +16,7 @@ SOURCE_ROOTS = {
     'macos', 'packages', 'scripts', 'test', 'test_driver', 'web', 'windows',
 }
 DOCUMENTS = {
-    'docs/architecture.md', 'docs/pdf-import.md', 'docs/testing.md',
+    'docs/architecture.md', 'docs/cabinet-layout.md', 'docs/pdf-import.md', 'docs/testing.md',
     'docs/windows-native-build.md',
 }
 PRIVATE_PARTS = {
