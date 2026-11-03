@@ -11,6 +11,11 @@ chování a škálování ověřte na cílovém počítači následujícím prů
    a ověřit zachování filtru po přepnutí tam a zpět.
 3. Na ukázce vybrat a přesunout symbol, otočit jej a vrátit změny.
    Přidat svorku a propojit její bod s dalším vývodem. Vybrat a odstranit vodič.
+   Dva body bez automatického propojení spojit opakovaně, i v opačném pořadí:
+   zůstane jediný vodič a stavový řádek oznámí existující spoj. Jediné Undo spoj
+   odstraní, Redo ho obnoví. Spojit také dva horní vývody vedle sebe a zopakovat
+   po otočení značek o 90°, 180° a 270°; vodič musí vycházet ven z vývodu a obejít
+   obě značky.
 4. Projít pět listů ukázky: cívku, kontakt s opakovaným pohledem, výstavbu,
    kusovník a seznam komponent. Ověřit, že relé je stále jeden fyzický kus.
    Přejmenovat list přes nabídku seznamu listů a přidat nový list.

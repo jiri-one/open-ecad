@@ -26,6 +26,12 @@ rozbalí a spustí přes `open_ecad.exe`; Flutter ani Visual Studio příjemce
 nepotřebuje. Postup sestavení a obsah balíčku popisuje
 [Windows portable build](docs/windows-native-build.md).
 
+Hotový ZIP stáhněte z nejnovějšího
+[testovacího vydání pro Windows](https://github.com/jiri-one/open-ecad/releases)
+v části **Assets**. Rozbalte celý archiv a spusťte `open_ecad.exe`.
+Průběžné balíčky v Actions jsou dostupné jen sedm dní; vydání v Releases
+mají trvalý odkaz ke stažení.
+
 Webový náhled bez externího CDN:
 
 ```bash

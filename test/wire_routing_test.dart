@@ -116,6 +116,149 @@ void _expectClearOfBodies(List<Vec2> route, Wire wire, Sheet sheet) {
 }
 
 void main() {
+  for (final (rotation, direction) in [
+    (0.0, const Offset(0, -1)),
+    (90.0, const Offset(1, 0)),
+    (180.0, const Offset(0, 1)),
+    (270.0, const Offset(-1, 0)),
+  ]) {
+    testWidgets(
+      'wire clicks keep one connection and follow terminals at $rotation degrees',
+      (tester) async {
+        tester.view.physicalSize = const Size(1100, 780);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final app = EditorController(
+          initialProject: testProject(
+            id: 'connections',
+            name: 'Connections',
+            pages: [
+              Sheet(
+                id: 'sheet',
+                name: 'Connections',
+                number: '1',
+                showFrame: false,
+                devices: [
+                  testBuiltin(
+                    id: 'k',
+                    kind: DeviceKind.contactor,
+                    designation: '-K1',
+                    position: const Vec2(320, 350),
+                    rotation: rotation,
+                  ),
+                  testBuiltin(
+                    id: 'h',
+                    kind: DeviceKind.lamp,
+                    designation: '-H1',
+                    position: const Vec2(620, 450),
+                    rotation: rotation,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          persistence: _MemoryPersistence(),
+        );
+        addTearDown(app.dispose);
+        expect(app.resolver.wires(app.sheet), isEmpty);
+        app.setMode(CanvasMode.wire);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ListenableBuilder(
+              listenable: app,
+              builder:
+                  (context, _) => SchematicCanvas(
+                    project: app.project,
+                    sheet: app.sheet,
+                    selectedIds: app.selectedIds,
+                    mode: app.mode,
+                    showGrid: false,
+                    palette: _palette,
+                    controller: app.viewport,
+                    onSelectionChanged: app.select,
+                    onMoveDevices: app.moveDevices,
+                    onPlaceDevice: app.placeDevice,
+                    onConnect: app.connect,
+                    onDeleteWire: app.deleteWire,
+                  ),
+            ),
+          ),
+        );
+        app.viewport.reset();
+        await tester.pump();
+        final from = app.resolver.port(app.sheet.deviceById('k')!, 'in')!;
+        final to = app.resolver.port(app.sheet.deviceById('h')!, 'in')!;
+        final a = Offset(from.geometry.point.x, from.geometry.point.y);
+        final b = Offset(to.geometry.point.x, to.geometry.point.y);
+        Future<void> connect(Offset first, Offset second) async {
+          await tester.tapAt(first);
+          await tester.pump();
+          await tester.tapAt(second);
+          await tester.pump();
+        }
+
+        void expectConnection() {
+          expect(app.sheet.wires, hasLength(1));
+          final metric = _paintedWires(tester).single.computeMetrics().single;
+          final start = metric.getTangentForOffset(0)!;
+          final end = metric.getTangentForOffset(metric.length)!;
+          expect(start.position, a);
+          expect(end.position, b);
+          expect(start.vector, direction);
+          expect(end.vector, -direction);
+          final route = app.resolver.wirePath(
+            app.sheet,
+            app.sheet.wires.single,
+          );
+          for (var i = 1; i < route.length; i++) {
+            expect(
+              from.geometry.body!.crosses(route[i - 1], route[i]),
+              isFalse,
+            );
+            expect(to.geometry.body!.crosses(route[i - 1], route[i]), isFalse);
+          }
+        }
+
+        await connect(a, b);
+        expectConnection();
+        final connected = app.project;
+        for (final (first, second) in [(a, b), (b, a), (a, b)]) {
+          await connect(first, second);
+          expect(app.project, same(connected));
+          expect(app.status, contains('již spojuje vodič'));
+          expect(app.undoHistory, hasLength(1));
+          expectConnection();
+        }
+
+        app.renameProject('Renamed');
+        app.undo();
+        await tester.pump();
+        final beforeRetry = app.project;
+        await connect(b, a);
+        expect(app.project, same(beforeRetry));
+        expect(app.canRedo, isTrue);
+        app.undo();
+        await tester.pump();
+        expect(app.sheet.wires, isEmpty);
+        expect(_paintedWires(tester), isEmpty);
+        app.redo();
+        await tester.pump();
+        expectConnection();
+        app.redo();
+        expect(app.project.name, 'Renamed');
+        final reopened = EcadProject.fromJson(app.project.toJson());
+        expect(
+          reopened.pages.single.wires.single.toJson(),
+          app.sheet.wires.single.toJson(),
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(milliseconds: 500));
+      },
+    );
+  }
+
   testWidgets('drag preview draws exactly the route the move commits', (
     tester,
   ) async {
