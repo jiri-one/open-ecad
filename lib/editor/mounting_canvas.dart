@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'drawing_graphics.dart';
 import 'drawing_cursor.dart';
+import 'middle_button_double_click.dart';
 import 'canvas_hover_overlay.dart';
 import 'schematic_canvas.dart' show CanvasMode;
 import '../services/device_hover_info.dart';
@@ -30,6 +31,7 @@ class _MountingCanvasState extends State<MountingCanvas> {
   MountingPlacement? moving;
   Vec2? start, preview;
   final _activePointers = <int>{};
+  final _middleDoubleClick = MiddleButtonDoubleClick();
   final transformation = TransformationController();
   final images = DrawingImageCache();
   EcadProject? diagnosticSnapshot;
@@ -69,6 +71,7 @@ class _MountingCanvasState extends State<MountingCanvas> {
       oldWidget.app.viewport.unbindNavigation(this);
       _bindNavigation();
       _activePointers.clear();
+      _middleDoubleClick.reset();
       moving = null;
       preview = null;
       _clearHover();
@@ -117,6 +120,7 @@ class _MountingCanvasState extends State<MountingCanvas> {
   }
 
   void _pointerStarted(PointerEvent event) => setState(() {
+    if (event is PointerDownEvent) _middleDoubleClick.down(event);
     _activePointers.add(event.pointer);
     _clearHover();
   });
@@ -124,6 +128,11 @@ class _MountingCanvasState extends State<MountingCanvas> {
   void _pointerEnded(PointerEvent event) => setState(() {
     _activePointers.remove(event.pointer);
     _clearHover();
+    if (event is PointerUpEvent && _middleDoubleClick.up(event)) {
+      transformation.value = Matrix4.identity();
+    } else if (event is! PointerUpEvent) {
+      _middleDoubleClick.reset();
+    }
   });
 
   void _hover(
@@ -281,6 +290,7 @@ class _MountingCanvasState extends State<MountingCanvas> {
                     resetKey: (app.documentSessionId, app.sheet.id),
                     child: Listener(
                       onPointerDown: _pointerStarted,
+                      onPointerMove: _middleDoubleClick.move,
                       onPointerUp: _pointerEnded,
                       onPointerCancel: _pointerEnded,
                       onPointerPanZoomStart: _pointerStarted,

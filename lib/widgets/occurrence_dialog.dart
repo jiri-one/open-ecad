@@ -143,6 +143,8 @@ class _OccurrenceDialogState extends State<_OccurrenceDialog> {
               functionId: function.id,
               symbol: symbol,
               mode: mode,
+              isMainFunction:
+                  component.id == device.componentId && device.isMainFunction,
             ),
             sheetId: widget.sheetId,
           );

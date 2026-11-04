@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:ecad_core/ecad_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 
 import '../services/schematic_clipboard.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -687,6 +687,42 @@ class EditorController extends ChangeNotifier {
   bool updateDevice(Device device, {String? sheetId}) => execute([
     UpdateDevice(sheetId ?? activeSheetId, device),
   ], 'Vlastnosti přístroje upraveny');
+
+  bool setMainFunction(String sheetId, String deviceId) => execute([
+    SetMainFunction(sheetId, deviceId),
+  ], 'Hlavní funkce přístroje změněna');
+
+  void navigateToDevice(String sheetId, String deviceId) {
+    if (showingProposal || viewport.hasActiveGesture) return;
+    final destination = project.sheetById(sheetId)?.deviceById(deviceId);
+    if (destination == null) return;
+    final generation = documentGeneration;
+    final revision = project.revision;
+    final zoom = viewport.zoom;
+    setSheet(sheetId, fitViewport: false);
+    select({deviceId});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed ||
+          !isDocumentCurrent(generation) ||
+          project.revision != revision ||
+          activeSheetId != sheetId ||
+          selectedIds.length != 1 ||
+          !selectedIds.contains(deviceId)) {
+        return;
+      }
+      if (viewport.revealDevice(
+        documentIdentity: this,
+        sheetId: sheetId,
+        deviceId: deviceId,
+        zoom: zoom,
+      )) {
+        reportStatus(
+          'Cíl ${fullPageDesignation(sheet)} · ${resolver.fullDesignation(componentFor(destination))} · X ${destination.position.x} / Y ${destination.position.y}',
+        );
+      }
+    });
+  }
+
   void renameProject(String name) {
     if (name.trim().isNotEmpty) {
       execute([RenameProject(name.trim())], 'Projekt přejmenován');

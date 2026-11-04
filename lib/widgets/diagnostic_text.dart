@@ -67,6 +67,7 @@ String diagnosticCodeText(String code, String fallback) => switch (code) {
   'invalid_occurrence' =>
     'Zobrazení ve schématu vyžaduje fyzický kus určený k instalaci.',
   'missing_function' => 'Zvolená elektrická funkce u komponenty neexistuje.',
+  'duplicate_main_function' => 'Přístroj může mít jen jednu hlavní funkci.',
   'logical_symbol' => 'Pro ochranný potenciál použijte značku pokračování.',
   'invalid_port_binding' => 'Každý port musí odpovídat vývodu vybrané funkce.',
   'invalid_port' =>

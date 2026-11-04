@@ -353,6 +353,27 @@ class _Draft {
         _requireDevices(sheet.devices, [command.device.id]);
         sheet.requireDisconnectedTerminalPorts([command.device]);
         sheet.changeDevices([command.device.id], (_) => command.device);
+      case SetMainFunction():
+        final sheet = _sheet(command.sheetId);
+        _requireDevices(sheet.devices, [command.deviceId]);
+        final componentId =
+            sheet.devices
+                .toList()
+                .firstWhere((d) => d.id == command.deviceId)
+                .componentId;
+        for (final page in _pages) {
+          final draft = _sheet(page.id);
+          final ids =
+              draft.devices
+                  .toList()
+                  .where((d) => d.componentId == componentId)
+                  .map((d) => d.id)
+                  .toList();
+          draft.changeDevices(
+            ids,
+            (d) => d.copyWith(isMainFunction: d.id == command.deviceId),
+          );
+        }
       case UpdateDevices():
         final sheet = _sheet(command.sheetId);
         final replacements = {

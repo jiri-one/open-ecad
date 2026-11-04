@@ -152,6 +152,8 @@ zkratky. Následující tabulka uvádí výchozí nastavení.
 | PgUp / PgDown | Předchozí / následující list aktivního projektu v pořadí stromu |
 | Esc | Ukončit vkládání, spojování nebo náhled; návrh asistenta zůstane k použití |
 | Kolečko | Zoom kolem ukazatele |
+| Dvojklik kolečka | Vycentrovat celý aktuální list a přizpůsobit ho oknu |
+| Ctrl + kliknutí na odkaz u přístroje | Přejít na uvedené zobrazení přístroje |
 | Prostřední/pravé tlačítko, případně mezerník + tažení | Posun plochy |
 | Enter / Shift + Enter v asistentovi | Odeslat / nový řádek |
 
@@ -167,6 +169,22 @@ s označením, popisem a dostupnými údaji artiklu. Při kreslení a tažení s
 bublina skryje. Vložení spojovacího rohu do existujícího ručního vodiče
 přeruší původní průchozí spoj a zachová pouze návaznosti ve směrech ramen
 rohu. Vložení i přepojení se vrací společně jedním krokem undo.
+
+Zobrazení stejné komponenty mají jednu **hlavní funkci** a ostatní jsou
+**vedlejší funkce**. Ve vlastnostech zobrazení lze zvolit **Nastavit jako hlavní
+funkci**; změna se ukládá a podporuje undo/redo. Bez výslovné volby je hlavní
+první zapojovací zobrazení v pořadí listů, případně první referenční. Stejné
+pravidlo určí hlavní funkci po odstranění jejího zobrazení. Rozlišení hlavní a
+vedlejší funkce nemění zapojovací/referenční režim ani počet kusů v kusovníku.
+
+U značky jsou odkazy na všechna ostatní elektrická zobrazení téhož fyzického
+kusu. Každý uvádí plné označení listu a polohu X/Y; **(H)** označuje hlavní
+funkci. Podržením **Ctrl** nad odkazem se zobrazí kurzor ruky a podtržení.
+**Ctrl + kliknutí** otevře cílový list, vycentruje konkrétní zobrazení a vybere
+ho při zachovaném zoomu. Totéž lze provést seznamem zobrazení ve vlastnostech.
+Navigace nemění dokument ani historii úprav. Odkazy vycházejí z identity
+komponenty; stejný text označení na samostatných kusech ani grafický import
+PDF je automaticky nepropojí.
 
 ## Kopírování a historie úprav
 

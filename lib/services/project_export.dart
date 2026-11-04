@@ -362,7 +362,7 @@ class ProjectExportService {
             '<circle cx="${_n(terminal.center.x)}" cy="${_n(terminal.center.y)}" r="${_n(terminal.radius)}" fill="#ffffff"/>'
             '</g><text x="${_n(label.designationOrigin.x)}" y="${_n(label.designationOrigin.y + 10)}" font-size="11">${_xml(resolver.terminalStripLabel(component))}</text>'
             '<text x="${_n(label.numberOrigin.x)}" y="${_n(label.numberOrigin.y + 10)}" font-size="11">${_xml(component.terminal!.number)}</text>'
-            '${resolver.crossReferences(device).isEmpty ? '' : '<text x="${_n(label.numberOrigin.x)}" y="${_n(label.numberOrigin.y + 24)}" font-size="9">viz ${_xml(resolver.crossReferences(device))}</text>'}';
+            '${_deviceReferencesSvg(resolver, device)}';
       case BuiltinSymbolSpec(:final kind):
         buffer.write(
           symbolSvg(
@@ -418,6 +418,16 @@ class ProjectExportService {
     for (var i = 0; i < lines.length; i++) {
       buffer.writeln(
         '<text x="${_n(labelX)}" y="${_n(device.position.y + 11 + i * 13)}" font-size="9" fill="#526276">${_xml(lines[i])}</text>',
+      );
+    }
+    return buffer.toString();
+  }
+
+  String _deviceReferencesSvg(ProjectResolver resolver, Device device) {
+    final buffer = StringBuffer();
+    for (final reference in layoutDeviceCrossReferences(resolver, device)) {
+      buffer.writeln(
+        '<text data-cross-reference="${_xml(reference.target.device.id)}" x="${_n(reference.bounds.left)}" y="${_n(reference.baseline)}" font-size="8.5">${_xml(reference.text)}</text>',
       );
     }
     return buffer.toString();

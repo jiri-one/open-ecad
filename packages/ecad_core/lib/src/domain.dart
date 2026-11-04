@@ -1136,6 +1136,7 @@ class Device {
     required this.position,
     this.rotation = 0,
     this.mode = OccurrenceMode.wiring,
+    this.isMainFunction = false,
   });
   final String id;
   final String componentId;
@@ -1144,6 +1145,7 @@ class Device {
   final Vec2 position;
   final double rotation;
   final OccurrenceMode mode;
+  final bool isMainFunction;
   Device copyWith({
     String? id,
     String? componentId,
@@ -1152,6 +1154,7 @@ class Device {
     Vec2? position,
     double? rotation,
     OccurrenceMode? mode,
+    bool? isMainFunction,
   }) => Device(
     id: id ?? this.id,
     componentId: componentId ?? this.componentId,
@@ -1160,6 +1163,7 @@ class Device {
     position: position ?? this.position,
     rotation: rotation ?? this.rotation,
     mode: mode ?? this.mode,
+    isMainFunction: isMainFunction ?? this.isMainFunction,
   );
   Map<String, Object?> toJson() => {
     'id': id,
@@ -1169,6 +1173,7 @@ class Device {
     'position': position.toJson(),
     'rotation': rotation,
     'mode': mode.name,
+    'isMainFunction': isMainFunction,
   };
   factory Device.fromJson(Object? value) {
     final map = jsonObject(
@@ -1182,6 +1187,7 @@ class Device {
         'position',
         'rotation',
         'mode',
+        'isMainFunction',
       },
     );
     return Device(
@@ -1192,6 +1198,7 @@ class Device {
       position: Vec2.fromJson(map['position']),
       rotation: jsonNumber(map, 'rotation', fallback: 0),
       mode: jsonEnum(map, 'mode', OccurrenceMode.values),
+      isMainFunction: jsonBool(map, 'isMainFunction', fallback: false),
     );
   }
   DeviceKind? get kind => switch (symbol) {

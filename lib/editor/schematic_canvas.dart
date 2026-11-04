@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import 'drawing_graphics.dart';
 import 'drawing_cursor.dart';
+import 'middle_button_double_click.dart';
 import 'terminal_symbol_painter.dart';
 import 'wire_hover_overlay.dart';
 import 'canvas_hover_overlay.dart';
@@ -72,7 +73,7 @@ class SchematicViewportController extends ChangeNotifier {
   int _visiblePrimitiveCount = 0;
   int _totalPrimitiveCount = 0;
 
-  double get zoom => _zoom;
+  double get zoom => _externalZoom == null ? _canvas?._zoom ?? _zoom : _zoom;
   int get visiblePrimitiveCount => _visiblePrimitiveCount;
   int get totalPrimitiveCount => _totalPrimitiveCount;
   bool get hasActiveGesture =>
@@ -84,11 +85,35 @@ class SchematicViewportController extends ChangeNotifier {
   }
 
   Vec2? get continuationFocus => _canvas?._continuationFocus;
+  Vec2? get deviceFocus => _canvas?._deviceFocus;
   Vec2? get pastePosition => _canvas?._pastePosition;
   void focus() => _canvas?._focus.requestFocus();
   Rect? get worldViewport => _canvas?._worldViewport;
   Offset? worldToLocal(Vec2 point) =>
       _canvas == null ? null : _offset(point) * _canvas!._zoom + _canvas!._pan;
+
+  bool revealDevice({
+    required Object documentIdentity,
+    required String sheetId,
+    required String deviceId,
+    required double zoom,
+  }) {
+    final canvas = _canvas;
+    if (canvas == null ||
+        canvas.widget.documentIdentity != documentIdentity ||
+        canvas.widget.sheet.id != sheetId ||
+        !canvas._canInteract ||
+        ModalRoute.of(canvas.context)?.isCurrent != true ||
+        FocusManager.instance.primaryFocus?.context
+                ?.findAncestorWidgetOfExactType<EditableText>() !=
+            null) {
+      return false;
+    }
+    final device = canvas._scene.devices[deviceId];
+    if (device == null) return false;
+    canvas._revealDevice(device, zoom);
+    return true;
+  }
 
   bool revealContinuation({
     required Object documentIdentity,
@@ -257,6 +282,7 @@ class SchematicCanvas extends StatefulWidget {
     this.onEditDrawingObject,
     this.onEditContinuation,
     this.onFollowContinuation,
+    this.onFollowDevice,
     this.onPlaceContinuation,
     this.pastePreview,
     this.onPlacePaste,
@@ -294,6 +320,7 @@ class SchematicCanvas extends StatefulWidget {
   final ValueChanged<String>? onEditDrawingObject;
   final ValueChanged<String>? onEditContinuation;
   final ValueChanged<String>? onFollowContinuation;
+  final void Function(String sourceId, DeviceOccurrence target)? onFollowDevice;
   final ValueChanged<Vec2>? onPlaceContinuation;
   final void Function(DeviceKind kind, Vec2 position) onPlaceDevice;
   final void Function(WireEndpoint from, WireEndpoint to) onConnect;
@@ -345,6 +372,11 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   (String, Offset, Duration)? _lastDeviceTap;
   String? _tapDevice;
   Vec2? _continuationFocus;
+  Vec2? _deviceFocus;
+  DeviceCrossReference? _hoverReference;
+  DeviceCrossReference? _pressedReference;
+  ValueChanged<bool>? _overrideDrawingCursor;
+  final _middleDoubleClick = MiddleButtonDoubleClick();
   bool _panZoomActive = false;
   bool get _hasActiveGesture =>
       _activePointer != null ||
@@ -359,6 +391,19 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       !_hasActiveGesture;
 
   Size get _pageSize => Size(widget.sheet.width, widget.sheet.height);
+
+  bool get _linkCursor =>
+      _canInteract &&
+      _hoverReference != null &&
+      HardwareKeyboard.instance.isControlPressed;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _overrideDrawingCursor = DrawingCursorRegion.systemCursorOverrideOf(
+      context,
+    );
+  }
 
   CanvasPalette get _canvasPalette {
     final palette = widget.palette;
@@ -394,6 +439,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     ]);
     widget.controller._canvas = this;
     FocusManager.instance.addListener(_dismissHover);
+    HardwareKeyboard.instance.addHandler(_modifiersChanged);
   }
 
   @override
@@ -425,6 +471,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     if (!identical(oldWidget.sheet, widget.sheet) ||
         !identical(oldWidget.project, widget.project)) {
       _continuationFocus = null;
+      _deviceFocus = null;
       _clearHover();
       _scene.dispose();
       _scene = _Scene(widget.sheet, widget.project);
@@ -469,6 +516,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_modifiersChanged);
     FocusManager.instance.removeListener(_dismissHover);
     _cancelGesture();
     if (widget.controller._canvas == this) widget.controller._canvas = null;
@@ -606,6 +654,18 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     _scheduleStats();
   }
 
+  void _revealDevice(Device device, double zoom) {
+    setState(() {
+      _cancelGesture();
+      _selectedWire = null;
+      _zoom = zoom.clamp(.15, 3.5);
+      _pan = _viewport.center(Offset.zero) - _offset(device.position) * _zoom;
+      _deviceFocus = device.position;
+    });
+    _focus.requestFocus();
+    _scheduleStats();
+  }
+
   void _reset() {
     _clearHover();
     if (_viewport.isEmpty) return;
@@ -639,12 +699,17 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   }
 
   void _clearHover() {
+    _overrideDrawingCursor?.call(false);
+    _hoverReference = null;
     _hoverWire = null;
     _hoverInfoDevice = null;
     _hoverLocal = null;
   }
 
   void _cancelGesture() {
+    _middleDoubleClick.reset();
+    _pressedReference = null;
+    _deviceFocus = null;
     _continuationFocus = null;
     _panZoomActive = false;
     _lastDeviceTap = null;
@@ -838,6 +903,15 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       _lastPointerGlobal = event.position;
     }
     if (_activePointer != null) return;
+    _middleDoubleClick.down(event);
+    final reference =
+        _canInteract &&
+                HardwareKeyboard.instance.isControlPressed &&
+                event.buttons == kPrimaryMouseButton &&
+                widget.onFollowDevice != null
+            ? _referenceAt(_toWorld(event.localPosition))
+            : null;
+    _deviceFocus = null;
     _continuationFocus = null;
     _tapDevice = null;
     setState(_clearHover);
@@ -847,6 +921,11 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     _downLocal = event.localPosition;
     _downWorld = world;
     _activePointer = event.pointer;
+
+    if (reference != null) {
+      _pressedReference = reference;
+      return;
+    }
 
     if (event.buttons & (kMiddleMouseButton | kSecondaryMouseButton) != 0 ||
         widget.mode == CanvasMode.pan ||
@@ -965,10 +1044,15 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   }
 
   void _pointerMove(PointerMoveEvent event) {
+    _middleDoubleClick.move(event);
     if (event.kind == PointerDeviceKind.mouse) {
       _lastPointerGlobal = event.position;
     }
     if (event.pointer != _activePointer) return;
+    if (_pressedReference != null &&
+        (event.localPosition - _downLocal!).distance > 3) {
+      _pressedReference = null;
+    }
     final world = _toWorld(event.localPosition);
     setState(() {
       _pointerWorld = world;
@@ -1018,6 +1102,21 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       _lastPointerGlobal = event.position;
     }
     if (event.pointer != _activePointer) return;
+    final fit = event is PointerUpEvent && _middleDoubleClick.up(event);
+    final reference = _pressedReference;
+    _pressedReference = null;
+    if (reference != null) {
+      setState(() {
+        _activePointer = null;
+        _lastDeviceTap = null;
+      });
+      if (HardwareKeyboard.instance.isControlPressed &&
+          (event.localPosition - _downLocal!).distance < 3 &&
+          identical(_referenceAt(_toWorld(event.localPosition)), reference)) {
+        widget.onFollowDevice?.call(reference.sourceId, reference.target);
+      }
+      return;
+    }
     final placePaste =
         !widget.readOnly &&
         widget.pastePreview != null &&
@@ -1099,6 +1198,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       _drawingPreview = null;
     });
     _scheduleStats();
+    if (fit) _fit();
     if (placePaste) {
       widget.onPlacePaste?.call(_pastePoint(_toWorld(event.localPosition)));
     }
@@ -1124,16 +1224,30 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
 
   void _pointerHover(PointerHoverEvent event) {
     _lastPointerGlobal = event.position;
-    if (_continuationFocus != null) setState(() => _continuationFocus = null);
+    if (_continuationFocus != null || _deviceFocus != null) {
+      setState(() {
+        _continuationFocus = null;
+        _deviceFocus = null;
+      });
+    }
     final hoverAllowed =
         widget.mode == CanvasMode.select &&
         widget.pastePreview == null &&
         !_hasActiveGesture;
     final world = _toWorld(event.localPosition);
+    final reference =
+        hoverAllowed && widget.onFollowDevice != null
+            ? _referenceAt(world)
+            : null;
     final device = _deviceAt(world) ?? _graphicAt(world);
     final infoDevice =
-        hoverAllowed && _scene.devices.containsKey(device) ? device : null;
-    final wire = hoverAllowed && infoDevice == null ? _wireAt(world) : null;
+        reference == null && hoverAllowed && _scene.devices.containsKey(device)
+            ? device
+            : null;
+    final wire =
+        reference == null && hoverAllowed && infoDevice == null
+            ? _wireAt(world)
+            : null;
     final hoverLocal =
         wire != null || infoDevice != null ? event.localPosition : null;
     final port =
@@ -1150,18 +1264,50 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
         wire == _hoverWire &&
         infoDevice == _hoverInfoDevice &&
         hoverLocal == _hoverLocal &&
+        reference == _hoverReference &&
         device == _hoverDevice &&
         _samePort(port, _hoverPort)) {
       return;
     }
     setState(() {
       _hoverWire = wire;
+      _hoverReference = reference;
       _hoverInfoDevice = infoDevice;
       _hoverLocal = hoverLocal;
       _pointerWorld = world;
       _hoverDevice = device;
       _hoverPort = port;
+      _overrideDrawingCursor?.call(_linkCursor);
     });
+  }
+
+  DeviceCrossReference? _referenceAt(Offset world) {
+    final ids =
+        _scene.index
+            .query(Rect.fromCircle(center: world, radius: 1))
+            .where((key) => key.startsWith('r:'))
+            .map((key) => key.substring(2))
+            .toList()
+          ..sort(
+            (a, b) => _scene.deviceOrder[b]!.compareTo(_scene.deviceOrder[a]!),
+          );
+    for (final id in ids) {
+      if (_zoom < .45 && !widget.selectedIds.contains(id)) continue;
+      for (final reference
+          in _scene.references[id] ?? const <DeviceCrossReference>[]) {
+        if (reference.bounds.contains(world)) return reference;
+      }
+    }
+    return null;
+  }
+
+  bool _modifiersChanged(KeyEvent event) {
+    if (event.logicalKey == LogicalKeyboardKey.controlLeft ||
+        event.logicalKey == LogicalKeyboardKey.controlRight) {
+      if (mounted) setState(() {});
+      _overrideDrawingCursor?.call(_linkCursor);
+    }
+    return false;
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -1221,6 +1367,9 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   MouseCursor get _cursor {
     if (widget.pastePreview != null) return SystemMouseCursors.precise;
     if (_drag == _DragKind.pan) return SystemMouseCursors.grabbing;
+    if (_linkCursor) {
+      return SystemMouseCursors.click;
+    }
     if (widget.mode == CanvasMode.pan || _temporaryPanPressed) {
       return SystemMouseCursors.grab;
     }
@@ -1321,10 +1470,13 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
                   }
                 },
                 child: MouseRegion(
-                  cursor: DrawingCursorRegion.cursorOf(
-                    context,
-                    fallback: _cursor,
-                  ),
+                  cursor:
+                      _linkCursor
+                          ? SystemMouseCursors.click
+                          : DrawingCursorRegion.cursorOf(
+                            context,
+                            fallback: _cursor,
+                          ),
                   onExit:
                       (_) => setState(() {
                         _clearHover();
@@ -1413,6 +1565,10 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
                           selectedWire: _selectedWire,
                           onSelectDevice:
                               (id) => widget.onSelectionChanged({id}),
+                          activeReference:
+                              HardwareKeyboard.instance.isControlPressed
+                                  ? _hoverReference
+                                  : null,
                         ),
                         child: Stack(
                           clipBehavior: Clip.hardEdge,
@@ -1453,6 +1609,19 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
                                       size: 44,
                                       color: widget.palette.selection,
                                     ),
+                                  ),
+                                ),
+                              ),
+                            if (_deviceFocus != null)
+                              Positioned(
+                                left: _deviceFocus!.x * _zoom + _pan.dx - 22,
+                                top: _deviceFocus!.y * _zoom + _pan.dy - 22,
+                                child: IgnorePointer(
+                                  child: Icon(
+                                    Icons.center_focus_strong,
+                                    key: const ValueKey('device-focus'),
+                                    size: 44,
+                                    color: widget.palette.selection,
                                   ),
                                 ),
                               ),
@@ -1528,6 +1697,16 @@ class _Scene {
       final bounds = _deviceRect(device);
       deviceBounds[device.id] = bounds;
       index.insert('d:${device.id}', bounds.inflate(45));
+      if (resolver case final r?) {
+        final links = layoutDeviceCrossReferences(r, device);
+        references[device.id] = links;
+        if (links.isNotEmpty) {
+          index.insert(
+            'r:${device.id}',
+            links.map((l) => l.bounds).reduce((a, b) => a.expandToInclude(b)),
+          );
+        }
+      }
     }
     for (final wire in AutoConnect.wires(sheet)) {
       wires[wire.id] = wire;
@@ -1558,6 +1737,7 @@ class _Scene {
   String portLabel(Device d, String id) =>
       project == null ? id : (resolver!.port(d, id)?.label ?? id);
   final Map<String, Device> devices = {};
+  final Map<String, List<DeviceCrossReference>> references = {};
   final Map<String, DrawingVisual> graphics = {};
   final Map<String, int> graphicOrder = {};
   final Map<String, int> deviceOrder = {};
@@ -1672,6 +1852,7 @@ class _SchematicPainter extends CustomPainter {
     required this.drawingPreview,
     required this.placingCorner,
     this.overlay = false,
+    this.activeReference,
   });
 
   final _Scene scene;
@@ -1694,6 +1875,7 @@ class _SchematicPainter extends CustomPainter {
   final DrawingElement? drawingPreview;
   final CornerOrientation? placingCorner;
   final bool overlay;
+  final DeviceCrossReference? activeReference;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1757,8 +1939,9 @@ class _SchematicPainter extends CustomPainter {
     }
     final visibleDevices =
         visible
-            .where((key) => key.startsWith('d:'))
+            .where((key) => key.startsWith('d:') || key.startsWith('r:'))
             .map((key) => key.substring(2))
+            .toSet()
             .toList()
           ..sort(
             (a, b) => scene.deviceOrder[a]!.compareTo(scene.deviceOrder[b]!),
@@ -2427,16 +2610,29 @@ class _SchematicPainter extends CustomPainter {
         size: 8.5,
         background: palette.paper,
       );
-      final references = scene.resolver?.crossReferences(device) ?? '';
-      if (references.isNotEmpty) {
+      for (final reference
+          in scene.references[device.id] ?? const <DeviceCrossReference>[]) {
+        final rect = reference.bounds.shift(
+          position - _offset(device.position),
+        );
+        final active = identical(reference, activeReference);
         _label(
           canvas,
-          'viz $references',
-          Offset(textX, (labels?.numberOrigin.y ?? position.dy + 1) + 14),
-          color: palette.muted,
+          reference.text,
+          rect.topLeft,
+          color: active ? palette.selection : palette.muted,
           size: 8.5,
           background: palette.paper,
         );
+        if (active) {
+          canvas.drawLine(
+            rect.bottomLeft,
+            rect.bottomRight,
+            Paint()
+              ..color = palette.selection
+              ..strokeWidth = 1 / zoom,
+          );
+        }
       }
     }
 

@@ -54,6 +54,8 @@ class ResolvedPort {
   final bool connectable;
 }
 
+typedef DeviceOccurrence = ({Sheet sheet, Device device});
+
 class ProjectResolver {
   ProjectResolver(this.project)
     : articles = Map.unmodifiable({for (final a in project.articles) a.id: a}),
@@ -176,16 +178,52 @@ class ProjectResolver {
 
   List<Wire> wires(Sheet sheet) => AutoConnect.wires(sheet);
 
-  List<({Sheet sheet, Device device})> otherOccurrences(Device device) => [
-    for (final sheet in project.pages)
-      for (final other in sheet.devices)
-        if (other.componentId == device.componentId && other.id != device.id)
-          (sheet: sheet, device: other),
-  ];
+  late final Map<String, List<DeviceOccurrence>> _occurrences = () {
+    final result = <String, List<DeviceOccurrence>>{};
+    for (final sheet in project.pages) {
+      for (final device in sheet.devices) {
+        result.putIfAbsent(device.componentId, () => []).add((
+          sheet: sheet,
+          device: device,
+        ));
+      }
+    }
+    return result;
+  }();
 
-  String crossReferences(Device device) => otherOccurrences(
-    device,
-  ).map((o) => fullPageDesignation(o.sheet)).toSet().join(', ');
+  late final Map<String, DeviceOccurrence> _mainOccurrences = {
+    for (final entry in _occurrences.entries)
+      entry.key:
+          entry.value.where((o) => o.device.isMainFunction).firstOrNull ??
+          entry.value
+              .where((o) => o.device.mode == OccurrenceMode.wiring)
+              .firstOrNull ??
+          entry.value.first,
+  };
+
+  DeviceOccurrence? mainOccurrence(String componentId) =>
+      _mainOccurrences[componentId];
+
+  bool isMainFunction(Device device) =>
+      mainOccurrence(device.componentId)?.device.id == device.id;
+
+  List<DeviceOccurrence> otherOccurrences(Device device) {
+    final mainId = mainOccurrence(device.componentId)?.device.id;
+    final others = (_occurrences[device.componentId] ??
+            const <DeviceOccurrence>[])
+        .where((o) => o.device.id != device.id);
+    return List.unmodifiable([
+      ...others.where((o) => o.device.id == mainId),
+      ...others.where((o) => o.device.id != mainId),
+    ]);
+  }
+
+  String crossReferences(Device device) => otherOccurrences(device)
+      .map(
+        (o) =>
+            '${fullPageDesignation(o.sheet)}${isMainFunction(o.device) ? ' (H)' : ''} · ${o.device.position.x}/${o.device.position.y}',
+      )
+      .join(', ');
 
   List<Vec2> wirePath(Sheet sheet, Wire wire) => WireRouter.path(
     wire,

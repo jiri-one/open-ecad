@@ -17,6 +17,68 @@ void main() {
   final exporter = ProjectExportService();
 
   test(
+    'terminal references use separate rows inside the page in exports',
+    () async {
+      final seed = createTerminalComponent(
+        componentId: 'component',
+        deviceId: 'source',
+        stripId: 'strip',
+        position: const Vec2(800, 300),
+      );
+      final project = EcadProject(
+        id: 'project',
+        name: 'Synthetic terminal references',
+        components: [seed.component],
+        terminalStrips: [
+          TerminalStrip(
+            id: 'strip',
+            reference: ComponentReference(
+              context: const StructureContext.empty(),
+              localDesignation: 'X1',
+            ),
+          ),
+        ],
+        pages: [
+          Sheet(
+            id: 'first',
+            number: '1',
+            name: 'Source',
+            devices: [seed.device],
+          ),
+          Sheet(
+            id: 'second',
+            number: '2',
+            name: 'Targets',
+            devices: [
+              for (var i = 0; i < 5; i++)
+                seed.device.copyWith(
+                  id: 'target-$i',
+                  mode: OccurrenceMode.reference,
+                  position: Vec2(100.0 + i * 100, 200),
+                ),
+            ],
+          ),
+        ],
+      );
+      requireValidProject(project);
+      final svg = exporter.svg(project, sheetId: 'first');
+      final rows =
+          RegExp(
+            r'<text data-cross-reference="([^"]+)" x="([^"]+)" y="([^"]+)" font-size="8.5">([^<]+)</text>',
+          ).allMatches(svg).toList();
+      expect(rows.map((r) => r[1]), [for (var i = 0; i < 5; i++) 'target-$i']);
+      expect(rows.map((r) => r[3]).toSet(), hasLength(5));
+      for (final row in rows) {
+        final x = double.parse(row[2]!);
+        final painter = reportTextPainter(row[4]!, 8.5);
+        expect(x + painter.width, lessThanOrEqualTo(project.pages.first.width));
+        painter.dispose();
+      }
+      expect(await exporter.pdf(project), isNotEmpty);
+    },
+  );
+
+  test(
     '125 source rows paginate once with Czech text and repeated headings',
     () {
       final project = _reportProject(125);

@@ -521,6 +521,16 @@ class _Validation {
 
   void validateDevice(Sheet sheet, Device d) {
     id(d.id);
+    if (d.isMainFunction &&
+        resolver.mainOccurrence(d.componentId)?.device.id != d.id) {
+      add(
+        'duplicate_main_function',
+        'A component can have only one main function.',
+        sheetId: sheet.id,
+        deviceId: d.id,
+        componentId: d.componentId,
+      );
+    }
     if (!point(d.position) || !rotation(d.rotation))
       add(
         'invalid_geometry',

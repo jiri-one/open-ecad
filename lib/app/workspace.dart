@@ -674,6 +674,36 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
   }
 
   Widget _buildWorkspace(EcadColors c) {
+    final canvasOwner = app;
+    final canvasGeneration = canvasOwner.documentGeneration;
+    final canvasSheetId = canvasOwner.sheet.id;
+    final canvasRevision = canvasOwner.project.revision;
+    final navigationGeneration = workspace.navigationGeneration;
+
+    void followDevice(String sourceId, DeviceOccurrence target) {
+      if (!mounted ||
+          workspace.active != canvasOwner ||
+          workspace.navigationGeneration != navigationGeneration ||
+          !canvasOwner.isDocumentCurrent(canvasGeneration) ||
+          canvasOwner.project.revision != canvasRevision ||
+          canvasOwner.activeSheetId != canvasSheetId) {
+        return;
+      }
+      final source = canvasOwner.project
+          .sheetById(canvasSheetId)
+          ?.deviceById(sourceId);
+      final destination = canvasOwner.project
+          .sheetById(target.sheet.id)
+          ?.deviceById(target.device.id);
+      if (source == null ||
+          destination == null ||
+          source.id == destination.id ||
+          source.componentId != destination.componentId) {
+        return;
+      }
+      canvasOwner.navigateToDevice(target.sheet.id, target.device.id);
+    }
+
     return Listener(
       onPointerDown: (_) => _continuationNavigationRequest++,
       child: Focus(
@@ -845,6 +875,8 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                                                             ),
                                                     onEditDrawingObject:
                                                         editDrawingObject,
+                                                    onFollowDevice:
+                                                        followDevice,
                                                     onEditContinuation:
                                                         editContinuationMarker,
                                                     onFollowContinuation:

@@ -141,6 +141,12 @@ sealed class EcadCommand {
       case 'updateDevice':
         fields({'sheetId', 'device'});
         return UpdateDevice(sheetId(), Device.fromJson(map['device']));
+      case 'setMainFunction':
+        fields({'sheetId', 'deviceId'});
+        return SetMainFunction(
+          sheetId(),
+          jsonString(map, 'deviceId', max: 128),
+        );
       case 'updateDevices':
         fields({'sheetId', 'devices'});
         final devices =
@@ -345,6 +351,18 @@ class MoveDevices extends EcadCommand {
     'type': 'moveDevices',
     'sheetId': sheetId,
     'positions': positions.map((id, point) => MapEntry(id, point.toJson())),
+  };
+}
+
+class SetMainFunction extends EcadCommand {
+  const SetMainFunction(this.sheetId, this.deviceId);
+  final String sheetId;
+  final String deviceId;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'setMainFunction',
+    'sheetId': sheetId,
+    'deviceId': deviceId,
   };
 }
 

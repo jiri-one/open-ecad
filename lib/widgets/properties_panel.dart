@@ -413,6 +413,18 @@ class _DeviceInspectorState extends State<_DeviceInspector> {
         ),
         Text(component.electrical!.functionById(device.functionId)!.name),
         Text(
+          app.resolver.isMainFunction(device)
+              ? 'Hlavní funkce'
+              : 'Vedlejší funkce',
+          key: const ValueKey('device-function-role'),
+        ),
+        if (!device.isMainFunction)
+          OutlinedButton(
+            key: const ValueKey('set-main-function'),
+            onPressed: () => app.setMainFunction(widget.sheetId, device.id),
+            child: const Text('Nastavit jako hlavní funkci'),
+          ),
+        Text(
           'Na tomto listu: ${app.resolver.relativeDesignation(component, app.project.sheetById(widget.sheetId)!.structure)}',
         ),
         const SizedBox(height: 16),
@@ -485,13 +497,11 @@ class _DeviceInspectorState extends State<_DeviceInspector> {
         for (final occurrence in app.resolver.otherOccurrences(device))
           TextButton(
             onPressed: () {
-              app.setSheet(occurrence.sheet.id);
-              app.select({occurrence.device.id});
-              app.setPanel(SidePanel.properties);
               if (ModalRoute.of(context) is DialogRoute) Navigator.pop(context);
+              app.navigateToDevice(occurrence.sheet.id, occurrence.device.id);
             },
             child: Text(
-              'Výskyt: ${fullPageDesignation(occurrence.sheet)} · ${occurrence.sheet.name}',
+              '${app.resolver.isMainFunction(occurrence.device) ? 'Hlavní' : 'Vedlejší'} funkce: ${fullPageDesignation(occurrence.sheet)} · ${occurrence.sheet.name} · X ${decimal(occurrence.device.position.x)} / Y ${decimal(occurrence.device.position.y)}',
             ),
           ),
         OutlinedButton.icon(

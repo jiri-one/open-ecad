@@ -32,6 +32,11 @@ class DrawingCursorRegion extends StatefulWidget {
     return scope?.active == true ? SystemMouseCursors.none : fallback;
   }
 
+  static ValueChanged<bool>? systemCursorOverrideOf(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<_DrawingCursorScope>()
+          ?.overrideSystemCursor;
+
   @override
   State<DrawingCursorRegion> createState() => _DrawingCursorRegionState();
 }
@@ -39,6 +44,7 @@ class DrawingCursorRegion extends StatefulWidget {
 class _DrawingCursorRegionState extends State<DrawingCursorRegion>
     with WidgetsBindingObserver {
   final _position = ValueNotifier<Offset?>(null);
+  final _systemCursor = ValueNotifier<bool>(false);
   bool _active = false, _inside = false, _appActive = true, _viewFocused = true;
   int? _device;
 
@@ -76,6 +82,11 @@ class _DrawingCursorRegionState extends State<DrawingCursorRegion>
     _inside = false;
     _device = null;
     _position.value = null;
+    _overrideSystemCursor(false);
+  }
+
+  void _overrideSystemCursor(bool value) {
+    if (mounted) _systemCursor.value = value;
   }
 
   void _track(PointerEvent event, {bool hitTested = false}) {
@@ -101,6 +112,7 @@ class _DrawingCursorRegionState extends State<DrawingCursorRegion>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _position.dispose();
+    _systemCursor.dispose();
     super.dispose();
   }
 
@@ -116,6 +128,7 @@ class _DrawingCursorRegionState extends State<DrawingCursorRegion>
     if (!_active) _clear();
     return _DrawingCursorScope(
       active: _active,
+      overrideSystemCursor: _overrideSystemCursor,
       child: MouseRegion(
         cursor: _active ? SystemMouseCursors.none : MouseCursor.defer,
         onEnter: (event) => _track(event, hitTested: true),
@@ -137,6 +150,7 @@ class _DrawingCursorRegionState extends State<DrawingCursorRegion>
                       key: const ValueKey('drawing-cursor-overlay'),
                       painter: _DrawingCursorPainter(
                         position: _position,
+                        systemCursor: _systemCursor,
                         settings: widget.settings,
                         background: widget.backgroundColor,
                       ),
@@ -153,8 +167,13 @@ class _DrawingCursorRegionState extends State<DrawingCursorRegion>
 }
 
 class _DrawingCursorScope extends InheritedWidget {
-  const _DrawingCursorScope({required this.active, required super.child});
+  const _DrawingCursorScope({
+    required this.active,
+    required this.overrideSystemCursor,
+    required super.child,
+  });
   final bool active;
+  final ValueChanged<bool> overrideSystemCursor;
 
   @override
   bool updateShouldNotify(_DrawingCursorScope oldWidget) =>
@@ -164,18 +183,20 @@ class _DrawingCursorScope extends InheritedWidget {
 class _DrawingCursorPainter extends CustomPainter {
   _DrawingCursorPainter({
     required this.position,
+    required this.systemCursor,
     required this.settings,
     required this.background,
-  }) : super(repaint: position);
+  }) : super(repaint: Listenable.merge([position, systemCursor]));
 
   final ValueNotifier<Offset?> position;
+  final ValueNotifier<bool> systemCursor;
   final DrawingCursorSettings settings;
   final Color background;
 
   @override
   void paint(Canvas canvas, Size size) {
     final point = position.value;
-    if (point == null) return;
+    if (point == null || systemCursor.value) return;
     final color = switch (settings.color) {
       DrawingCursorColor.automatic =>
         background.computeLuminance() > 0.179 ? Colors.black : Colors.white,
@@ -201,6 +222,7 @@ class _DrawingCursorPainter extends CustomPainter {
   @override
   bool shouldRepaint(_DrawingCursorPainter oldDelegate) =>
       position != oldDelegate.position ||
+      systemCursor != oldDelegate.systemCursor ||
       settings != oldDelegate.settings ||
       background != oldDelegate.background;
 }

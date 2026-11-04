@@ -11,6 +11,64 @@ class PortAnnotation {
   final Rect bounds;
 }
 
+class DeviceCrossReference {
+  const DeviceCrossReference(
+    this.sourceId,
+    this.target,
+    this.text,
+    this.bounds,
+    this.baseline,
+  );
+  final String sourceId;
+  final DeviceOccurrence target;
+  final String text;
+  final Rect bounds;
+  final double baseline;
+}
+
+List<DeviceCrossReference> layoutDeviceCrossReferences(
+  ProjectResolver resolver,
+  Device device,
+) {
+  final targets = resolver.otherOccurrences(device);
+  if (targets.isEmpty) return const [];
+  final geometry = geometryFor(device);
+  final bounds = rotatedBounds(
+    device.position,
+    geometry.width,
+    geometry.height,
+    device.rotation,
+  );
+  final terminal =
+      device.symbol is TerminalSymbolSpec
+          ? TerminalSymbolGeometry(
+            sides: (device.symbol as TerminalSymbolSpec).sides,
+            center: device.position,
+            quarterTurns: device.rotation ~/ 90,
+          ).labelLayout()
+          : null;
+  var x = terminal?.designationOrigin.x ?? bounds.x + bounds.width + 18;
+  if (terminal == null) {
+    for (final port in layoutPortAnnotations(resolver, device)) {
+      if (port.bounds.right + 12 > x) x = port.bounds.right + 12;
+    }
+  }
+  var y = (terminal?.numberOrigin.y ?? device.position.y + 1) + 14;
+  final result = <DeviceCrossReference>[];
+  for (final target in targets) {
+    final point = target.device.position;
+    final text =
+        '${fullPageDesignation(target.sheet)}${resolver.isMainFunction(target.device) ? ' (H)' : ''} · ${point.x.toStringAsFixed(1)}/${point.y.toStringAsFixed(1)}';
+    final painter = reportTextPainter(text, 8.5);
+    final rect = Rect.fromLTWH(x, y, painter.width, painter.height);
+    final baseline = y + painter.computeLineMetrics().first.baseline;
+    painter.dispose();
+    y = rect.bottom + 3;
+    result.add(DeviceCrossReference(device.id, target, text, rect, baseline));
+  }
+  return List.unmodifiable(result);
+}
+
 List<PortAnnotation> layoutPortAnnotations(
   ProjectResolver resolver,
   Device device,
