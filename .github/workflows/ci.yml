@@ -101,6 +101,15 @@ jobs:
           Source commit: $env:GITHUB_SHA
           Build: https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
           "@ | Set-Content -LiteralPath $notesPath -Encoding utf8
-          $assets = @(Get-ChildItem dist -File | Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*.zip.sha256' } | Select-Object -ExpandProperty FullName)
-          gh release create $tag --target $env:GITHUB_SHA --title "Open ECAD $version - Windows preview $env:GITHUB_RUN_NUMBER" --prerelease --latest=false --notes-file $notesPath @assets
+          $archives = @(Get-ChildItem dist -Filter '*.zip' -File)
+          if ($archives.Count -ne 1) { throw 'Expected exactly one tested Windows ZIP.' }
+          $assetName = 'open-ecad-windows-x64-portable.zip'
+          $assetPath = Join-Path $env:RUNNER_TEMP $assetName
+          Copy-Item -LiteralPath $archives[0].FullName -Destination $assetPath
+          $digest = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$assetPath.sha256", "$digest  $assetName`n", [Text.Encoding]::ASCII)
+          $assets = @($assetPath, "$assetPath.sha256")
+          gh release create $tag --target $env:GITHUB_SHA --title "Open ECAD $version - Windows preview $env:GITHUB_RUN_NUMBER" --draft --notes-file $notesPath @assets
+          if ($LASTEXITCODE -ne 0) { throw 'Uploading the tested preview failed.' }
+          gh release edit $tag --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw 'Publishing the tested preview failed.' }

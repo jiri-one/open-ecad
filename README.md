@@ -4,6 +4,14 @@ Otevřený editor elektrotechnických schémat ve Flutteru. Ruční kreslení i 
 používají stejné datové jádro a vratné příkazy. Projekt je připravený pro Windows,
 Linux, macOS a web; první lokální ověření proběhlo na Linuxu a ve webovém náhledu.
 
+**[Stáhnout nejnovější testovací verzi pro Windows (ZIP)](https://github.com/jiri-one/open-ecad/releases/latest/download/open-ecad-windows-x64-portable.zip)**
+
+[Informace o nejnovější verzi](https://github.com/jiri-one/open-ecad/releases/latest)
+· [Kontrolní součet SHA-256](https://github.com/jiri-one/open-ecad/releases/latest/download/open-ecad-windows-x64-portable.zip.sha256)
+
+Tyto adresy se nemění a vždy vedou na poslední úspěšně otestované sestavení.
+ZIP rozbalte celý do nové složky a spusťte `open_ecad.exe`.
+
 ## Spuštění
 
 Aktuální sestavení používá **Flutter 3.47.7 / Dart 3.13.5**. Stejnou verzi Flutteru
@@ -26,12 +34,10 @@ rozbalí a spustí přes `open_ecad.exe`; Flutter ani Visual Studio příjemce
 nepotřebuje. Postup sestavení a obsah balíčku popisuje
 [Windows portable build](docs/windows-native-build.md).
 
-Hotový ZIP stáhněte z nejnovějšího
-[testovacího vydání pro Windows](https://github.com/jiri-one/open-ecad/releases)
-v části **Assets**. Rozbalte celý archiv a spusťte `open_ecad.exe`.
 Testovací vydání vzniká automaticky po každém úspěšně ověřeném pushi do `main`;
-každé má vlastní číslo sestavení a trvalý odkaz ke stažení. Průběžné balíčky
-v Actions jsou dostupné jen sedm dní.
+každé má vlastní číslo sestavení. Stálé odkazy v úvodu vedou na nejnovější
+vydání; [historie sestavení](https://github.com/jiri-one/open-ecad/releases)
+uchovává i starší balíčky. Průběžné balíčky v Actions jsou dostupné jen sedm dní.
 
 Webový náhled bez externího CDN:
 

@@ -16,8 +16,19 @@ statické analýze, testech, sestavení a ověření spuštění rozbaleného ba
 automaticky vznikne testovací vydání v
 [GitHub Releases](https://github.com/jiri-one/open-ecad/releases) s přímým
 odkazem na ZIP a kontrolní součet. Název vydání i tag obsahují jedinečné číslo
-běhu; balík uvádí zdrojový commit. Kolega stáhne ZIP z nejnovějšího testovacího
-vydání, rozbalí celý archiv a spustí `open_ecad.exe`.
+běhu; balík uvádí zdrojový commit.
+
+Stálé adresy pro sdílení s testery:
+
+- [Nejnovější Windows ZIP](https://github.com/jiri-one/open-ecad/releases/latest/download/open-ecad-windows-x64-portable.zip)
+- [Informace o nejnovějším sestavení](https://github.com/jiri-one/open-ecad/releases/latest)
+- [Kontrolní součet SHA-256](https://github.com/jiri-one/open-ecad/releases/latest/download/open-ecad-windows-x64-portable.zip.sha256)
+
+Vydání mají v GitHubu označení **Latest**, aby fungovaly tyto odkazy; v názvu
+a popisu jsou označená jako testovací sestavení. Publikovaný ZIP i jeho
+kontrolní součet mají stálé názvy nezávislé na verzi aplikace. Actions uchovává
+také původní archiv s verzí v názvu. Kolega rozbalí celý ZIP do nové složky
+a spustí `open_ecad.exe`.
 
 Workflow lze spustit také ručně a zapnout **publish_preview** pro vydání z
 `main`. Ruční běh bez této volby a běhy pull requestů vytvářejí jen artefakty
