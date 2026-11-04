@@ -11,11 +11,18 @@ z nově rozbalené složky. Pro ruční průchod na cílovém počítači použi
 [ověřovací scénář](testing.md). Flutter vyžaduje pro nativní Windows sestavení
 Windows hostitele; viz [platformy Flutteru](https://docs.flutter.dev/platform-integration).
 
-V Actions lze ručně spustit workflow **Verify and build Windows** a zapnout
-**publish_preview**. Po úspěšných kontrolách vytvoří testovací vydání v
+Každý push do `main` spustí workflow **Verify and build Windows**. Po úspěšné
+statické analýze, testech, sestavení a ověření spuštění rozbaleného balíku
+automaticky vznikne testovací vydání v
 [GitHub Releases](https://github.com/jiri-one/open-ecad/releases) s přímým
-odkazem na ZIP a kontrolní součet. Bez této volby zůstává archiv po sedm dní
-mezi artefakty daného běhu. Žádný balík se neukládá do historie zdrojů.
+odkazem na ZIP a kontrolní součet. Název vydání i tag obsahují jedinečné číslo
+běhu; balík uvádí zdrojový commit. Kolega stáhne ZIP z nejnovějšího testovacího
+vydání, rozbalí celý archiv a spustí `open_ecad.exe`.
+
+Workflow lze spustit také ručně a zapnout **publish_preview** pro vydání z
+`main`. Ruční běh bez této volby a běhy pull requestů vytvářejí jen artefakty
+Actions dostupné sedm dní. Vydání v Releases nemají toto sedmidenní omezení.
+Žádný balík se neukládá do historie zdrojů.
 
 Stejný skript lze spustit na vlastním Windows počítači/VM i na Windows runneru
 GitHub Actions. Sám nic neodesílá ani nezakládá repozitář; případné nahrání

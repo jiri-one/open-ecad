@@ -29,8 +29,9 @@ nepotřebuje. Postup sestavení a obsah balíčku popisuje
 Hotový ZIP stáhněte z nejnovějšího
 [testovacího vydání pro Windows](https://github.com/jiri-one/open-ecad/releases)
 v části **Assets**. Rozbalte celý archiv a spusťte `open_ecad.exe`.
-Průběžné balíčky v Actions jsou dostupné jen sedm dní; vydání v Releases
-mají trvalý odkaz ke stažení.
+Testovací vydání vzniká automaticky po každém úspěšně ověřeném pushi do `main`;
+každé má vlastní číslo sestavení a trvalý odkaz ke stažení. Průběžné balíčky
+v Actions jsou dostupné jen sedm dní.
 
 Webový náhled bez externího CDN:
 

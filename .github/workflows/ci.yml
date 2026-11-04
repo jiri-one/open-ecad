@@ -80,7 +80,10 @@ jobs:
           compression-level: 0
           retention-days: 7
       - name: Publish tested preview for direct download
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_preview && github.ref == 'refs/heads/main'
+        if: >-
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' && inputs.publish_preview))
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -99,5 +102,5 @@ jobs:
           Build: https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
           "@ | Set-Content -LiteralPath $notesPath -Encoding utf8
           $assets = @(Get-ChildItem dist -File | Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*.zip.sha256' } | Select-Object -ExpandProperty FullName)
-          gh release create $tag --target $env:GITHUB_SHA --title "Open ECAD $version - Windows preview" --prerelease --latest=false --notes-file $notesPath @assets
+          gh release create $tag --target $env:GITHUB_SHA --title "Open ECAD $version - Windows preview $env:GITHUB_RUN_NUMBER" --prerelease --latest=false --notes-file $notesPath @assets
           if ($LASTEXITCODE -ne 0) { throw 'Publishing the tested preview failed.' }
