@@ -300,6 +300,36 @@ void main() {
     );
   }, skip: Platform.isWindows ? _linkSkip : false);
 
+  test('in-place CLI edits preserve restricted file permissions', () async {
+    for (final mode in ['600', '640']) {
+      final permissions = await Process.run('/bin/chmod', [
+        mode,
+        projectFile.path,
+      ]);
+      expect(permissions.exitCode, 0);
+      final commands = File('${directory.path}/commands.json');
+      await commands.writeAsString(
+        jsonEncode([RenameProject('Mode $mode').toJson()]),
+      );
+      final result = await run([
+        'apply',
+        projectFile.path,
+        commands.path,
+        projectFile.path,
+      ]);
+      expect(result.exitCode, 0, reason: result.stderr.toString());
+      expect(
+        (await projectFile.stat()).mode & 0xfff,
+        int.parse(mode, radix: 8),
+      );
+      expect(
+        EcadProject.fromJson(jsonDecode(await projectFile.readAsString())).name,
+        'Mode $mode',
+      );
+      expect(directory.listSync().whereType<Directory>(), isEmpty);
+    }
+  }, skip: Platform.isWindows ? 'POSIX permissions' : false);
+
   test('a symbolic link without a target file is left unchanged', () async {
     final dangling = Link('${directory.path}/dangling.ecad.json')
       ..createSync('missing/project.ecad.json');

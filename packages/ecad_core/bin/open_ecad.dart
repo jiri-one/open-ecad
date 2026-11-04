@@ -36,6 +36,9 @@ Future<void> main(List<String> arguments) async {
       ),
     );
     exitCode = 2;
+  } on ProcessException catch (error) {
+    stderr.writeln(_plain('file_error: ${error.message}'));
+    exitCode = 2;
   }
 }
 
@@ -217,14 +220,28 @@ Future<void> _writeJson(String path, Object? data) async {
     stdout.add(encoded);
     return;
   }
-  // Write to a sibling file so an interrupted save cannot truncate a project.
   final destination = await _saveTarget(path);
-  final temporary = File('${destination.path}.${newId('save')}.tmp');
+  final original = await destination.stat();
+  final staging = await destination.parent.createTemp('.open-ecad-');
   try {
+    final temporary = File('${staging.path}/project.tmp');
     await temporary.writeAsBytes(encoded, flush: true);
+    if (!Platform.isWindows && original.type == FileSystemEntityType.file) {
+      final changed = await Process.run('/bin/chmod', [
+        (original.mode & 0xfff).toRadixString(8),
+        temporary.path,
+      ]);
+      if (changed.exitCode != 0) {
+        throw FileSystemException('Cannot preserve file permissions', path);
+      }
+    }
     await temporary.rename(destination.path);
   } finally {
-    if (await temporary.exists()) await temporary.delete();
+    try {
+      await staging.delete(recursive: true);
+    } on FileSystemException {
+      // Cleanup cannot undo a committed save.
+    }
   }
 }
 

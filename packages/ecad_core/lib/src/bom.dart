@@ -292,13 +292,16 @@ int naturalCompare(String a, String b) {
   final parts = RegExp(r'[0-9]+|[^0-9]+');
   final left = parts.allMatches(a.toLowerCase()).map((m) => m[0]!).toList();
   final right = parts.allMatches(b.toLowerCase()).map((m) => m[0]!).toList();
+  final numeric = RegExp(r'^[0-9]');
+  final zeroes = RegExp(r'^0+');
   for (var i = 0; i < left.length && i < right.length; i++) {
-    final ln = int.tryParse(left[i]);
-    final rn = int.tryParse(right[i]);
-    final order =
-        ln != null && rn != null
-            ? ln.compareTo(rn)
-            : left[i].compareTo(right[i]);
+    var order = left[i].compareTo(right[i]);
+    if (numeric.hasMatch(left[i]) && numeric.hasMatch(right[i])) {
+      final ln = left[i].replaceFirst(zeroes, '');
+      final rn = right[i].replaceFirst(zeroes, '');
+      order = ln.length.compareTo(rn.length);
+      if (order == 0) order = ln.compareTo(rn);
+    }
     if (order != 0) return order;
   }
   return left.length.compareTo(right.length);

@@ -7,9 +7,21 @@ import 'package:open_ecad/app/controller.dart';
 import 'package:open_ecad/app/workspace.dart';
 import 'package:open_ecad/editor/schematic_canvas.dart';
 import 'package:open_ecad/services/desktop_window.dart';
+import 'package:open_ecad/services/project_persistence.dart';
 import 'package:open_ecad/widgets/project_panel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
+
+class _Persistence extends ProjectPersistence {
+  bool allowSave = false;
+
+  @override
+  Future<SavedProjectFile?> saveAs(
+    EcadProject project, {
+    DocumentFileHandle? currentFile,
+    required bool Function() canCommit,
+  }) async => allowSave ? const SavedProjectFile(name: 'memory.oecad') : null;
+}
 
 void main() {
   testWidgets(
@@ -48,7 +60,9 @@ void main() {
         calls.singleWhere((c) => c.method == 'setTitleBarStyle').arguments,
         {'titleBarStyle': 'hidden', 'windowButtonVisibility': false},
       );
+      final persistence = _Persistence();
       final app = EditorController(
+        persistence: persistence,
         initialProject: EcadProject(
           id: 'window-test',
           name: 'Window test',
@@ -108,8 +122,71 @@ void main() {
       );
       fullScreen = false;
       await event('leave-full-screen');
+      app.renameProject('Edited window test');
+      await tester.pump();
       await tester.tap(find.byTooltip('Zavřít okno'));
       expect(calls.last.method, 'close');
+      expect(app.dirty, isTrue);
+      expect(
+        ModalRoute.of(tester.element(find.byType(EditorWorkspace)))?.isCurrent,
+        isTrue,
+      );
+      await event('close');
+      expect(app.status, isNot(startsWith('Okno se nepodařilo')));
+      expect(find.text('Neuložené změny · Edited window test'), findsOneWidget);
+      expect(calls.where((c) => c.method == 'destroy'), isEmpty);
+      await tester.tap(find.text('Uložit'));
+      await tester.pumpAndSettle();
+      expect(app.status, 'Uložení zrušeno');
+      expect(calls.where((c) => c.method == 'destroy'), isEmpty);
+      await event('close');
+      await event('close');
+      expect(find.text('Neuložené změny · Edited window test'), findsOneWidget);
+      await tester.tap(find.text('Zrušit'));
+      await tester.pumpAndSettle();
+      expect(calls.where((c) => c.method == 'destroy'), isEmpty);
+      final workspace =
+          tester
+              .widget<EditorWorkspace>(find.byType(EditorWorkspace))
+              .workspace!;
+      final other = EditorController(
+        initialProject: app.project.copyWith(name: 'Other'),
+        persistence: persistence,
+      );
+      workspace.add(other);
+      workspace.openSheet(app, app.activeSheetId);
+      other.renameProject('Other edited');
+      app.renameProject('Changed immediately before close');
+      await event('close');
+      persistence.allowSave = true;
+      await tester.tap(find.text('Uložit'));
+      await tester.pumpAndSettle();
+      expect(app.dirty, isFalse);
+      expect(find.text('Neuložené změny · Other edited'), findsOneWidget);
+      expect(calls.where((c) => c.method == 'destroy'), isEmpty);
+      other.renameProject('Other changed while confirming');
+      await tester.tap(find.text('Zavřít bez uložení'));
+      await tester.pumpAndSettle();
+      expect(calls.where((c) => c.method == 'destroy'), isEmpty);
+      await event('close');
+      expect(
+        find.text('Neuložené změny · Other changed while confirming'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Zavřít bez uložení'));
+      await tester.pumpAndSettle();
+      expect(calls.where((c) => c.method == 'destroy'), hasLength(1));
+      final recovered = await app.persistence.loadAutosave(
+        sessionId: app.documentSessionId,
+      );
+      expect(recovered!.project.name, 'Changed immediately before close');
+      expect(recovered.savedRevision, app.project.revision);
+      expect(
+        (await persistence.loadAutosave(
+          sessionId: other.documentSessionId,
+        ))!.project.name,
+        'Other changed while confirming',
+      );
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 500));
       debugDefaultTargetPlatformOverride = null;

@@ -1,6 +1,7 @@
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 import '../editor/schematic_canvas.dart';
 import '../editor/drawing_cursor.dart';
 import '../services/drawing_cursor_settings.dart';
@@ -95,7 +96,7 @@ enum _ToolGroup {
   final IconData icon;
 }
 
-class _EditorWorkspaceState extends State<EditorWorkspace> {
+class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
   _ToolGroup toolGroup = _ToolGroup.electrical;
   CanvasMode? _lastMode;
   final _activeTabKey = GlobalKey();
@@ -105,6 +106,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
   @override
   void initState() {
     super.initState();
+    if (DesktopWindow.enabled) windowManager.addListener(this);
     drawingCursor.addListener(_preferencesChanged);
     drawingCursor.load().catchError((Object _) {});
     keyboardShortcuts.addListener(_preferencesChanged);
@@ -123,6 +125,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
   EditorController get app => workspace.active;
   @override
   void dispose() {
+    if (DesktopWindow.enabled) windowManager.removeListener(this);
     drawingCursor.removeListener(_preferencesChanged);
     drawingCursor.dispose();
     keyboardShortcuts.removeListener(_preferencesChanged);
@@ -130,6 +133,57 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     localWorkspace?.dispose();
     promptFocus.dispose();
     super.dispose();
+  }
+
+  bool _closingWindow = false;
+
+  @override
+  Future<void> onWindowClose() async {
+    if (_closingWindow || ModalRoute.of(context)?.isCurrent != true) return;
+    _closingWindow = true;
+    try {
+      final documents = workspace.documents;
+      final approved = <EditorController, EcadProject>{};
+      for (final doc in documents) {
+        if (doc.ioBusy) {
+          doc.reportStatus(
+            'Probíhá práce se souborem. Zavřete okno po jejím dokončení.',
+          );
+          return;
+        }
+        final generation = doc.documentGeneration;
+        final revision = doc.project.revision;
+        if (!mounted ||
+            !await confirmReplaceProject(
+              context,
+              doc,
+              closingApplication: true,
+            )) {
+          return;
+        }
+        if (!doc.isDocumentCurrent(generation) ||
+            doc.project.revision != revision) {
+          return;
+        }
+        approved[doc] = doc.project;
+      }
+      await Future.wait(documents.map((doc) => doc.flushWorkingCopy()));
+      if (!mounted ||
+          workspace.documents.length != documents.length ||
+          documents.any(
+            (doc) =>
+                !workspace.documents.contains(doc) ||
+                doc.ioBusy ||
+                !identical(doc.project, approved[doc]),
+          )) {
+        return;
+      }
+      await windowManager.destroy();
+    } catch (error) {
+      if (mounted) app.reportStatus('Okno se nepodařilo zavřít: $error');
+    } finally {
+      _closingWindow = false;
+    }
   }
 
   SheetTab? _lastTabTap;

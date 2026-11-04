@@ -24,6 +24,7 @@ class DesktopWindow {
         windowButtonVisibility: false,
       ),
     );
+    await windowManager.setPreventClose(true);
     _enabled = true;
     await windowManager.show();
     await windowManager.focus();

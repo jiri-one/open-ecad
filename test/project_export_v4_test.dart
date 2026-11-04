@@ -272,10 +272,17 @@ void main() {
       (r) => r.sourceKey == 'article:box:piece',
     );
     expect(box.cells.skip(3).toList(), ['ks', '6', '5', '3', '2', '6']);
+    String expectedCsvText(String text) =>
+        const {
+          '-A1 · Zkušební blok': "'-A1 · Zkušební blok",
+          '-K1 · Řídicí relé': "'-K1 · Řídicí relé",
+          '-K1': "'-K1",
+        }[text] ??
+        text;
     final csv = exporter.csv(project, sheetId: 'bom');
     expect(_parseCsv(csv), [
       report.columns,
-      ...report.rows.map((r) => r.cells),
+      ...report.rows.map((r) => r.cells.map(expectedCsvText).toList()),
     ]);
     final unknown = report.rows.firstWhere(
       (r) => r.sourceKey == 'component:unknown',
@@ -296,7 +303,7 @@ void main() {
     );
     expect(_parseCsv(exporter.csv(project, sheetId: 'components')), [
       componentReport.columns,
-      ...componentReport.rows.map((r) => r.cells),
+      ...componentReport.rows.map((r) => r.cells.map(expectedCsvText).toList()),
     ]);
   });
 

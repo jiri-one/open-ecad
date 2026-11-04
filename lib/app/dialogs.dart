@@ -239,16 +239,21 @@ class _NewSheetDialogState extends State<_NewSheetDialog> {
 
 Future<bool> confirmReplaceProject(
   BuildContext context,
-  EditorController controller,
-) async {
+  EditorController controller, {
+  bool closingApplication = false,
+}) async {
   if (!controller.dirty) return true;
+  final generation = controller.documentGeneration;
+  final revision = controller.project.revision;
   final decision = await showDialog<String>(
     context: context,
     builder:
         (context) => AlertDialog(
           title: Text('Neuložené změny · ${controller.project.name}'),
-          content: const Text(
-            'Před zavřením projektu můžete změny uložit do souboru. Pracovní kopie ostatních projektů zůstanou zachovány.',
+          content: Text(
+            closingApplication
+                ? 'Před zavřením okna můžete změny uložit do souboru.'
+                : 'Před zavřením projektu můžete změny uložit do souboru. Pracovní kopie ostatních projektů zůstanou zachovány.',
           ),
           actions: [
             TextButton(
@@ -257,7 +262,9 @@ Future<bool> confirmReplaceProject(
             ),
             TextButton(
               onPressed: () => Navigator.pop(context, 'discard'),
-              child: const Text('Zahodit změny'),
+              child: Text(
+                closingApplication ? 'Zavřít bez uložení' : 'Zahodit změny',
+              ),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, 'save'),
@@ -266,6 +273,10 @@ Future<bool> confirmReplaceProject(
           ],
         ),
   );
+  if (!controller.isDocumentCurrent(generation) ||
+      controller.project.revision != revision) {
+    return false;
+  }
   if (decision == 'save') return controller.saveProject();
   return decision == 'discard';
 }

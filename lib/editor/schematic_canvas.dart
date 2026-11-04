@@ -480,23 +480,10 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
 
     if (!identical(oldWidget.sheet, widget.sheet) ||
         !identical(oldWidget.project, widget.project)) {
-      _pressedContinuationLink = null;
-      _continuationFocus = null;
-      _deviceFocus = null;
-      _clearHover();
+      _cancelGesture();
       _scene.dispose();
       _scene = _Scene(widget.sheet, widget.project);
       _images.update(widget.sheet.graphics);
-      if (_drag == _DragKind.move &&
-          _moveOrigin.keys.any(
-            (id) =>
-                !_scene.devices.containsKey(id) &&
-                !_scene.markers.containsKey(id) &&
-                !_scene.corners.containsKey(id) &&
-                !_scene.graphics.containsKey(id),
-          )) {
-        _cancelGesture();
-      }
       if (oldWidget.sheet.width != widget.sheet.width ||
           oldWidget.sheet.height != widget.sheet.height ||
           oldWidget.sheet.paperSizeMm != widget.sheet.paperSizeMm) {

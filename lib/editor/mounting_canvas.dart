@@ -370,6 +370,9 @@ class _MountingCanvasState extends State<MountingCanvas> {
     final app = widget.app, layout = app.activeLayout;
     if (!identical(diagnosticSnapshot, app.project)) {
       diagnosticSnapshot = app.project;
+      moving = null;
+      start = null;
+      preview = null;
       _resolver = ProjectResolver(app.project);
       _clearHover();
       diagnostics = validateProject(app.project);

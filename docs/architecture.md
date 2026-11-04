@@ -23,8 +23,10 @@ Formát v6 odděluje artikl (`Article`), fyzickou komponentu nebo materiál
 funkcí a výskytů; kusovník se počítá z komponent, nikoli ze značek. Materiál může
 mít kusové množství, přesnou metráž nebo neurčené množství. JSON ukládá desetinné
 množství jako řetězec s tečkou; české formuláře a množstevní buňky reportů používají
-čárku. CSV exportuje stejné viditelné buňky, v uvozovkách, takže desetinná čárka
-nenaruší oddělení sloupců. Kódy artiklů a ostatní texty se nepřepisují.
+čárku. CSV exportuje buňky v uvozovkách, takže desetinná čárka nenaruší oddělení
+sloupců. Text začínající znakem vzorce nebo tabulátorem či koncem řádku dostane
+v CSV úvodní apostrof, aby jej tabulkový program nevyhodnotil jako vzorec.
+Uložené údaje ani ostatní exporty se tím nemění.
 
 `StructureContext` ukládá explicitní cesty funkčního (`=`), místního (`+`)
 a nadřazeného produktového (`-`) aspektu. Místní označení komponenty je zvlášť
@@ -163,7 +165,8 @@ jsou řazené, aby pomalejší zápis nepřepsal novější stav. Každá je ome
 Uchovává se deset nejnovějších kopií mimo otevřené relace. Otevřené dokumenty
 mají samostatně počítané držitele, takže ani souběžná obnova neumožní promazat
 jejich kopie. Výslovné zavření po vyřešení změn odstraní kopii až za jejími
-rozpracovanými zápisy; ukončení celé aplikace kopie zachová pro další spuštění.
+rozpracovanými zápisy; zavření celého okna vyřeší neuložené změny všech projektů
+a dokončí zápis pracovních kopií, které zachová pro další spuštění.
 Ve stejném záznamu nese revizi naposledy uloženou do souboru a jeho název, takže
 obnova neoznačí uloženou práci za neuloženou ani novější změny za uložené.
 Na desktopu probíhá převod PDF v odděleném procesu a JSON kódování/dekódování přes

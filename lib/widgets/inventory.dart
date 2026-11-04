@@ -897,7 +897,9 @@ Future<void> assignArticle(
   EditorController app,
   Article article,
 ) async {
+  final generation = app.documentGeneration;
   String? id;
+  String? error;
   await showDialog<void>(
     context: context,
     builder:
@@ -926,17 +928,26 @@ Future<void> assignArticle(
                     onChanged: (v) => id = v,
                   ),
                 ],
-                error: app.status.startsWith('Artikl') ? null : app.status,
+                error: error,
                 save: () {
-                  if (id != null &&
-                      app.saveComponent(
-                        app.project
-                            .componentById(id!)!
-                            .copyWith(articleId: article.id),
-                      )) {
+                  if (!app.isDocumentCurrent(generation)) {
+                    refresh(() => error = 'Původní projekt již není otevřen.');
+                    return;
+                  }
+                  final component = app.project.componentById(id ?? '');
+                  if (component == null ||
+                      app.project.articleById(article.id) == null) {
+                    refresh(
+                      () => error = 'Vyberte existující komponentu a artikl.',
+                    );
+                    return;
+                  }
+                  if (app.saveComponent(
+                    component.copyWith(articleId: article.id),
+                  )) {
                     Navigator.pop(ctx);
                   } else {
-                    refresh(() {});
+                    refresh(() => error = app.status);
                   }
                 },
               ),

@@ -363,6 +363,11 @@ class EditorController extends ChangeNotifier {
     _autosaveTimer = Timer(const Duration(milliseconds: 400), _autosave);
   }
 
+  Future<void> flushWorkingCopy() {
+    _autosaveTimer?.cancel();
+    return _autosave();
+  }
+
   Future<void> _autosave() async {
     final snapshot = project;
     final generation = _documentGeneration;

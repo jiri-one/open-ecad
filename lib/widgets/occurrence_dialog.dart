@@ -663,6 +663,9 @@ Future<void> showMountPlacementDialog(
   EditorController app, {
   Component? component,
 }) async {
+  final generation = app.documentGeneration;
+  final sheetId = app.activeSheetId;
+  final layoutId = app.activeLayout?.id;
   String? id = component?.id;
   final x = TextEditingController(text: '50'),
       y = TextEditingController(text: '50');
@@ -705,6 +708,13 @@ Future<void> showMountPlacementDialog(
                 saveLabel: 'Umístit',
                 save: () {
                   try {
+                    if (!app.isDocumentCurrent(generation) ||
+                        app.activeSheetId != sheetId ||
+                        app.activeLayout?.id != layoutId) {
+                      throw const FormatException(
+                        'Původní montážní pohled již není otevřen.',
+                      );
+                    }
                     if (app.activeLayout == null) {
                       throw const FormatException(
                         'Nejprve nastavte montážní pohled na listu Výstavba.',

@@ -287,7 +287,7 @@ void main() {
       final printed =
           layout.pages.expand((p) => p.texts).map((t) => t.text).toList();
       for (final designation in ['-K1', '-K2']) {
-        expect(csv, contains('"$designation"'));
+        expect(csv, contains('"\'$designation"'));
         expect(svg, contains('>$designation</text>'));
         expect(printed, contains(designation));
       }

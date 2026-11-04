@@ -659,8 +659,13 @@ class ProjectExportService {
       throw const FormatException('List pro export neexistuje.');
     }
     final data = buildReport(project, sheet);
-    String row(List<String> cells) =>
-        cells.map((cell) => '"${cell.replaceAll('"', '""')}"').join(',');
+    String cell(String value) {
+      final text =
+          RegExp(r'^[=+@\-\t\r\n]').hasMatch(value) ? "'$value" : value;
+      return '"${text.replaceAll('"', '""')}"';
+    }
+
+    String row(List<String> cells) => cells.map(cell).join(',');
     return '${[row(data.columns), ...data.rows.map((r) => row(r.cells))].join('\r\n')}\r\n';
   }
 
