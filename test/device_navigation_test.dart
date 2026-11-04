@@ -111,6 +111,19 @@ Future<void> _finish(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 500));
 }
 
+dynamic _scenePainter(WidgetTester tester) =>
+    tester
+        .widgetList<CustomPaint>(
+          find.descendant(
+            of: find.byType(SchematicCanvas),
+            matching: find.byType(CustomPaint),
+          ),
+        )
+        .firstWhere(
+          (w) => w.painter.runtimeType.toString() == '_SchematicPainter',
+        )
+        .painter;
+
 Future<void> _middleClick(
   TestGesture mouse,
   Offset point,
@@ -210,6 +223,20 @@ void main() {
         await mouse.addPointer(location: link);
         await mouse.moveTo(link);
         await tester.pump();
+        final dynamic painter =
+            tester
+                .widgetList<CustomPaint>(
+                  find.descendant(
+                    of: find.byType(SchematicCanvas),
+                    matching: find.byType(CustomPaint),
+                  ),
+                )
+                .firstWhere(
+                  (w) =>
+                      w.painter.runtimeType.toString() == '_SchematicPainter',
+                )
+                .painter;
+        expect(painter.activeReference.target.device.id, target);
         expect(
           tester.binding.mouseTracker.debugDeviceActiveCursor(1),
           isNot(SystemMouseCursors.click),
@@ -277,6 +304,16 @@ void main() {
         tester.binding.mouseTracker.debugDeviceActiveCursor(1),
         isNot(SystemMouseCursors.click),
       );
+      expect(_scenePainter(tester).activeReference, isNotNull);
+      await mouse.moveTo(const Offset(5, 5));
+      await tester.pump();
+      expect(_scenePainter(tester).activeReference, isNull);
+      await mouse.moveTo(link);
+      await tester.pump();
+      expect(_scenePainter(tester).activeReference, isNotNull);
+      await tester.tap(find.byType(TextField).last);
+      await tester.pump();
+      expect(_scenePainter(tester).activeReference, isNull);
       await mouse.down(link);
       await mouse.up();
       await tester.pumpAndSettle();

@@ -13,6 +13,30 @@ sealed class EcadCommand {
     void fields(Set<String> names) =>
         jsonObject(value, 'command', allowed: {'type', ...names});
     switch (type) {
+      case 'addFrameTemplate':
+        fields({'template'});
+        return AddFrameTemplate(FrameTemplate.fromJson(map['template']));
+      case 'updateFrameTemplate':
+        fields({'template'});
+        return UpdateFrameTemplate(FrameTemplate.fromJson(map['template']));
+      case 'deleteFrameTemplate':
+        fields({'templateId'});
+        return DeleteFrameTemplate(jsonString(map, 'templateId', max: 128));
+      case 'setProjectFrame':
+        fields({'choice'});
+        return SetProjectFrame(FrameChoice.fromJson(map['choice']));
+      case 'setSheetFrame':
+        fields({'sheetId', 'choice'});
+        return SetSheetFrame(sheetId(), FrameChoice.fromJson(map['choice']));
+      case 'setProjectDocumentFields':
+        fields({'fields'});
+        return SetProjectDocumentFields(decodeDocumentFields(map['fields']));
+      case 'setSheetDocumentFields':
+        fields({'sheetId', 'fields'});
+        return SetSheetDocumentFields(
+          sheetId(),
+          decodeDocumentFields(map['fields']),
+        );
       case 'renameStructureBranch':
         fields({'aspect', 'prefix', 'replacement'});
         final aspects = StructureAspect.values.where(
@@ -780,5 +804,81 @@ class DeleteConnectionCorner extends EcadCommand {
     'type': 'deleteConnectionCorner',
     'sheetId': sheetId,
     'cornerId': cornerId,
+  };
+}
+
+class AddFrameTemplate extends EcadCommand {
+  const AddFrameTemplate(this.template);
+  final FrameTemplate template;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'addFrameTemplate',
+    'template': template.toJson(),
+  };
+}
+
+class UpdateFrameTemplate extends EcadCommand {
+  const UpdateFrameTemplate(this.template);
+  final FrameTemplate template;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'updateFrameTemplate',
+    'template': template.toJson(),
+  };
+}
+
+class DeleteFrameTemplate extends EcadCommand {
+  const DeleteFrameTemplate(this.templateId);
+  final String templateId;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'deleteFrameTemplate',
+    'templateId': templateId,
+  };
+}
+
+class SetProjectFrame extends EcadCommand {
+  const SetProjectFrame(this.choice);
+  final FrameChoice choice;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'setProjectFrame',
+    'choice': choice.toJson(),
+  };
+}
+
+class SetSheetFrame extends EcadCommand {
+  const SetSheetFrame(this.sheetId, this.choice);
+  final String sheetId;
+  final FrameChoice choice;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'setSheetFrame',
+    'sheetId': sheetId,
+    'choice': choice.toJson(),
+  };
+}
+
+class SetProjectDocumentFields extends EcadCommand {
+  SetProjectDocumentFields(Map<String, String> fields)
+    : fields = Map.unmodifiable(fields);
+  final Map<String, String> fields;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'setProjectDocumentFields',
+    'fields': fields,
+  };
+}
+
+class SetSheetDocumentFields extends EcadCommand {
+  SetSheetDocumentFields(this.sheetId, Map<String, String> fields)
+    : fields = Map.unmodifiable(fields);
+  final String sheetId;
+  final Map<String, String> fields;
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'setSheetDocumentFields',
+    'sheetId': sheetId,
+    'fields': fields,
   };
 }

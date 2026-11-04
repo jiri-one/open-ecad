@@ -18,7 +18,7 @@ flowchart LR
 ```
 
 Doména je v `packages/ecad_core`; Flutter používá stejný model a příkazy jako CLI.
-Formát v5 odděluje artikl (`Article`), fyzickou komponentu nebo materiál
+Formát v6 odděluje artikl (`Article`), fyzickou komponentu nebo materiál
 (`Component`) a schématické zobrazení funkce (`Device`). Jeden kus může mít více
 funkcí a výskytů; kusovník se počítá z komponent, nikoli ze značek. Materiál může
 mít kusové množství, přesnou metráž nebo neurčené množství. JSON ukládá desetinné
@@ -54,6 +54,27 @@ jej otočí nebo umístí ven s odkazovou čarou. Fyzické rozměry se kvůli te
 Canvas, PDF a SVG používají totožné pozice popisků. Živý report má také jediné
 rozvržení pro obrazovku i export; stránkování nemění uložené listy ani množství.
 Grafické objekty z PDF nemají automaticky elektrický význam.
+
+Rámečky mají společný model v jádru. Projekt ukládá definice šablon, výchozí
+volbu a údaje pro razítko; list dědí nastavení, vybírá vlastní šablonu nebo
+rámeček výslovně vypíná. Obvod, razítko a souřadnicové zóny lze přepínat
+samostatně. Poloha čar a textových polí je v milimetrech papíru. Údaje razítka
+se doplňují z povolených vazeb na projekt, list a fyzickou stránku; revize
+výkresu je editovatelný údaj nezávislý na revizi transakcí.
+
+Rozvržení nejprve vyhradí pracovní oblast a rozstránkuje reporty, potom doplní
+čísla a celkový počet fyzických stránek. Společná příprava textu rámečku řídí
+plátno i SVG/PDF. Změna šablony nepřesouvá existující objekty ani nemění montážní
+měřítko. Upozornění označí obsah mimo pracovní oblast a příliš dlouhý text;
+neplatné stránkování zabrání exportu neúplného dokumentu. Úpravy šablon a údajů
+procházejí stejnými atomickými příkazy a historií jako ostatní změny projektu.
+
+Validace a data reportů se uchovávají pro neměnný snímek projektu. Stránkování
+sestav má omezenou mezipaměť podle skutečného obsahu tabulky, papíru, pracovní
+oblasti a fontů; posun značky ani textového pole razítka ho znovu nepočítá.
+Rámečky a kontroly přesahů se připravují až pro zobrazenou stránku. Export
+připraví a ověří celý dokument. Náhled úprav rámečku používá data sestav
+z původního snímku a znovu počítá jejich stránkování při změně pracovní oblasti.
 
 Panel projektu nabízí listy, knihovnu značek, komponenty a artikly. Formuláře
 upravují společný zdroj údajů pro všechna zobrazení. Nové elektrické zobrazení
@@ -150,8 +171,8 @@ Na desktopu probíhá převod PDF v odděleném procesu a JSON kódování/dekó
 spuštění také přímo v pracovní složce, nikdy v jejích nadřazených složkách.
 Proměnné `ECAD_PDF_IMPORTER` a `ECAD_PDF_PYTHON` mají přednost. Python běží
 v režimu UTF-8, aby chybová zpráva převodníku zůstala čitelná. Ve webovém
-sestavení `compute` zůstává na hlavním vlákně. Zápis používá v5, čtečka přijímá
-v4 i v5. Chybějící struktura je prázdná a původní označení zůstává neprůhledným
+sestavení `compute` zůstává na hlavním vlákně. Aplikace i převodník zapisují v6,
+čtečka přijímá v4, v5 a v6. Chybějící struktura je prázdná a původní označení zůstává neprůhledným
 textem. Starší formáty se odmítají bez automatické migrace.
 Přímé spuštění binárky s `--project /cesta/projekt.oecad` má přednost před obnovou.
 Otevření stejné kanonické cesty aktivuje existující dokument a zachová jeho změny.

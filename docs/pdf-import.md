@@ -2,7 +2,7 @@
 
 První verze importu převádí PDF na editovatelnou **grafiku**: samostatné vektorové
 cesty, texty a vložené obrázky. Každá stránka vytvoří list se svými rozměry.
-Výsledkem je běžný přenositelný `.oecad` ve formátu v4, nikoli odkaz na původní
+Výsledkem je běžný přenositelný `.oecad` ve formátu v6, nikoli odkaz na původní
 PDF nebo celostránkový snímek. Soubor lze otevřít i ve webové aplikaci.
 
 Import zatím neobnovuje přístroje, vývody ani elektrické spoje. Nakreslená čára
@@ -31,11 +31,26 @@ py -3 -m venv .venv-pdf
 .\.venv-pdf\Scripts\python.exe -m pip install -r scripts\import_pdf_requirements.txt
 ```
 
-V desktopové aplikaci zvolte **Soubor → Importovat PDF jako grafiku…**. Po
-dokončení uložte projekt jako `.oecad`. Import nahrazuje otevřený dokument a
-respektuje dialog neuložených změn. Během převodu původní dokument zůstává v paměti;
-pokud jej mezitím změníte, výsledek importu se nepoužije.
+V desktopové aplikaci zvolte **Soubor → Importovat PDF jako grafiku…**. Po převodu
+se otevře náhled, ve kterém má každá stránka vlastní volbu:
+
+- **Zachovat původní vzhled** ponechá všechny objekty a nepřidá další rámeček.
+- **Použít naši šablonu** nabídne rámečky importu i aktuálního projektu. V náhledu
+  označte původní rámeček a razítko k odstranění. Výběr lze vrátit nebo vymazat;
+  při překryvu pomůže seznam objektů. Zbývající grafika se rovnoměrně přizpůsobí
+  pracovní oblasti nové šablony. Nemá-li stránka původní rámeček, lze pokračovat
+  bez označení objektů.
+
+Následuje kontrola výsledku všech stránek. Do výběru se lze vrátit bez opakovaného
+zmenšování grafiky; přijetí otevře celý import jako nový projekt. Potom jej uložte
+jako `.oecad`. Zrušení náhledu neotevře částečný projekt. Pokud během importu
+změníte, zavřete nebo přepnete původní dokument, výsledek se nepoužije.
 Upozornění převodníku se po importu zobrazí v pravém panelu jako zpráva o importu.
+
+Výběr odstraňuje celé grafické objekty. Spojenou cestu nebo obrázek nelze v tomto
+kroku rozdělit; náhled zvýrazní celý odstraňovaný objekt. Automatické rozpoznání
+rámečku, ořezání obsahu ani skrytí pod bílou plochou se neprovádí. Nové listy
+přidané do importovaného projektu dědí jeho výchozí rámeček.
 
 Pro vlastní instalaci lze zadat absolutní cestu k Pythonu přes `ECAD_PDF_PYTHON`
 a k `scripts/import_pdf.py` přes `ECAD_PDF_IMPORTER`. Samotný sestavený Flutter
@@ -52,6 +67,8 @@ nebo se použije následující příkaz samostatně.
 
 Ve Windows použijte místo shellového wrapperu
 `.\.venv-pdf\Scripts\python.exe scripts\import_pdf.py` se stejnými argumenty.
+Samostatný převodník zachovává původní vzhled a nastaví importované listy bez
+dalšího rámečku; výběr objektů a náhrada šablonou patří do náhledu v aplikaci.
 Webová aplikace proces Pythonu spustit nemůže; otevřete v ní již převedený `.oecad`
 přes běžné **Otevřít projekt**. Zpráva o importu obsahuje počty objektů,
 identifikaci zdroje SHA-256 a upozornění na nepřevedené vlastnosti.
@@ -84,7 +101,7 @@ identifikaci zdroje SHA-256 a upozornění na nepřevedené vlastnosti.
   a 15 000 grafických objektů. Větší projekty **ukládejte ručně do souboru**;
   aplikace tento stav ukazuje v liště. Explicitní uložení zachovává všechny listy.
 
-Aplikace čte formáty v4 a v5 a ukládá v5. PDF převodník vytváří v4.
+Aplikace čte formáty v4, v5 a v6 a ukládá v6. PDF převodník vytváří v6.
 Starší formáty se odmítají bez automatické migrace. Schéma je popsáno v
 [dokumentaci jádra](../packages/ecad_core/README.md).
 

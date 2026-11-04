@@ -6,26 +6,29 @@ import '../editor/drawing_cursor.dart';
 import '../services/drawing_cursor_settings.dart';
 import '../services/keyboard_shortcuts.dart';
 import '../services/pointer_warp.dart';
+import '../services/desktop_window.dart';
 import '../widgets/drawing_cursor_dialog.dart';
 import '../widgets/keyboard_shortcuts_dialog.dart';
 import '../widgets/sheet_context_menu.dart';
+import '../widgets/sheet_settings.dart';
 import '../editor/mounting_canvas.dart';
 import '../widgets/report_view.dart';
 import '../widgets/recovery_dialog.dart';
+import '../widgets/pdf_frame_import_dialog.dart';
 import '../widgets/inventory.dart';
 import '../widgets/diagnostic_text.dart';
 import '../widgets/terminal_symbol_dialog.dart';
 import '../widgets/continuation_editor.dart';
 import '../widgets/continuation_picker.dart';
 import '../widgets/edit_history.dart';
-import '../widgets/occurrence_dialog.dart' show electricalSheet;
+import '../widgets/occurrence_dialog.dart'
+    show electricalSheet, showMountPlacementDialog;
 import 'continuation_context.dart';
 import 'workspace_controller.dart';
 import '../widgets/assistant_panel.dart';
 import '../widgets/components.dart';
 import '../widgets/project_panel.dart';
 import '../widgets/properties_panel.dart';
-import '../widgets/sheet_types.dart';
 import 'controller.dart';
 import 'dialogs.dart';
 import 'theme.dart';
@@ -55,6 +58,7 @@ class _OpenEcadAppState extends State<OpenEcadApp> {
           theme: buildEcadTheme(workspace.active.appearance),
           themeAnimationDuration: Duration.zero,
           scrollBehavior: const _EditorScrollBehavior(),
+          builder: (_, child) => DesktopWindowFrame(child: child!),
           home: EditorWorkspace(
             controller: workspace.active,
             workspace: workspace,
@@ -81,7 +85,21 @@ class EditorWorkspace extends StatefulWidget {
   State<EditorWorkspace> createState() => _EditorWorkspaceState();
 }
 
+enum _ToolGroup {
+  electrical('Elektro', Icons.electrical_services),
+  drawing('Kreslení', Icons.draw_outlined),
+  editing('Úpravy', Icons.edit_outlined);
+
+  const _ToolGroup(this.label, this.icon);
+  final String label;
+  final IconData icon;
+}
+
 class _EditorWorkspaceState extends State<EditorWorkspace> {
+  _ToolGroup toolGroup = _ToolGroup.electrical;
+  CanvasMode? _lastMode;
+  final _activeTabKey = GlobalKey();
+  SheetTab? _lastVisibleTab;
   final drawingCursor = DrawingCursorPreferences();
   final keyboardShortcuts = KeyboardShortcutPreferences();
   @override
@@ -392,7 +410,14 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
   }
 
   Future<void> openProject() => workspace.open();
-  Future<void> importPdf() => workspace.open(importPdf: true);
+  Future<void> importPdf() => workspace.open(
+    importPdf: true,
+    reviewPdf:
+        (request) =>
+            mounted
+                ? showPdfFrameImportDialog(context, request)
+                : Future.value(null),
+  );
   Future<void> newProject({bool demo = false}) async =>
       workspace.create(demo: demo);
   Future<void> closeProject(EditorController doc) async {
@@ -680,15 +705,16 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     final canvasRevision = canvasOwner.project.revision;
     final navigationGeneration = workspace.navigationGeneration;
 
+    bool canvasContextCurrent() =>
+        mounted &&
+        workspace.active == canvasOwner &&
+        workspace.navigationGeneration == navigationGeneration &&
+        canvasOwner.isDocumentCurrent(canvasGeneration) &&
+        canvasOwner.project.revision == canvasRevision &&
+        canvasOwner.activeSheetId == canvasSheetId;
+
     void followDevice(String sourceId, DeviceOccurrence target) {
-      if (!mounted ||
-          workspace.active != canvasOwner ||
-          workspace.navigationGeneration != navigationGeneration ||
-          !canvasOwner.isDocumentCurrent(canvasGeneration) ||
-          canvasOwner.project.revision != canvasRevision ||
-          canvasOwner.activeSheetId != canvasSheetId) {
-        return;
-      }
+      if (!canvasContextCurrent()) return;
       final source = canvasOwner.project
           .sheetById(canvasSheetId)
           ?.deviceById(sourceId);
@@ -719,8 +745,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                     showAssistant && bounds.maxWidth >= 680;
                 return Column(
                   children: [
-                    _header(c, compact),
-                    _toolbar(c, compact),
+                    _commandBar(c, bounds.maxWidth),
                     Expanded(
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -746,23 +771,6 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                           Expanded(
                             child: Column(
                               children: [
-                                _sheetTabs(c),
-                                if (app.sheet.sourcePage != null)
-                                  Container(
-                                    width: double.infinity,
-                                    color: c.panel,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 6,
-                                    ),
-                                    child: Text(
-                                      'Grafika z PDF · ${app.sheet.graphics.length} objektů · elektrické vazby nejsou obnovené',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: c.muted,
-                                      ),
-                                    ),
-                                  ),
                                 Expanded(
                                   child: Stack(
                                     children: [
@@ -784,6 +792,9 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                                                     ),
                                                   ),
                                                   app: app,
+                                                  showControls: false,
+                                                  isNavigationCurrent:
+                                                      canvasContextCurrent,
                                                 )
                                                 : app.sheet.type ==
                                                         SheetType
@@ -802,6 +813,9 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                                                     ),
                                                   ),
                                                   app: app,
+                                                  showControls: false,
+                                                  isNavigationCurrent:
+                                                      canvasContextCurrent,
                                                   cursorSettings:
                                                       drawingCursor.value,
                                                 )
@@ -879,11 +893,11 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                                                         followDevice,
                                                     onEditContinuation:
                                                         editContinuationMarker,
-                                                    onFollowContinuation:
-                                                        (id) =>
-                                                            followContinuation(
-                                                              id,
-                                                            ),
+                                                    onFollowContinuation: (id) {
+                                                      if (canvasContextCurrent()) {
+                                                        followContinuation(id);
+                                                      }
+                                                    },
                                                     onPlaceContinuation:
                                                         placeContinuation,
                                                     pastePreview:
@@ -892,42 +906,6 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                                                         app.placeClipboard,
                                                   ),
                                                 ),
-                                      ),
-                                      Positioned(
-                                        left: 16,
-                                        top: 16,
-                                        child: IgnorePointer(
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 10,
-                                              vertical: 6,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: c.panel,
-                                              border: Border.all(
-                                                color: c.border,
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Icon(
-                                                  sheetTypeIcon(app.sheet.type),
-                                                  size: 12,
-                                                ),
-                                                const SizedBox(width: 7),
-                                                Text(
-                                                  '${fullPageDesignation(app.sheet)} / ${app.project.pages.length.toString().padLeft(2, '0')} · ${app.sheet.type.label}',
-                                                  style: const TextStyle(
-                                                    fontSize: 10,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
                                       ),
                                       if (app.showingProposal)
                                         Positioned(
@@ -984,11 +962,6 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
                                             ),
                                           ),
                                         ),
-                                      Positioned(
-                                        right: 16,
-                                        bottom: 16,
-                                        child: _zoomControls(c),
-                                      ),
                                       if (app.mode == CanvasMode.corner ||
                                           app.mode == CanvasMode.place ||
                                           app.mode == CanvasMode.wire)
@@ -1124,745 +1097,816 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     );
   }
 
-  Widget _header(EcadColors c, bool compact) => Container(
-    height: 60,
-    padding: const EdgeInsets.symmetric(horizontal: 16),
-    decoration: BoxDecoration(
-      color: c.panel,
-      border: Border(bottom: BorderSide(color: c.border)),
-    ),
-    child: Row(
-      children: [
-        const BrandMark(),
-        const SizedBox(width: 10),
-        const Text(
-          'open',
-          style: TextStyle(
-            fontSize: 19,
-            fontWeight: FontWeight.w400,
-            letterSpacing: -0.6,
-          ),
-        ),
-        const Text(
-          'ecad',
-          style: TextStyle(
-            fontSize: 19,
-            fontWeight: FontWeight.w600,
-            letterSpacing: -0.6,
-          ),
-        ),
-        const SizedBox(width: 14),
-        if (!compact)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
-            decoration: BoxDecoration(
-              border: Border.all(color: c.border),
-              borderRadius: BorderRadius.circular(3),
+  Widget _commandBar(EcadColors c, double width) {
+    final mounting =
+        app.sheet.type == SheetType.cabinetLayout &&
+        (app.sheet.mountingView != null || app.sheet.graphics.isEmpty);
+    final report = app.sheet.type == SheetType.billOfMaterials;
+    if (_lastMode != app.mode) {
+      _lastMode = app.mode;
+      toolGroup = switch (app.mode) {
+        CanvasMode.drawLine ||
+        CanvasMode.drawRectangle ||
+        CanvasMode.drawText => _ToolGroup.drawing,
+        CanvasMode.wire ||
+        CanvasMode.continuation ||
+        CanvasMode.corner ||
+        CanvasMode.place => _ToolGroup.electrical,
+        _ => toolGroup,
+      };
+    }
+    if (_lastVisibleTab != workspace.activeTab) {
+      _lastVisibleTab = workspace.activeTab;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final tabContext = _activeTabKey.currentContext;
+        if (mounted && tabContext != null) {
+          Scrollable.ensureVisible(
+            tabContext,
+            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+          );
+        }
+      });
+    }
+    return Container(
+      key: const ValueKey('workspace-command-bar'),
+      height: 40,
+      decoration: BoxDecoration(
+        color: c.panel,
+        border: Border(bottom: BorderSide(color: c.border)),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 4),
+          _fileMenu(),
+          _barButton(
+            Icons.save_outlined,
+            actionLabel(
+              app.dirty ? 'Uložit · neuložené změny' : 'Uložit',
+              EditorCommand.saveProject,
             ),
-            child: const Text(
-              '0.1',
-              style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600),
+            app.ioBusy ? null : app.saveProject,
+            selected: app.dirty,
+          ),
+          if (width >= 680) ...[
+            _barButton(
+              Icons.undo,
+              '${actionLabel('Vrátit', EditorCommand.undo)}${app.undoLabel == null ? '' : '\n${app.undoLabel}'}',
+              app.canUndo ? undoEdit : null,
             ),
-          ),
-        const SizedBox(width: 20),
-        SizedBox(height: 22, child: VerticalDivider(width: 1, color: c.border)),
-        const SizedBox(width: 18),
-        Expanded(
-          child: InkWell(
-            onTap: renameProject,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  app.project.name,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  app.dirty
-                      ? '● Neuložené změny · ${app.fileName ?? 'bez souboru'}'
-                      : (app.fileName ?? 'Projekt bez souboru'),
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 9, color: c.muted),
-                ),
-              ],
+            _barButton(
+              Icons.redo,
+              '${actionLabel('Obnovit', EditorCommand.redo)}${app.redoLabel == null ? '' : '\n${app.redoLabel}'}',
+              app.canRedo ? redoEdit : null,
             ),
+            _barButton(Icons.history, 'Historie úprav', editHistory),
+          ],
+          _toolbarDivider(c),
+          _tool(
+            Icons.near_me_outlined,
+            'Výběr',
+            EditorCommand.selectTool,
+            CanvasMode.select,
           ),
-        ),
-        const SizedBox(width: 12),
-        Container(
-          padding: const EdgeInsets.all(3),
-          decoration: BoxDecoration(
-            border: Border.all(color: c.border),
-            borderRadius: BorderRadius.circular(5),
-          ),
-          child: Row(
-            children: [
-              for (final appearance in EcadAppearance.values)
-                EcadIconButton(
-                  icon: switch (appearance) {
-                    EcadAppearance.paper => Icons.light_mode_outlined,
-                    EcadAppearance.ink => Icons.dark_mode_outlined,
-                    EcadAppearance.studio => Icons.palette_outlined,
-                  },
-                  label: appearance.label,
-                  selected: app.appearance == appearance,
-                  onPressed: () => app.setAppearance(appearance),
-                  size: 28,
-                  iconSize: 16,
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 12),
-        if (!compact) ...[
-          OutlinedButton.icon(
-            onPressed: commandPalette,
-            icon: const Icon(Icons.search, size: 15),
-            label: Row(
-              children: [
-                const Text('Příkazy'),
-                const SizedBox(width: 14),
-                if (keyboardShortcuts.value
-                    .labelFor(EditorCommand.commandPalette)
-                    .isNotEmpty)
-                  Keycap(
-                    keyboardShortcuts.value.labelFor(
-                      EditorCommand.commandPalette,
-                    ),
-                  ),
-              ],
+          if (width >= 680)
+            _tool(
+              Icons.pan_tool_outlined,
+              'Posun',
+              EditorCommand.panTool,
+              CanvasMode.pan,
             ),
+          if (mounting) ...[
+            _barButton(
+              Icons.view_quilt_outlined,
+              'Pohled a měřítko',
+              () => editMountingView(context, app),
+            ),
+            _barButton(
+              Icons.add_box_outlined,
+              'Umístit komponentu',
+              () => showMountPlacementDialog(context, app),
+            ),
+          ] else if (report)
+            _barButton(
+              Icons.table_chart_outlined,
+              'Vlastnosti reportu',
+              () => editSheetSettings(context, app),
+            )
+          else ...[
+            _toolGroupMenu(),
+            if (width >= 1120) ..._groupTools(),
+          ],
+          _toolbarDivider(c),
+          Expanded(child: _sheetTabs(c)),
+          if (DesktopWindow.enabled)
+            DesktopWindow.dragArea(const SizedBox(width: 24, height: 40)),
+          _barButton(
+            Icons.content_paste,
+            actionLabel('Vložit ze schránky', EditorCommand.paste),
+            pasteSelection,
           ),
-          const SizedBox(width: 12),
+          if (width >= 800)
+            _barButton(
+              Icons.search,
+              actionLabel('Příkazy', EditorCommand.commandPalette),
+              commandPalette,
+            ),
+          _barButton(
+            Icons.vertical_split_outlined,
+            'Zobrazit projekt a knihovnu',
+            () => setState(() => showProject = !showProject),
+            selected: showProject,
+          ),
+          _barButton(Icons.tune, 'Zobrazit vlastnosti', () {
+            setState(() => showAssistant = true);
+            app.setPanel(SidePanel.properties);
+          }, selected: showAssistant && app.sidePanel == SidePanel.properties),
+          _barButton(Icons.auto_awesome_outlined, 'Zobrazit asistenta', () {
+            if (showAssistant && app.sidePanel == SidePanel.assistant) {
+              setState(() => showAssistant = false);
+            } else {
+              setState(() => showAssistant = true);
+              app.setPanel(SidePanel.assistant);
+            }
+          }, selected: showAssistant && app.sidePanel == SidePanel.assistant),
+          _settingsMenu(),
+          if (width >= 680)
+            _barButton(
+              Icons.help_outline,
+              'Ovládání a klávesové zkratky',
+              () => showHelpDialog(context, shortcuts: keyboardShortcuts.value),
+            ),
+          const DesktopWindowControls(),
+          const SizedBox(width: 4),
         ],
-        FilledButton.icon(
-          onPressed: app.ioBusy ? null : app.saveProject,
-          icon: const Icon(Icons.save_outlined, size: 16),
-          label: const Text('Uložit'),
-        ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 
-  Widget _toolbar(EcadColors c, bool compact) => Container(
-    height: 46,
-    padding: const EdgeInsets.symmetric(horizontal: 12),
-    decoration: BoxDecoration(
-      color: c.panel,
-      border: Border(bottom: BorderSide(color: c.border)),
-    ),
-    child: LayoutBuilder(
-      builder:
-          (context, bounds) => SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: bounds.maxWidth),
-              child: IntrinsicWidth(
-                child: Row(
-                  children: [
-                    PopupMenuButton<String>(
-                      tooltip: 'Soubor',
-                      offset: const Offset(0, 36),
-                      onSelected: (value) {
-                        switch (value) {
-                          case 'new':
-                            newProject();
-                          case 'demo':
-                            newProject(demo: true);
-                          case 'open':
-                            openProject();
-                          case 'recovery':
-                            showRecoveryDialog(context, workspace);
-                          case 'importPdf':
-                            importPdf();
-                          case 'save':
-                            app.saveProject();
-                          case 'saveAs':
-                            app.saveProjectAs();
-                          case 'close':
-                            closeProject(app);
-                          case 'pdf':
-                            app.exportProject(pdf: true);
-                          case 'svg':
-                            app.exportProject(pdf: false);
-                        }
-                      },
-                      itemBuilder:
-                          (_) => [
-                            const PopupMenuItem(
-                              value: 'new',
-                              child: Text('Nový projekt'),
-                            ),
-                            PopupMenuItem(
-                              value: 'open',
-                              child: Text(
-                                actionLabel(
-                                  'Otevřít projekt…',
-                                  EditorCommand.openProject,
-                                ),
-                              ),
-                            ),
-                            PopupMenuItem(
-                              value: 'recovery',
-                              child: Text('Obnovit pracovní kopii…'),
-                            ),
-                            PopupMenuItem(
-                              value: 'importPdf',
-                              child: Text('Importovat PDF jako grafiku…'),
-                            ),
-                            PopupMenuItem(
-                              value: 'save',
-                              child: Text(
-                                actionLabel(
-                                  'Uložit projekt',
-                                  EditorCommand.saveProject,
-                                ),
-                              ),
-                            ),
-                            PopupMenuItem(
-                              value: 'saveAs',
-                              child: Text(
-                                actionLabel(
-                                  'Uložit jako…',
-                                  EditorCommand.saveProjectAs,
-                                ),
-                              ),
-                            ),
-                            PopupMenuItem(
-                              value: 'close',
-                              child: Text('Zavřít aktivní projekt…'),
-                            ),
-                            PopupMenuDivider(),
-                            PopupMenuItem(
-                              value: 'pdf',
-                              child: Text('Exportovat všechny listy do PDF…'),
-                            ),
-                            PopupMenuItem(
-                              value: 'svg',
-                              child: Text('Exportovat aktuální list do SVG…'),
-                            ),
-                            PopupMenuDivider(),
-                            PopupMenuItem(
-                              value: 'demo',
-                              child: Text('Otevřít ukázkový projekt'),
-                            ),
-                          ],
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 8),
-                        child: Row(
-                          children: [
-                            Icon(Icons.folder_open_outlined, size: 17),
-                            SizedBox(width: 7),
-                            Text('Soubor', style: TextStyle(fontSize: 11)),
-                            SizedBox(width: 5),
-                            Icon(Icons.keyboard_arrow_down, size: 14),
-                          ],
-                        ),
-                      ),
-                    ),
-                    _toolbarDivider(c),
-                    EcadIconButton(
-                      icon: Icons.undo,
-                      label:
-                          '${actionLabel('Vrátit', EditorCommand.undo)}${app.undoLabel == null ? '' : '\n${app.undoLabel}'}',
-                      onPressed: app.canUndo ? undoEdit : null,
-                    ),
-                    EcadIconButton(
-                      icon: Icons.redo,
-                      label:
-                          '${actionLabel('Obnovit', EditorCommand.redo)}${app.redoLabel == null ? '' : '\n${app.redoLabel}'}',
-                      onPressed: app.canRedo ? redoEdit : null,
-                    ),
-                    EcadIconButton(
-                      icon: Icons.history,
-                      label: 'Historie úprav',
-                      onPressed: editHistory,
-                    ),
-                    _toolbarDivider(c),
-                    _tool(
-                      Icons.near_me_outlined,
-                      'Výběr',
-                      EditorCommand.selectTool,
-                      CanvasMode.select,
-                      compact,
-                    ),
-                    _tool(
-                      Icons.polyline_outlined,
-                      'Vodič',
-                      EditorCommand.wireTool,
-                      CanvasMode.wire,
-                      compact,
-                    ),
-                    EcadIconButton(
-                      icon: Icons.arrow_forward,
-                      label: 'Vložit pokračovací odkaz',
-                      selected: app.mode == CanvasMode.continuation,
-                      onPressed:
-                          electricalSheet(app.sheet) ? startContinuation : null,
-                    ),
-                    EcadIconButton(
-                      icon: Icons.subdirectory_arrow_right,
-                      label: actionLabel(
-                        'Přejít na protějšek',
-                        EditorCommand.followContinuation,
-                      ),
-                      onPressed: followSelectedContinuation,
-                    ),
-                    EcadIconButton(
-                      icon: Icons.radio_button_unchecked,
-                      label: 'Svorka · 1–4 směry',
-                      selected:
-                          app.mode == CanvasMode.place &&
-                          app.placingKind == DeviceKind.terminal,
-                      onPressed: () async {
-                        final owner = app, generation = app.documentGeneration;
-                        final sides = await showTerminalSymbolDialog(
-                          context,
-                          initialSides: owner.terminalSides,
-                          title: 'Vložit průchozí svorku',
-                        );
-                        if (sides != null &&
-                            owner.isDocumentCurrent(generation)) {
-                          owner.setTerminalTool(sides);
-                        }
-                      },
-                    ),
-                    PopupMenuButton<CornerOrientation>(
-                      tooltip: 'Spojovací roh',
-                      icon: Icon(
-                        Icons.turn_right,
-                        size: 18,
-                        color: app.mode == CanvasMode.corner ? c.accent : null,
-                      ),
-                      onSelected: app.setCornerTool,
-                      itemBuilder:
-                          (_) => [
-                            for (final orientation in CornerOrientation.values)
-                              PopupMenuItem(
-                                value: orientation,
-                                child: Text(
-                                  'Spojovací roh ${orientation.glyph}',
-                                ),
-                              ),
-                          ],
-                    ),
-                    _tool(
-                      Icons.pan_tool_outlined,
-                      'Posun',
-                      EditorCommand.panTool,
-                      CanvasMode.pan,
-                      compact,
-                    ),
-                    PopupMenuButton<CanvasMode>(
-                      tooltip: 'Kreslit grafiku',
-                      icon: const Icon(Icons.draw_outlined, size: 18),
-                      onSelected: app.setMode,
-                      itemBuilder:
-                          (_) => [
-                            PopupMenuItem(
-                              value: CanvasMode.drawLine,
-                              child: Text(
-                                actionLabel('Čára', EditorCommand.lineTool),
-                              ),
-                            ),
-                            PopupMenuItem(
-                              value: CanvasMode.drawRectangle,
-                              child: Text(
-                                actionLabel(
-                                  'Obdélník',
-                                  EditorCommand.rectangleTool,
-                                ),
-                              ),
-                            ),
-                            PopupMenuItem(
-                              value: CanvasMode.drawText,
-                              child: Text(
-                                actionLabel('Text', EditorCommand.textTool),
-                              ),
-                            ),
-                          ],
-                    ),
-                    _toolbarDivider(c),
-                    EcadIconButton(
-                      icon: Icons.rotate_right,
-                      label: actionLabel('Otočit výběr', EditorCommand.rotate),
-                      onPressed:
-                          app.selectedIds.isEmpty &&
-                                  app.mode != CanvasMode.corner
-                              ? null
-                              : app.rotateSelection,
-                    ),
-                    EcadIconButton(
-                      icon: Icons.copy_all_outlined,
-                      label: actionLabel(
-                        'Duplikovat výběr',
-                        EditorCommand.duplicate,
-                      ),
-                      onPressed:
-                          app.selectedIds.isEmpty
-                              ? null
-                              : app.duplicateSelection,
-                    ),
-                    EcadIconButton(
-                      icon: Icons.content_copy,
-                      label: actionLabel('Kopírovat výběr', EditorCommand.copy),
-                      onPressed: app.selectedIds.isEmpty ? null : copySelection,
-                    ),
-                    EcadIconButton(
-                      icon: Icons.content_paste,
-                      label: actionLabel(
-                        'Vložit ze schránky',
-                        EditorCommand.paste,
-                      ),
-                      onPressed: pasteSelection,
-                    ),
-                    EcadIconButton(
-                      icon: Icons.delete_outline,
-                      label: actionLabel(
-                        'Odstranit výběr',
-                        EditorCommand.deleteSelection,
-                      ),
-                      onPressed:
-                          app.selectedIds.isEmpty ? null : app.deleteSelection,
-                    ),
-                    _toolbarDivider(c),
-                    EcadIconButton(
-                      icon: Icons.grid_4x4_outlined,
-                      label: 'Zobrazit mřížku',
-                      selected: app.showGrid,
-                      onPressed: app.toggleGrid,
-                    ),
-                    EcadIconButton(
-                      icon: Icons.my_location,
-                      label: 'Nastavení kreslicího kurzoru',
-                      onPressed:
-                          () => showDrawingCursorDialog(
-                            context,
-                            preferences: drawingCursor,
-                          ),
-                    ),
-                    const SizedBox(width: 5),
-                    if (!compact)
-                      OutlinedButton.icon(
-                        onPressed: validate,
-                        icon: const Icon(Icons.fact_check_outlined, size: 15),
-                        label: const Text('Kontrola'),
-                      )
-                    else
-                      EcadIconButton(
-                        icon: Icons.fact_check_outlined,
-                        label: 'Zkontrolovat projekt',
-                        onPressed: validate,
-                      ),
-                    const Spacer(),
-                    EcadIconButton(
-                      icon: Icons.edit_outlined,
-                      label: actionLabel(
-                        'Upravit vybraný objekt',
-                        EditorCommand.editProperties,
-                      ),
-                      onPressed:
-                          !app.showingProposal &&
-                                  (app.selectedDevices.length == 1 ||
-                                      app.selectedPlacements.length == 1 ||
-                                      app.selectedMarkers.length == 1 ||
-                                      app.selectedGraphics.length == 1 ||
-                                      (app.selectedIds.length == 1 &&
-                                          app.sheet.corners.any(
-                                            (c) =>
-                                                app.selectedIds.contains(c.id),
-                                          )))
-                              ? editSelectedDevice
-                              : null,
-                    ),
-                    EcadIconButton(
-                      icon: Icons.tune,
-                      label: 'Zobrazit vlastnosti',
-                      selected:
-                          showAssistant &&
-                          app.sidePanel == SidePanel.properties,
-                      onPressed: () {
-                        setState(() => showAssistant = true);
-                        app.setPanel(SidePanel.properties);
-                      },
-                    ),
-                    EcadIconButton(
-                      icon: Icons.vertical_split_outlined,
-                      label: 'Zobrazit projekt a knihovnu',
-                      selected: showProject,
-                      onPressed:
-                          () => setState(() => showProject = !showProject),
-                    ),
-                    EcadIconButton(
-                      icon: Icons.auto_awesome_outlined,
-                      label: 'Zobrazit asistenta',
-                      selected: showAssistant,
-                      onPressed:
-                          () => setState(() => showAssistant = !showAssistant),
-                    ),
-                    PopupMenuButton<String>(
-                      tooltip: 'Nastavení programu',
-                      icon: const Icon(Icons.settings_outlined, size: 18),
-                      onSelected: (value) {
-                        if (value == 'keyboard') {
-                          showKeyboardShortcutsDialog(
-                            context,
-                            preferences: keyboardShortcuts,
-                          );
-                        } else {
-                          showDrawingCursorDialog(
-                            context,
-                            preferences: drawingCursor,
-                          );
-                        }
-                      },
-                      itemBuilder:
-                          (_) => const [
-                            PopupMenuItem(
-                              value: 'keyboard',
-                              child: Text('Klávesové zkratky…'),
-                            ),
-                            PopupMenuItem(
-                              value: 'cursor',
-                              child: Text('Kreslicí kurzor…'),
-                            ),
-                          ],
-                    ),
-                    const SizedBox(width: 4),
-                    EcadIconButton(
-                      icon: Icons.help_outline,
-                      label: 'Ovládání a klávesové zkratky',
-                      onPressed:
-                          () => showHelpDialog(
-                            context,
-                            shortcuts: keyboardShortcuts.value,
-                          ),
-                    ),
-                  ],
-                ),
+  Widget _fileMenu() => PopupMenuButton<String>(
+    tooltip: 'Soubor',
+    padding: EdgeInsets.zero,
+    constraints: const BoxConstraints(minWidth: 280),
+    offset: const Offset(0, 40),
+    onSelected: (value) {
+      switch (value) {
+        case 'new':
+          newProject();
+        case 'demo':
+          newProject(demo: true);
+        case 'open':
+          openProject();
+        case 'recovery':
+          showRecoveryDialog(context, workspace);
+        case 'importPdf':
+          importPdf();
+        case 'save':
+          app.saveProject();
+        case 'saveAs':
+          app.saveProjectAs();
+        case 'rename':
+          renameProject();
+        case 'close':
+          closeProject(app);
+        case 'pdf':
+          app.exportProject(pdf: true);
+        case 'svg':
+          app.exportProject(pdf: false);
+        case 'validate':
+          validate();
+        case 'commands':
+          commandPalette();
+      }
+    },
+    itemBuilder:
+        (_) => [
+          PopupMenuItem<String>(
+            enabled: false,
+            child: Tooltip(
+              message: app.fileName ?? 'Projekt bez souboru',
+              child: Text(
+                app.project.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
               ),
             ),
           ),
+          const PopupMenuDivider(),
+          const PopupMenuItem(value: 'new', child: Text('Nový projekt')),
+          PopupMenuItem(
+            value: 'open',
+            enabled: !app.ioBusy,
+            child: Text(
+              actionLabel('Otevřít projekt…', EditorCommand.openProject),
+            ),
+          ),
+          const PopupMenuItem(
+            value: 'recovery',
+            child: Text('Obnovit pracovní kopii…'),
+          ),
+          PopupMenuItem(
+            value: 'importPdf',
+            enabled: !app.ioBusy,
+            child: const Text('Importovat PDF jako grafiku…'),
+          ),
+          PopupMenuItem(
+            value: 'save',
+            enabled: !app.ioBusy,
+            child: Text(
+              actionLabel('Uložit projekt', EditorCommand.saveProject),
+            ),
+          ),
+          PopupMenuItem(
+            value: 'saveAs',
+            enabled: !app.ioBusy,
+            child: Text(
+              actionLabel('Uložit jako…', EditorCommand.saveProjectAs),
+            ),
+          ),
+          const PopupMenuItem(
+            value: 'rename',
+            child: Text('Přejmenovat projekt…'),
+          ),
+          const PopupMenuItem(
+            value: 'close',
+            child: Text('Zavřít aktivní projekt…'),
+          ),
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            value: 'pdf',
+            enabled: !app.ioBusy,
+            child: const Text('Exportovat všechny listy do PDF…'),
+          ),
+          PopupMenuItem(
+            value: 'svg',
+            enabled: !app.ioBusy,
+            child: const Text('Exportovat aktuální list do SVG…'),
+          ),
+          const PopupMenuDivider(),
+          const PopupMenuItem(
+            value: 'validate',
+            child: Text('Zkontrolovat projekt'),
+          ),
+          PopupMenuItem(
+            value: 'commands',
+            child: Text(actionLabel('Příkazy…', EditorCommand.commandPalette)),
+          ),
+          const PopupMenuItem(
+            value: 'demo',
+            child: Text('Otevřít ukázkový projekt'),
+          ),
+        ],
+    child: const SizedBox(
+      width: 32,
+      height: 36,
+      child: Center(child: BrandMark(size: 21)),
     ),
   );
+
+  Future<void> _terminalTool() async {
+    final owner = app, generation = app.documentGeneration;
+    final sides = await showTerminalSymbolDialog(
+      context,
+      initialSides: owner.terminalSides,
+      title: 'Vložit průchozí svorku',
+    );
+    if (sides != null && owner.isDocumentCurrent(generation)) {
+      owner.setTerminalTool(sides);
+    }
+  }
+
+  Widget _toolGroupMenu() => PopupMenuButton<Object>(
+    tooltip: 'Sada nástrojů',
+    padding: EdgeInsets.zero,
+    offset: const Offset(0, 36),
+    onSelected: (value) {
+      if (value is _ToolGroup) {
+        setState(() => toolGroup = value);
+      } else if (value is CanvasMode) {
+        app.setMode(value);
+      } else if (value is CornerOrientation) {
+        app.setCornerTool(value);
+      } else {
+        switch (value) {
+          case 'terminal':
+            _terminalTool();
+          case 'continuation':
+            startContinuation();
+          case 'follow':
+            followSelectedContinuation();
+          case 'rotate':
+            app.rotateSelection();
+          case 'duplicate':
+            app.duplicateSelection();
+          case 'copy':
+            copySelection();
+          case 'paste':
+            pasteSelection();
+          case 'delete':
+            app.deleteSelection();
+          case 'edit':
+            editSelectedDevice();
+          case 'history':
+            editHistory();
+        }
+      }
+    },
+    itemBuilder:
+        (_) => [
+          for (final group in _ToolGroup.values)
+            CheckedPopupMenuItem(
+              value: group,
+              checked: toolGroup == group,
+              child: Text(group.label),
+            ),
+          const PopupMenuDivider(),
+          if (toolGroup == _ToolGroup.electrical) ...[
+            PopupMenuItem(
+              value: CanvasMode.wire,
+              child: Text(actionLabel('Vodič', EditorCommand.wireTool)),
+            ),
+            PopupMenuItem(
+              value: 'continuation',
+              enabled: electricalSheet(app.sheet),
+              child: const Text('Vložit pokračovací odkaz'),
+            ),
+            const PopupMenuItem(
+              value: 'follow',
+              child: Text('Přejít na protějšek'),
+            ),
+            const PopupMenuItem(
+              value: 'terminal',
+              child: Text('Svorka · 1–4 směry'),
+            ),
+            for (final orientation in CornerOrientation.values)
+              PopupMenuItem(
+                value: orientation,
+                child: Text('Spojovací roh ${orientation.glyph}'),
+              ),
+          ],
+          if (toolGroup == _ToolGroup.drawing) ...[
+            PopupMenuItem(
+              value: CanvasMode.drawLine,
+              child: Text(actionLabel('Čára', EditorCommand.lineTool)),
+            ),
+            PopupMenuItem(
+              value: CanvasMode.drawRectangle,
+              child: Text(actionLabel('Obdélník', EditorCommand.rectangleTool)),
+            ),
+            PopupMenuItem(
+              value: CanvasMode.drawText,
+              child: Text(actionLabel('Text', EditorCommand.textTool)),
+            ),
+          ],
+          if (toolGroup == _ToolGroup.editing) ...[
+            PopupMenuItem(
+              value: 'rotate',
+              enabled:
+                  app.selectedIds.isNotEmpty || app.mode == CanvasMode.corner,
+              child: Text(actionLabel('Otočit výběr', EditorCommand.rotate)),
+            ),
+            PopupMenuItem(
+              value: 'duplicate',
+              enabled: app.selectedIds.isNotEmpty,
+              child: Text(
+                actionLabel('Duplikovat výběr', EditorCommand.duplicate),
+              ),
+            ),
+            PopupMenuItem(
+              value: 'copy',
+              enabled: app.selectedIds.isNotEmpty,
+              child: Text(actionLabel('Kopírovat výběr', EditorCommand.copy)),
+            ),
+            PopupMenuItem(
+              value: 'paste',
+              child: Text(
+                actionLabel('Vložit ze schránky', EditorCommand.paste),
+              ),
+            ),
+            PopupMenuItem(
+              value: 'delete',
+              enabled: app.selectedIds.isNotEmpty,
+              child: Text(
+                actionLabel('Odstranit výběr', EditorCommand.deleteSelection),
+              ),
+            ),
+            PopupMenuItem(
+              value: 'edit',
+              enabled: _canEditSelection,
+              child: Text(
+                actionLabel(
+                  'Upravit vybraný objekt',
+                  EditorCommand.editProperties,
+                ),
+              ),
+            ),
+            const PopupMenuItem(
+              value: 'history',
+              child: Text('Historie úprav'),
+            ),
+          ],
+        ],
+    child: Container(
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 7),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(toolGroup.icon, size: 15),
+          const SizedBox(width: 5),
+          Text(toolGroup.label, style: const TextStyle(fontSize: 11)),
+          const SizedBox(width: 3),
+          const Icon(Icons.expand_more, size: 14),
+        ],
+      ),
+    ),
+  );
+
+  bool get _canEditSelection =>
+      !app.showingProposal &&
+      (app.selectedDevices.length == 1 ||
+          app.selectedPlacements.length == 1 ||
+          app.selectedMarkers.length == 1 ||
+          app.selectedGraphics.length == 1 ||
+          (app.selectedIds.length == 1 &&
+              app.sheet.corners.any((c) => app.selectedIds.contains(c.id))));
+
+  List<Widget> _groupTools() => switch (toolGroup) {
+    _ToolGroup.electrical => [
+      _tool(
+        Icons.polyline_outlined,
+        'Vodič',
+        EditorCommand.wireTool,
+        CanvasMode.wire,
+      ),
+      _barButton(
+        Icons.arrow_forward,
+        'Vložit pokračovací odkaz',
+        electricalSheet(app.sheet) ? startContinuation : null,
+        selected: app.mode == CanvasMode.continuation,
+      ),
+      _barButton(
+        Icons.subdirectory_arrow_right,
+        actionLabel('Přejít na protějšek', EditorCommand.followContinuation),
+        followSelectedContinuation,
+      ),
+      _barButton(
+        Icons.radio_button_unchecked,
+        'Svorka · 1–4 směry',
+        _terminalTool,
+        selected:
+            app.mode == CanvasMode.place &&
+            app.placingKind == DeviceKind.terminal,
+      ),
+      SizedBox(
+        width: 30,
+        height: 30,
+        child: PopupMenuButton<CornerOrientation>(
+          tooltip: 'Spojovací roh',
+          padding: EdgeInsets.zero,
+          icon: Icon(
+            Icons.turn_right,
+            size: 18,
+            color:
+                app.mode == CanvasMode.corner
+                    ? EcadColors.of(context).accent
+                    : null,
+          ),
+          onSelected: app.setCornerTool,
+          itemBuilder:
+              (_) => [
+                for (final orientation in CornerOrientation.values)
+                  PopupMenuItem(
+                    value: orientation,
+                    child: Text('Spojovací roh ${orientation.glyph}'),
+                  ),
+              ],
+        ),
+      ),
+    ],
+    _ToolGroup.drawing => [
+      _tool(
+        Icons.horizontal_rule,
+        'Čára',
+        EditorCommand.lineTool,
+        CanvasMode.drawLine,
+      ),
+      _tool(
+        Icons.crop_square,
+        'Obdélník',
+        EditorCommand.rectangleTool,
+        CanvasMode.drawRectangle,
+      ),
+      _tool(
+        Icons.text_fields,
+        'Text',
+        EditorCommand.textTool,
+        CanvasMode.drawText,
+      ),
+    ],
+    _ToolGroup.editing => [
+      _barButton(
+        Icons.rotate_right,
+        actionLabel('Otočit výběr', EditorCommand.rotate),
+        app.selectedIds.isEmpty && app.mode != CanvasMode.corner
+            ? null
+            : app.rotateSelection,
+      ),
+      _barButton(
+        Icons.copy_all_outlined,
+        actionLabel('Duplikovat výběr', EditorCommand.duplicate),
+        app.selectedIds.isEmpty ? null : app.duplicateSelection,
+      ),
+      _barButton(
+        Icons.content_copy,
+        actionLabel('Kopírovat výběr', EditorCommand.copy),
+        app.selectedIds.isEmpty ? null : copySelection,
+      ),
+      _barButton(
+        Icons.delete_outline,
+        actionLabel('Odstranit výběr', EditorCommand.deleteSelection),
+        app.selectedIds.isEmpty ? null : app.deleteSelection,
+      ),
+      _barButton(
+        Icons.edit_outlined,
+        actionLabel('Upravit vybraný objekt', EditorCommand.editProperties),
+        _canEditSelection ? editSelectedDevice : null,
+      ),
+    ],
+  };
+
+  Widget _settingsMenu() => SizedBox(
+    width: 30,
+    height: 30,
+    child: PopupMenuButton<String>(
+      tooltip: 'Nastavení programu',
+      padding: EdgeInsets.zero,
+      icon: const Icon(Icons.settings_outlined, size: 18),
+      onSelected: (value) {
+        switch (value) {
+          case 'keyboard':
+            showKeyboardShortcutsDialog(
+              context,
+              preferences: keyboardShortcuts,
+            );
+          case 'cursor':
+            showDrawingCursorDialog(context, preferences: drawingCursor);
+          case 'grid':
+            app.toggleGrid();
+          default:
+            app.setAppearance(EcadAppearance.values.byName(value));
+        }
+      },
+      itemBuilder:
+          (_) => [
+            const PopupMenuItem(
+              value: 'keyboard',
+              child: Text('Klávesové zkratky…'),
+            ),
+            const PopupMenuItem(
+              value: 'cursor',
+              child: Text('Kreslicí kurzor…'),
+            ),
+            CheckedPopupMenuItem(
+              value: 'grid',
+              checked: app.showGrid,
+              child: const Text('Zobrazit mřížku'),
+            ),
+            const PopupMenuDivider(),
+            for (final appearance in EcadAppearance.values)
+              CheckedPopupMenuItem(
+                value: appearance.name,
+                checked: app.appearance == appearance,
+                child: Text(appearance.label),
+              ),
+          ],
+    ),
+  );
+
   Widget _toolbarDivider(EcadColors c) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 4),
     child: SizedBox(
-      height: 20,
+      height: 18,
       child: VerticalDivider(width: 1, color: c.border),
     ),
   );
+
+  Widget _barButton(
+    IconData icon,
+    String label,
+    VoidCallback? action, {
+    bool selected = false,
+  }) => EcadIconButton(
+    icon: icon,
+    label: label,
+    onPressed: action,
+    selected: selected,
+    size: 30,
+    iconSize: 17,
+  );
+
   Widget _tool(
     IconData icon,
     String name,
     EditorCommand command,
     CanvasMode mode,
-    bool compact,
-  ) {
-    final selected = app.mode == mode;
-    final c = EcadColors.of(context);
-    if (compact) {
-      return EcadIconButton(
-        icon: icon,
-        label: actionLabel(name, command),
-        selected: selected,
-        onPressed: () => app.setMode(mode),
-      );
-    }
-    return Tooltip(
-      message: actionLabel(name, command),
-      child: Semantics(
-        button: true,
-        selected: selected,
-        child: InkWell(
-          onTap: () => app.setMode(mode),
-          borderRadius: BorderRadius.circular(4),
-          child: Container(
-            height: 32,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            margin: const EdgeInsets.only(right: 3),
-            decoration: BoxDecoration(
-              color: selected ? c.accent : Colors.transparent,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  icon,
-                  size: 16,
-                  color: selected ? c.onAccent : c.foreground,
-                ),
-                const SizedBox(width: 7),
-                Text(
-                  name,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: selected ? c.onAccent : c.foreground,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  ) => _barButton(
+    icon,
+    actionLabel(name, command),
+    () => app.setMode(mode),
+    selected: app.mode == mode,
+  );
 
-  Widget _sheetTabs(EcadColors c) => Container(
-    height: 46,
-    color: c.panel,
+  Widget _sheetTabs(EcadColors c) => SizedBox(
+    height: 39,
     child: Row(
       children: [
-        IconButton(
-          tooltip: actionLabel('Předchozí list', EditorCommand.previousSheet),
-          onPressed:
-              workspace.adjacentSheet(-1) == null || app.ioBusy
-                  ? null
-                  : () {
-                    if (!app.viewport.hasActiveGesture && !app.ioBusy) {
-                      workspace.navigateSheet(-1);
-                    }
-                  },
-          icon: const Icon(Icons.keyboard_arrow_up, size: 18),
+        _pageButton(
+          Icons.chevron_left,
+          actionLabel('Předchozí list', EditorCommand.previousSheet),
+          workspace.adjacentSheet(-1) == null || app.ioBusy
+              ? null
+              : () {
+                if (!app.viewport.hasActiveGesture && !app.ioBusy) {
+                  workspace.navigateSheet(-1);
+                }
+              },
         ),
-        IconButton(
-          tooltip: actionLabel('Následující list', EditorCommand.nextSheet),
-          onPressed:
-              workspace.adjacentSheet(1) == null || app.ioBusy
-                  ? null
-                  : () {
-                    if (!app.viewport.hasActiveGesture && !app.ioBusy) {
-                      workspace.navigateSheet(1);
-                    }
-                  },
-          icon: const Icon(Icons.keyboard_arrow_down, size: 18),
+        _pageButton(
+          Icons.chevron_right,
+          actionLabel('Následující list', EditorCommand.nextSheet),
+          workspace.adjacentSheet(1) == null || app.ioBusy
+              ? null
+              : () {
+                if (!app.viewport.hasActiveGesture && !app.ioBusy) {
+                  workspace.navigateSheet(1);
+                }
+              },
         ),
         Expanded(
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: [
-              for (final tab in workspace.tabs)
-                Builder(
-                  builder: (context) {
-                    final doc = workspace.document(tab.sessionId)!;
-                    final sheet = doc.project.sheetById(tab.sheetId)!;
-                    return SheetContextMenu(
-                      controller: doc,
-                      sheet: sheet,
-                      workspace: workspace,
-                      onRenameSheet: renameSheet,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border(
-                            bottom: BorderSide(
-                              color:
-                                  workspace.activeTab == tab
-                                      ? c.foreground
-                                      : c.border,
-                              width: 2,
+          child: LayoutBuilder(
+            builder:
+                (context, bounds) => SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: bounds.maxWidth),
+                    child: IntrinsicWidth(
+                      child: Row(
+                        children: [
+                          for (final tab in workspace.tabs)
+                            Builder(
+                              builder: (context) {
+                                final doc = workspace.document(tab.sessionId)!;
+                                final sheet =
+                                    doc.project.sheetById(tab.sheetId)!;
+                                final title =
+                                    '${doc.project.name}${doc.dirty ? ' ●' : ''} · ${fullPageDesignation(sheet)} ${sheet.name}';
+                                final label =
+                                    '${fullPageDesignation(sheet)} ${sheet.name}'
+                                    '${workspace.documents.length > 1 ? ' · ${doc.project.name}' : ''}'
+                                    '${doc.dirty ? ' ●' : ''}';
+                                return SheetContextMenu(
+                                  key:
+                                      workspace.activeTab == tab
+                                          ? _activeTabKey
+                                          : null,
+                                  controller: doc,
+                                  sheet: sheet,
+                                  workspace: workspace,
+                                  onRenameSheet: renameSheet,
+                                  child: Container(
+                                    width: 210,
+                                    height: 39,
+                                    decoration: BoxDecoration(
+                                      color:
+                                          workspace.activeTab == tab
+                                              ? c.canvasPalette.background
+                                              : null,
+                                      border: Border(
+                                        bottom: BorderSide(
+                                          color:
+                                              workspace.activeTab == tab
+                                                  ? c.accent
+                                                  : c.border,
+                                          width: 2,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Tooltip(
+                                            message: title,
+                                            child: InkWell(
+                                              onTap: () => activateTab(tab),
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 10,
+                                                    ),
+                                                child: Text(
+                                                  label,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight:
+                                                        workspace.activeTab ==
+                                                                tab
+                                                            ? FontWeight.w600
+                                                            : FontWeight.w400,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        EcadIconButton(
+                                          icon: Icons.close,
+                                          label:
+                                              'Zavřít tab ${fullPageDesignation(sheet)}',
+                                          onPressed:
+                                              () => workspace.closeTab(tab),
+                                          size: 26,
+                                          iconSize: 13,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          Expanded(
+                            child: DesktopWindow.dragArea(
+                              const SizedBox(height: 39),
                             ),
                           ),
-                        ),
-                        child: Row(
-                          children: [
-                            InkWell(
-                              onTap: () => activateTab(tab),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 12,
-                                ),
-                                child: Text(
-                                  '${doc.project.name}${doc.dirty ? ' ●' : ''} · ${fullPageDesignation(sheet)} ${sheet.name}',
-                                  style: const TextStyle(fontSize: 11),
-                                ),
-                              ),
-                            ),
-                            IconButton(
-                              tooltip:
-                                  'Zavřít tab ${fullPageDesignation(sheet)}',
-                              onPressed: () => workspace.closeTab(tab),
-                              icon: const Icon(Icons.close, size: 14),
-                            ),
-                          ],
-                        ),
+                        ],
                       ),
-                    );
-                  },
+                    ),
+                  ),
                 ),
-            ],
           ),
         ),
-        IconButton(
-          tooltip: 'Přidat list',
-          onPressed: addSheet,
-          icon: const Icon(Icons.add, size: 18),
-        ),
+        _barButton(Icons.add, 'Přidat list', addSheet),
       ],
     ),
   );
 
-  Widget _zoomControls(EcadColors c) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-    decoration: BoxDecoration(
-      color: c.panel,
-      border: Border.all(color: c.border),
-      borderRadius: BorderRadius.circular(5),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        EcadIconButton(
-          icon: Icons.remove,
-          label: 'Oddálit',
-          onPressed: app.viewport.zoomOut,
-          size: 27,
-          iconSize: 17,
-        ),
-        ListenableBuilder(
-          listenable: app.viewport,
-          builder:
-              (_, _) => SizedBox(
-                width: 48,
-                child: Text(
-                  '${(app.viewport.zoom * 100).round()} %',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 10),
-                ),
+  Widget _pageButton(IconData icon, String label, VoidCallback? action) =>
+      IconButton(
+        tooltip: label,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+        visualDensity: VisualDensity.compact,
+        onPressed: action,
+        icon: Icon(icon, size: 17),
+      );
+
+  Widget _zoomControls(EcadColors c) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      EcadIconButton(
+        icon: Icons.remove,
+        label: 'Oddálit',
+        onPressed: app.viewport.zoomOut,
+        size: 25,
+        iconSize: 16,
+      ),
+      ListenableBuilder(
+        listenable: app.viewport,
+        builder:
+            (_, _) => SizedBox(
+              width: 45,
+              child: Text(
+                '${(app.viewport.zoom * 100).round()} %',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 10),
               ),
-        ),
-        EcadIconButton(
-          icon: Icons.add,
-          label: 'Přiblížit',
-          onPressed: app.viewport.zoomIn,
-          size: 27,
-          iconSize: 17,
-        ),
-        Container(
-          width: 1,
-          height: 17,
-          color: c.border,
-          margin: const EdgeInsets.symmetric(horizontal: 4),
-        ),
-        EcadIconButton(
-          icon: Icons.fit_screen,
-          label: actionLabel('Celý list', EditorCommand.fitSheet),
-          onPressed: app.viewport.fit,
-          size: 27,
-          iconSize: 17,
-        ),
-      ],
-    ),
+            ),
+      ),
+      EcadIconButton(
+        icon: Icons.add,
+        label: 'Přiblížit',
+        onPressed: app.viewport.zoomIn,
+        size: 25,
+        iconSize: 16,
+      ),
+      EcadIconButton(
+        icon: Icons.fit_screen,
+        label: actionLabel('Celý list', EditorCommand.fitSheet),
+        onPressed: app.viewport.fit,
+        size: 25,
+        iconSize: 16,
+      ),
+    ],
   );
+
   Widget _statusBar(EcadColors c, bool compact) => Container(
     height: 30,
-    padding: const EdgeInsets.symmetric(horizontal: 14),
+    padding: const EdgeInsets.symmetric(horizontal: 8),
     decoration: BoxDecoration(
       color: c.panel,
       border: Border(top: BorderSide(color: c.border)),
@@ -1870,7 +1914,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
     child: Row(
       children: [
         Icon(app.ioBusy ? Icons.hourglass_top : Icons.check, size: 12),
-        const SizedBox(width: 7),
+        const SizedBox(width: 6),
         Expanded(
           child: Tooltip(
             message: app.status,
@@ -1882,39 +1926,45 @@ class _EditorWorkspaceState extends State<EditorWorkspace> {
             ),
           ),
         ),
-        const SizedBox(width: 12),
-        Text(
-          app.sheet.graphics.isEmpty
-              ? '${app.sheet.devices.length} přístrojů · ${AutoConnect.wires(app.sheet).length} vodičů'
-              : '${app.sheet.graphics.length} grafických objektů · ${app.selectedIds.length} vybráno',
-          style: const TextStyle(fontSize: 9),
-        ),
-        if (!compact) ...[
-          const SizedBox(width: 18),
-          SizedBox(
-            height: 12,
-            child: VerticalDivider(width: 1, color: c.border),
-          ),
-          const SizedBox(width: 14),
-          const Icon(Icons.save_outlined, size: 12),
-          const SizedBox(width: 6),
-          Text(
-            app.autosaveStatus,
-            style: TextStyle(fontSize: 9, color: c.muted),
+        if (app.sheet.sourcePage != null) ...[
+          const SizedBox(width: 8),
+          Tooltip(
+            message:
+                'Grafika z PDF · ${app.sheet.graphics.length} objektů · elektrické vazby nejsou obnovené',
+            child: Icon(Icons.info_outline, size: 14, color: c.muted),
           ),
         ],
-        const SizedBox(width: 16),
-        Text(
-          app.appearance == EcadAppearance.studio ? 'STUDIO' : 'E-INK',
-          style: const TextStyle(
-            fontSize: 9,
-            letterSpacing: 1,
-            fontWeight: FontWeight.w600,
+        const SizedBox(width: 12),
+        Tooltip(
+          message: app.sheet.type.label,
+          child: Text(
+            fullPageDesignation(app.sheet),
+            style: const TextStyle(fontSize: 10),
           ),
         ),
+        if (!compact) ...[
+          const SizedBox(width: 12),
+          Text(
+            app.sheet.graphics.isEmpty
+                ? '${app.sheet.devices.length} přístrojů · ${AutoConnect.wires(app.sheet).length} vodičů'
+                : '${app.sheet.graphics.length} grafických objektů · ${app.selectedIds.length} vybráno',
+            style: const TextStyle(fontSize: 9),
+          ),
+          const SizedBox(width: 12),
+          Tooltip(
+            message: app.fileName ?? 'Projekt bez souboru',
+            child: Text(
+              app.autosaveStatus,
+              style: TextStyle(fontSize: 9, color: c.muted),
+            ),
+          ),
+        ],
+        const SizedBox(width: 8),
+        _zoomControls(c),
       ],
     ),
   );
+
   Widget _diagnosticsPanel(EcadColors c) => SizedBox(
     height: 166,
     child: Material(

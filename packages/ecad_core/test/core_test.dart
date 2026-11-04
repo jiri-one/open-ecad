@@ -219,7 +219,7 @@ void main() {
     expect(restored.toJson(), p.toJson());
     expect(restored.toJson()['formatVersion'], EcadProject.formatVersion);
     expect(restored.pages, hasLength(5));
-    for (final version in [0, 1, 2, 3, 6, 4.0, null]) {
+    for (final version in [0, 1, 2, 3, 7, 4.0, null]) {
       expect(
         () => EcadProject.fromJson({...p.toJson(), 'formatVersion': version}),
         throwsA(errorCode('unsupported_format')),

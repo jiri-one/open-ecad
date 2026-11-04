@@ -320,6 +320,40 @@ void main() {
     },
   );
 
+  test(
+    'initial grid follows source provenance independently of frame choice',
+    () {
+      for (final imported in [false, true]) {
+        for (final frame in [
+          const FrameChoice.none(),
+          const FrameChoice.inherit(),
+        ]) {
+          final app = EditorController(
+            initialProject: _project().copyWith(
+              pages: [
+                _project().pages.single.copyWith(
+                  sourcePage: imported ? 1 : null,
+                  frame: frame,
+                ),
+              ],
+            ),
+          );
+          addTearDown(app.dispose);
+          expect(app.showGrid, !imported);
+          app.execute([
+            SetSheetFrame(
+              app.sheet.id,
+              const FrameChoice.inherit(titleBlock: false),
+            ),
+          ], 'Frame choice');
+          expect(app.showGrid, !imported);
+          app.toggleGrid();
+          expect(app.showGrid, imported);
+        }
+      }
+    },
+  );
+
   test('late PDF result cannot replace edits made during conversion', () async {
     final persistence = _PdfPersistence();
     final app = EditorController(importer: persistence);

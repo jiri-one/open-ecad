@@ -5,6 +5,32 @@ import 'package:flutter/painting.dart';
 import 'report_layout.dart';
 
 const mountingLabelSize = 10.0;
+const mountingCaptionGap = 16.0;
+const mountingCaptionSize = 11.0;
+
+RectUnits defaultMountingViewport(
+  EcadProject project,
+  Sheet sheet, {
+  bool surfaceDimensions = true,
+}) {
+  final content = frameContentUnits(
+    sheet,
+    layoutFrameGeometry(sheet.paperSizeMm, resolveSheetFrame(project, sheet)),
+  );
+  if (!surfaceDimensions) return content;
+  final painter = reportTextPainter('Plocha 0 × 0 mm', mountingCaptionSize);
+  final reserved = mountingCaptionGap + painter.height + 2;
+  painter.dispose();
+  return RectUnits(
+    x: content.x,
+    y: content.y,
+    width: content.width,
+    height: math.max(1, content.height - reserved),
+  );
+}
+
+String mountingSurfaceCaption(MountingLayout layout) =>
+    'Plocha ${layout.widthMm.toString().replaceAll('.', ',')} × ${layout.heightMm.toString().replaceAll('.', ',')} mm';
 
 class MountingAnnotation {
   const MountingAnnotation({
@@ -174,11 +200,15 @@ List<MountingAnnotation> layoutMountingAnnotations(
 
 void paintMountingAnnotations(
   Canvas canvas,
-  List<MountingAnnotation> annotations,
-) {
+  List<MountingAnnotation> annotations, {
+  String? activePlacementId,
+  Color ink = reportInk,
+  Color paper = const Color(0xffffffff),
+  Color muted = reportMuted,
+}) {
   final leader =
       Paint()
-        ..color = const Color(0xff526276)
+        ..color = muted
         ..strokeWidth = .7;
   for (final a in annotations) {
     if (a.leaderStart != null) {
@@ -187,15 +217,24 @@ void paintMountingAnnotations(
   }
   for (final a in annotations) {
     if (a.leaderStart != null) {
-      canvas.drawRect(
-        a.bounds.inflate(1),
-        Paint()..color = const Color(0xffffffff),
-      );
+      canvas.drawRect(a.bounds.inflate(1), Paint()..color = paper);
     }
     canvas.save();
     canvas.translate(a.textOrigin.dx, a.textOrigin.dy);
     if (a.rotated) canvas.rotate(-math.pi / 2);
     final painter = reportTextPainter(a.text, mountingLabelSize, bold: true);
+    painter.text = TextSpan(
+      text: a.text,
+      style: (painter.text! as TextSpan).style!.copyWith(
+        decoration:
+            a.placementId == activePlacementId
+                ? TextDecoration.underline
+                : null,
+        color:
+            a.placementId == activePlacementId ? const Color(0xff1976d2) : ink,
+      ),
+    );
+    painter.layout();
     painter.paint(canvas, Offset.zero);
     painter.dispose();
     canvas.restore();

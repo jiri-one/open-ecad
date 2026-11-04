@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import '../services/schematic_clipboard.dart';
+import '../services/mounting_annotations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../editor/schematic_canvas.dart';
@@ -47,6 +48,7 @@ class EditorController extends ChangeNotifier {
       persistence: this.persistence,
     );
     activeSheetId = project.pages.first.id;
+    showGrid = project.pages.first.sourcePage == null;
   }
 
   static EcadProject _emptyProject() => EcadProject(
@@ -757,7 +759,7 @@ class EditorController extends ChangeNotifier {
     String? name,
     bool formStarter = false,
   }) {
-    final page = Sheet(
+    var page = Sheet(
       id: newId('sheet'),
       name:
           name == null || name.trim().isEmpty
@@ -771,11 +773,20 @@ class EditorController extends ChangeNotifier {
           type == SheetType.billOfMaterials
               ? const BomTableSpec(kind: BomReportKind.articles)
               : null,
-      graphics:
-          formStarter && type == SheetType.form
-              ? SheetTemplates.blankForm()
-              : const [],
     );
+    if (formStarter && type == SheetType.form) {
+      page = page.copyWith(
+        graphics: SheetTemplates.blankForm(
+          contentBounds: frameContentUnits(
+            page,
+            layoutFrameGeometry(
+              page.paperSizeMm,
+              resolveSheetFrame(project, page),
+            ),
+          ),
+        ),
+      );
+    }
     if (execute([AddSheet(page)], 'Přidán nový list · ${type.label}')) {
       setSheet(page.id);
     }
@@ -1283,12 +1294,7 @@ class EditorController extends ChangeNotifier {
     required double height,
     required double scale,
     Vec2 origin = Vec2.zero,
-    RectUnits viewport = const RectUnits(
-      x: 65,
-      y: 120,
-      width: 950,
-      height: 520,
-    ),
+    RectUnits? viewport,
     bool surfaceDimensions = true,
     bool componentDimensions = false,
   }) {
@@ -1310,7 +1316,14 @@ class EditorController extends ChangeNotifier {
           mountingView: MountingView(
             layoutId: next.id,
             originMm: origin,
-            viewport: viewport,
+            viewport:
+                viewport ??
+                sheet.mountingView?.viewport ??
+                defaultMountingViewport(
+                  project,
+                  sheet,
+                  surfaceDimensions: surfaceDimensions,
+                ),
             scaleDenominator: scale,
             showSurfaceDimensions: surfaceDimensions,
             showComponentDimensions: componentDimensions,
@@ -1362,7 +1375,7 @@ class EditorController extends ChangeNotifier {
     activeSheetId = project.pages.first.id;
     terminalStripId = null;
     selectedIds = {};
-    showGrid = project.pages.first.showFrame;
+    showGrid = project.pages.first.sourcePage == null;
     mode = CanvasMode.select;
     placingKind = null;
     proposal = null;

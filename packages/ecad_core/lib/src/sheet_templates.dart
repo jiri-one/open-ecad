@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import 'dart:math' as math;
 import 'graphics.dart';
+import 'frame_graphics.dart';
 import 'model.dart';
 
 /// Ordinary editable graphics with generic captions; nothing is filled from
@@ -16,8 +18,7 @@ abstract final class SheetTemplates {
   static const _ink = '#17212B';
   static const _captionSize = 11.0;
 
-  /// Placed for the drawing area of a default 1100 × 780 framed sheet.
-  static List<DrawingElement> blankForm() {
+  static List<DrawingElement> blankForm({RectUnits? contentBounds}) {
     const left = 65.0;
     const top = 124.0;
     const width = 970.0;
@@ -87,7 +88,23 @@ abstract final class SheetTemplates {
       );
       x += width * share;
     }
-    return graphics;
+    if (contentBounds == null) return graphics;
+    final b = contentBounds;
+    if (![b.x, b.y, b.width, b.height].every((v) => v.isFinite) ||
+        b.width <= 0 ||
+        b.height <= 0) {
+      throw const EcadException(
+        'Form content bounds must be positive and finite.',
+        code: 'invalid_geometry',
+      );
+    }
+    final scale = math.min(b.width / (width + 2), b.height / (height + 2));
+    final offset =
+        Vec2(b.x + b.width / 2, b.y + b.height / 2) -
+        const Vec2(left + width / 2, top + height / 2) * scale;
+    return graphics
+        .map((g) => transformGraphic(g, scale: scale, offset: offset))
+        .toList();
   }
 
   // Renderers stretch text to its box. Approximate bundled Noto Sans SemiBold

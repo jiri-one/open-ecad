@@ -305,7 +305,7 @@ void main() {
       workspace.openSheet(workspace.active, 'last');
       await tester.pumpAndSettle();
       await tester.tap(
-        find.text('Project A · 1 First page'),
+        find.byTooltip('Project A · 1 First page'),
         buttons: kSecondaryMouseButton,
       );
       await tester.pumpAndSettle();

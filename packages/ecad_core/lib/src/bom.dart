@@ -335,6 +335,8 @@ class ReportData {
   final List<Diagnostic> diagnostics;
 }
 
+final _reportData = Expando<Map<String, ReportData>>();
+
 ReportData buildReport(EcadProject project, Sheet sheet) {
   final spec = sheet.report;
   if (spec == null ||
@@ -344,6 +346,14 @@ ReportData buildReport(EcadProject project, Sheet sheet) {
       'Report sheet must belong to this project snapshot.',
       code: 'invalid_report',
     );
+  return (_reportData[project] ??= {}).putIfAbsent(
+    sheet.id,
+    () => _buildReport(project, sheet),
+  );
+}
+
+ReportData _buildReport(EcadProject project, Sheet sheet) {
+  final spec = sheet.report!;
   final bom = buildBom(project);
   final resolver = ProjectResolver(project);
   final articleReport = spec.kind == BomReportKind.articles;

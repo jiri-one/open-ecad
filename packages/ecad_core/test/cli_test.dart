@@ -80,6 +80,60 @@ void main() {
     },
   );
 
+  test(
+    'frame command codec applies a shared template and editable fields through CLI',
+    () async {
+      final template = FrameTemplateCodec.decode(
+        FrameTemplateCodec.encode(FrameTemplates.builtin),
+      ).copyWith(id: 'cli_frame');
+      final commands = File('${directory.path}/frame-commands.json');
+      await commands.writeAsString(
+        jsonEncode({
+          'expectedRevision': 0,
+          'commands':
+              [
+                AddFrameTemplate(template),
+                UpdateFrameTemplate(template.copyWith(name: 'CLI frame')),
+                const SetProjectFrame(
+                  FrameChoice.template('cli_frame', zones: false),
+                ),
+                const SetSheetFrame(
+                  'sheet_control',
+                  FrameChoice.inherit(titleBlock: false),
+                ),
+                SetProjectDocumentFields({
+                  'drawingRevision': 'D',
+                  'drawnBy': 'Author',
+                }),
+                SetSheetDocumentFields('sheet_control', {'drawnBy': ''}),
+                const DeleteFrameTemplate(FrameTemplates.builtinId),
+              ].map((c) => c.toJson()).toList(),
+        }),
+      );
+      final output = File('${directory.path}/framed.json');
+      final result = await run([
+        'apply',
+        projectFile.path,
+        commands.path,
+        output.path,
+      ]);
+      expect(result.exitCode, 0, reason: result.stderr.toString());
+      final project = EcadProject.fromJson(
+        jsonDecode(await output.readAsString()),
+      );
+      requireValidProject(project);
+      expect(project.revision, 1);
+      expect(project.frameTemplates.single.name, 'CLI frame');
+      expect(project.documentFields['drawingRevision'], 'D');
+      final sheet = project.sheetById('sheet_control')!;
+      expect(sheet.documentFields['drawnBy'], '');
+      final resolved = resolveSheetFrame(project, sheet)!;
+      expect(resolved.titleBlock, isFalse);
+      expect(resolved.zones, isFalse);
+      expect((await run(['validate', output.path, '--json'])).exitCode, 0);
+    },
+  );
+
   test('plain text escapes terminal controls taken from input files', () async {
     final demo = DemoProject.create();
     const port = 'x\u001b[2J\u009b31m\nerror: forged';

@@ -587,8 +587,23 @@ class _CommandBuilder {
     throw const FormatException('Nelze vygenerovat jedinečné označení.');
   }
 
-  // The drawing area excludes the sheet heading, border and title block.
-  static const _paper = _PlacementBox(48, 110, 1052, 650);
+  late final _paper = _placementArea();
+
+  _PlacementBox _placementArea() {
+    final area = frameContentUnits(
+      sheet,
+      layoutFrameGeometry(
+        sheet.paperSizeMm,
+        resolveSheetFrame(_project, sheet),
+      ),
+    );
+    return _PlacementBox(
+      area.x,
+      area.y,
+      area.x + area.width,
+      area.y + area.height,
+    );
+  }
 
   Vec2 _freePosition(_PlacementBox footprint) {
     final occupied = _occupiedFootprints();

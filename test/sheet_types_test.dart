@@ -155,7 +155,7 @@ void main() {
   });
 
   group('outputs', () {
-    test('exported frames name the sheet type', () {
+    test('default frames display sheet names for every sheet type', () {
       final project = EcadProject(
         id: 'typed_export',
         name: 'Typy listů',
@@ -177,14 +177,9 @@ void main() {
       final svg = exporter.svg(project);
       expect(svg, isNot(contains('ELEKTRICKÉ SCHÉMA')));
       for (final type in SheetType.values) {
-        expect(
-          exporter.svg(project, sheetId: 'sheet_${type.name}'),
-          contains(
-            type == SheetType.billOfMaterials
-                ? 'Kusovník'
-                : type.label.toUpperCase(),
-          ),
-        );
+        final sheetSvg = exporter.svg(project, sheetId: 'sheet_${type.name}');
+        expect(sheetSvg, contains('data-frame="true"'));
+        expect(sheetSvg, contains(type.label));
       }
     });
 
@@ -293,7 +288,10 @@ void main() {
       expect(app.sheet.type, SheetType.cabinetLayout, reason: app.status);
       expect(_inSheetList(SheetType.cabinetLayout.label), findsOneWidget);
       expect(
-        find.text('03 / 03 · ${SheetType.cabinetLayout.label}'),
+        find.descendant(
+          of: find.byTooltip(SheetType.cabinetLayout.label),
+          matching: find.text('03'),
+        ),
         findsOneWidget,
       );
 

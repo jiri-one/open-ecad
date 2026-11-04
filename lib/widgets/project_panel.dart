@@ -12,6 +12,8 @@ import '../app/theme.dart';
 import '../editor/schematic_canvas.dart';
 import 'components.dart';
 import 'sheet_types.dart';
+import 'frame_settings.dart';
+import 'frame_settings_draft.dart';
 
 class ProjectPanel extends StatefulWidget {
   const ProjectPanel({
@@ -147,17 +149,34 @@ class _ProjectPanelState extends State<ProjectPanel> {
                     style: const TextStyle(fontSize: 9),
                   ),
                 ),
-                leading: PopupMenuButton<String>(
-                  tooltip: 'Projekt ${doc.project.name}',
-                  onSelected: (_) => widget.onCloseProject?.call(doc),
-                  itemBuilder:
-                      (_) => const [
-                        PopupMenuItem(
-                          value: 'close',
-                          child: Text('Zavřít projekt…'),
-                        ),
-                      ],
-                  child: const Icon(Icons.folder_open, size: 18),
+                leading: Builder(
+                  builder: (context) {
+                    FrameEditGuard? menuGuard;
+                    return PopupMenuButton<String>(
+                      onOpened: () => menuGuard = FrameEditGuard(doc),
+                      tooltip: 'Projekt ${doc.project.name}',
+                      onSelected: (action) {
+                        if (!(menuGuard?.current ?? false)) return;
+                        if (action == 'frame') {
+                          editFrameSettings(context, doc);
+                        } else {
+                          widget.onCloseProject?.call(doc);
+                        }
+                      },
+                      itemBuilder:
+                          (_) => const [
+                            PopupMenuItem(
+                              value: 'frame',
+                              child: Text('Rámečky a údaje projektu…'),
+                            ),
+                            PopupMenuItem(
+                              value: 'close',
+                              child: Text('Zavřít projekt…'),
+                            ),
+                          ],
+                      child: const Icon(Icons.folder_open, size: 18),
+                    );
+                  },
                 ),
                 children: [
                   StructureTree<Sheet>(

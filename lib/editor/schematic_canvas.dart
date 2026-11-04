@@ -8,8 +8,12 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import 'drawing_graphics.dart';
+import 'layout_diagnostics.dart';
+import '../services/document_layout.dart';
+import '../services/frame_layout.dart';
 import 'drawing_cursor.dart';
 import 'middle_button_double_click.dart';
+import 'sheet_viewport.dart';
 import 'terminal_symbol_painter.dart';
 import 'wire_hover_overlay.dart';
 import 'canvas_hover_overlay.dart';
@@ -343,7 +347,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   Size _viewport = Size.zero;
   Offset _pan = Offset.zero;
   double _zoom = 1;
-  bool _initialFit = false;
+  bool _fitted = true;
   bool _temporaryPanPressed = false;
   LogicalKeyboardKey? _temporaryPanKey;
   bool _statsScheduled = false;
@@ -375,6 +379,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   Vec2? _deviceFocus;
   DeviceCrossReference? _hoverReference;
   DeviceCrossReference? _pressedReference;
+  String? _hoverContinuationLink, _pressedContinuationLink;
   ValueChanged<bool>? _overrideDrawingCursor;
   final _middleDoubleClick = MiddleButtonDoubleClick();
   bool _panZoomActive = false;
@@ -390,11 +395,16 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       widget.pastePreview == null &&
       !_hasActiveGesture;
 
-  Size get _pageSize => Size(widget.sheet.width, widget.sheet.height);
+  Rect get _paperBounds {
+    final bounds = SheetTransform(widget.sheet).paperBoundsUnits;
+    return Rect.fromLTWH(bounds.x, bounds.y, bounds.width, bounds.height);
+  }
+
+  Size get _pageSize => _paperBounds.size;
 
   bool get _linkCursor =>
       _canInteract &&
-      _hoverReference != null &&
+      (_hoverReference != null || _hoverContinuationLink != null) &&
       HardwareKeyboard.instance.isControlPressed;
 
   @override
@@ -407,7 +417,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
 
   CanvasPalette get _canvasPalette {
     final palette = widget.palette;
-    if (widget.sheet.showFrame || palette.highContrast) return palette;
+    if (widget.sheet.sourcePage == null || palette.highContrast) return palette;
     return CanvasPalette(
       background: palette.background,
       paper: Colors.white,
@@ -470,6 +480,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
 
     if (!identical(oldWidget.sheet, widget.sheet) ||
         !identical(oldWidget.project, widget.project)) {
+      _pressedContinuationLink = null;
       _continuationFocus = null;
       _deviceFocus = null;
       _clearHover();
@@ -487,7 +498,8 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
         _cancelGesture();
       }
       if (oldWidget.sheet.width != widget.sheet.width ||
-          oldWidget.sheet.height != widget.sheet.height) {
+          oldWidget.sheet.height != widget.sheet.height ||
+          oldWidget.sheet.paperSizeMm != widget.sheet.paperSizeMm) {
         _fit(rebuild: false);
       }
       if (_selectedWire != null && !_scene.wires.containsKey(_selectedWire)) {
@@ -618,16 +630,13 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     _clearHover();
     if (_viewport.isEmpty) return;
     void update() {
-      const gutter = 60.0;
-      _zoom = math
-          .min(
-            (_viewport.width - gutter) / _pageSize.width,
-            (_viewport.height - gutter) / _pageSize.height,
-          )
-          .clamp(0.15, 3.5);
+      _fitted = true;
+      _zoom = sheetFitScale(_viewport, _pageSize);
       _pan = Offset(
-        (_viewport.width - _pageSize.width * _zoom) / 2,
-        (_viewport.height - _pageSize.height * _zoom) / 2,
+        (_viewport.width - _pageSize.width * _zoom) / 2 -
+            _paperBounds.left * _zoom,
+        (_viewport.height - _pageSize.height * _zoom) / 2 -
+            _paperBounds.top * _zoom,
       );
     }
 
@@ -643,9 +652,10 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     setState(() {
       _cancelGesture();
       _selectedWire = null;
-      if (zoom != null) _zoom = zoom.clamp(0.15, 3.5);
+      if (zoom != null) _zoom = _clampZoom(zoom);
       final point = _offset(marker.position);
       if (zoom != null || !_worldViewport.contains(point)) {
+        _fitted = false;
         _pan = _viewport.center(Offset.zero) - point * _zoom;
       }
       _continuationFocus = marker.position;
@@ -658,7 +668,8 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     setState(() {
       _cancelGesture();
       _selectedWire = null;
-      _zoom = zoom.clamp(.15, 3.5);
+      _fitted = false;
+      _zoom = _clampZoom(zoom);
       _pan = _viewport.center(Offset.zero) - _offset(device.position) * _zoom;
       _deviceFocus = device.position;
     });
@@ -670,24 +681,34 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     _clearHover();
     if (_viewport.isEmpty) return;
     setState(() {
+      _fitted = false;
       _zoom = 1;
       _pan = Offset(
-        (_viewport.width - _pageSize.width) / 2,
-        (_viewport.height - _pageSize.height) / 2,
+        (_viewport.width - _pageSize.width) / 2 - _paperBounds.left,
+        (_viewport.height - _pageSize.height) / 2 - _paperBounds.top,
       );
     });
     _scheduleStats();
   }
 
+  double _clampZoom(double zoom) {
+    final fit = sheetFitScale(_viewport, _pageSize);
+    return zoom.clamp(
+      math.min(_zoom, math.min(.15, fit / 2)),
+      math.max(_zoom, math.max(3.5, fit * 8)),
+    );
+  }
+
   void _zoomAt(Offset anchor, double factor) {
     _clearHover();
     final world = _toWorld(anchor);
-    final next = (_zoom * factor).clamp(0.15, 3.5);
+    final next = _clampZoom(_zoom * factor);
     if (next == _zoom) {
       setState(_clearHover);
       return;
     }
     setState(() {
+      _fitted = false;
       _zoom = next;
       _pan = anchor - world * next;
     });
@@ -695,12 +716,18 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   }
 
   void _dismissHover() {
-    if (mounted && _hoverLocal != null) setState(_clearHover);
+    if (mounted &&
+        (_hoverLocal != null ||
+            _hoverReference != null ||
+            _hoverContinuationLink != null)) {
+      setState(_clearHover);
+    }
   }
 
   void _clearHover() {
     _overrideDrawingCursor?.call(false);
     _hoverReference = null;
+    _hoverContinuationLink = null;
     _hoverWire = null;
     _hoverInfoDevice = null;
     _hoverLocal = null;
@@ -709,6 +736,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
   void _cancelGesture() {
     _middleDoubleClick.reset();
     _pressedReference = null;
+    _pressedContinuationLink = null;
     _deviceFocus = null;
     _continuationFocus = null;
     _panZoomActive = false;
@@ -911,6 +939,12 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
                 widget.onFollowDevice != null
             ? _referenceAt(_toWorld(event.localPosition))
             : null;
+    final continuationLink =
+        _canInteract &&
+                HardwareKeyboard.instance.isControlPressed &&
+                event.buttons == kPrimaryMouseButton
+            ? _continuationLinkAt(_toWorld(event.localPosition))
+            : null;
     _deviceFocus = null;
     _continuationFocus = null;
     _tapDevice = null;
@@ -922,8 +956,9 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     _downWorld = world;
     _activePointer = event.pointer;
 
-    if (reference != null) {
+    if (reference != null || continuationLink != null) {
       _pressedReference = reference;
+      _pressedContinuationLink = continuationLink;
       return;
     }
 
@@ -1049,15 +1084,17 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       _lastPointerGlobal = event.position;
     }
     if (event.pointer != _activePointer) return;
-    if (_pressedReference != null &&
+    if ((_pressedReference != null || _pressedContinuationLink != null) &&
         (event.localPosition - _downLocal!).distance > 3) {
       _pressedReference = null;
+      _pressedContinuationLink = null;
     }
     final world = _toWorld(event.localPosition);
     setState(() {
       _pointerWorld = world;
       switch (_drag) {
         case _DragKind.pan:
+          _fitted = false;
           _pan = _panOrigin! + event.localPosition - _downLocal!;
         case _DragKind.move:
           if ((event.localPosition - _downLocal!).distance < 3 &&
@@ -1104,16 +1141,25 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     if (event.pointer != _activePointer) return;
     final fit = event is PointerUpEvent && _middleDoubleClick.up(event);
     final reference = _pressedReference;
+    final continuationLink = _pressedContinuationLink;
     _pressedReference = null;
-    if (reference != null) {
+    _pressedContinuationLink = null;
+    if (reference != null || continuationLink != null) {
       setState(() {
         _activePointer = null;
         _lastDeviceTap = null;
       });
       if (HardwareKeyboard.instance.isControlPressed &&
-          (event.localPosition - _downLocal!).distance < 3 &&
-          identical(_referenceAt(_toWorld(event.localPosition)), reference)) {
-        widget.onFollowDevice?.call(reference.sourceId, reference.target);
+          event is PointerUpEvent &&
+          (event.localPosition - _downLocal!).distance < 3) {
+        if (reference != null &&
+            identical(_referenceAt(_toWorld(event.localPosition)), reference)) {
+          widget.onFollowDevice?.call(reference.sourceId, reference.target);
+        } else if (continuationLink != null &&
+            _continuationLinkAt(_toWorld(event.localPosition)) ==
+                continuationLink) {
+          widget.onFollowContinuation?.call(continuationLink);
+        }
       }
       return;
     }
@@ -1236,9 +1282,10 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
         !_hasActiveGesture;
     final world = _toWorld(event.localPosition);
     final reference =
-        hoverAllowed && widget.onFollowDevice != null
+        _canInteract && widget.onFollowDevice != null
             ? _referenceAt(world)
             : null;
+    final continuationLink = _canInteract ? _continuationLinkAt(world) : null;
     final device = _deviceAt(world) ?? _graphicAt(world);
     final infoDevice =
         reference == null && hoverAllowed && _scene.devices.containsKey(device)
@@ -1265,6 +1312,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
         infoDevice == _hoverInfoDevice &&
         hoverLocal == _hoverLocal &&
         reference == _hoverReference &&
+        continuationLink == _hoverContinuationLink &&
         device == _hoverDevice &&
         _samePort(port, _hoverPort)) {
       return;
@@ -1272,6 +1320,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     setState(() {
       _hoverWire = wire;
       _hoverReference = reference;
+      _hoverContinuationLink = continuationLink;
       _hoverInfoDevice = infoDevice;
       _hoverLocal = hoverLocal;
       _pointerWorld = world;
@@ -1296,6 +1345,22 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       for (final reference
           in _scene.references[id] ?? const <DeviceCrossReference>[]) {
         if (reference.bounds.contains(world)) return reference;
+      }
+    }
+    return null;
+  }
+
+  String? _continuationLinkAt(Offset world) {
+    if (widget.onFollowContinuation == null) return null;
+    for (final link in _scene.continuationReferences.values) {
+      final marker = _scene.markers[link.markerId]!;
+      if (link.bounds.contains(world) ||
+          Rect.fromCenter(
+            center: _offset(marker.position),
+            width: 32,
+            height: 32,
+          ).contains(world)) {
+        return link.markerId;
       }
     }
     return null;
@@ -1399,9 +1464,8 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
           _clearHover();
           final previous = _viewport;
           _viewport = nextSize;
-          if (!_initialFit) {
+          if (_fitted) {
             _fit(rebuild: false);
-            _initialFit = true;
           } else {
             _pan += Offset(
               (nextSize.width - previous.width) / 2,
@@ -1520,12 +1584,12 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
                     onPointerPanZoomUpdate: (event) {
                       if (!mounted) return;
                       final factor =
-                          (_panZoomStartScale * event.scale).clamp(0.15, 3.5) /
-                          _zoom;
+                          _clampZoom(_panZoomStartScale * event.scale) / _zoom;
                       final anchor = event.localPosition;
                       final world = _toWorld(anchor);
                       setState(() {
                         _clearHover();
+                        _fitted = false;
                         _zoom *= factor;
                         _pan = anchor - world * _zoom + event.panDelta;
                       });
@@ -1565,15 +1629,22 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
                           selectedWire: _selectedWire,
                           onSelectDevice:
                               (id) => widget.onSelectionChanged({id}),
-                          activeReference:
-                              HardwareKeyboard.instance.isControlPressed
-                                  ? _hoverReference
-                                  : null,
+                          activeReference: _hoverReference,
+                          activeContinuationLink: _hoverContinuationLink,
                         ),
                         child: Stack(
                           clipBehavior: Clip.hardEdge,
                           children: [
                             const SizedBox.expand(),
+                            if (_scene.documentPage?.diagnostics.isNotEmpty ??
+                                false)
+                              Positioned(
+                                right: 8,
+                                bottom: 8,
+                                child: LayoutDiagnostics(
+                                  _scene.documentPage!.diagnostics,
+                                ),
+                              ),
                             if (widget.pastePreview != null)
                               Positioned(
                                 left: 12,
@@ -1685,6 +1756,17 @@ class _Scene {
         Rect.fromCenter(center: _offset(m.position), width: 32, height: 32),
       );
     }
+    if (project != null) {
+      for (final marker in sheet.continuations) {
+        final link = layoutContinuationCrossReference(
+          project!,
+          sheet,
+          marker,
+          index: continuations,
+        );
+        if (link != null) continuationReferences[marker.id] = link;
+      }
+    }
     for (final (order, graphic) in sheet.graphics.indexed) {
       final visual = DrawingVisual(graphic);
       graphics[graphic.id] = visual;
@@ -1730,6 +1812,30 @@ class _Scene {
       project == null ? null : ProjectResolver(project!);
   late final ContinuationIndex? continuations =
       project == null ? null : ContinuationIndex(project!);
+  late final DocumentPage? documentPage =
+      project == null ? null : layoutDocument(project!).firstPageFor(sheet.id);
+  late final PreparedFrameLayout frame =
+      documentPage?.frame ??
+      prepareFrameLayout(
+        bindFrame(
+          layoutFrameGeometry(
+            sheet.paperSizeMm,
+            resolveSheetFrame(_standaloneProject, sheet),
+          ),
+          _standaloneProject,
+          sheet,
+          FramePageContext(
+            number: fullPageDesignation(sheet),
+            documentIndex: 1,
+            documentCount: 1,
+          ),
+        ),
+      );
+  late final EcadProject _standaloneProject = EcadProject(
+    id: 'canvas',
+    name: '',
+    pages: [sheet],
+  );
   Component? component(Device d) => resolver?.components[d.componentId];
   String label(Device d) =>
       component(d) == null ? '' : resolver!.fullDesignation(component(d)!);
@@ -1738,6 +1844,7 @@ class _Scene {
       project == null ? id : (resolver!.port(d, id)?.label ?? id);
   final Map<String, Device> devices = {};
   final Map<String, List<DeviceCrossReference>> references = {};
+  final Map<String, ContinuationCrossReference> continuationReferences = {};
   final Map<String, DrawingVisual> graphics = {};
   final Map<String, int> graphicOrder = {};
   final Map<String, int> deviceOrder = {};
@@ -1853,6 +1960,7 @@ class _SchematicPainter extends CustomPainter {
     required this.placingCorner,
     this.overlay = false,
     this.activeReference,
+    this.activeContinuationLink,
   });
 
   final _Scene scene;
@@ -1876,6 +1984,7 @@ class _SchematicPainter extends CustomPainter {
   final CornerOrientation? placingCorner;
   final bool overlay;
   final DeviceCrossReference? activeReference;
+  final String? activeContinuationLink;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2016,6 +2125,16 @@ class _SchematicPainter extends CustomPainter {
         size: 10,
         background: palette.paper,
       );
+      if (marker.id == activeContinuationLink) {
+        final bounds = scene.continuationReferences[marker.id]!.bounds;
+        canvas.drawLine(
+          bounds.bottomLeft,
+          bounds.bottomRight,
+          Paint()
+            ..color = palette.selection
+            ..strokeWidth = 1 / zoom,
+        );
+      }
     }
     for (final c in scene.corners.values) {
       final corner = c.copyWith(position: previewPositions[c.id]);
@@ -2234,7 +2353,9 @@ class _SchematicPainter extends CustomPainter {
   }
 
   void _drawPage(Canvas canvas, Rect visible) {
-    final page = Rect.fromLTWH(0, 0, scene.sheet.width, scene.sheet.height);
+    final transform = SheetTransform(scene.sheet);
+    final bounds = transform.paperBoundsUnits;
+    final page = Rect.fromLTWH(bounds.x, bounds.y, bounds.width, bounds.height);
     if (!palette.highContrast) {
       canvas.drawRect(
         page.shift(const Offset(3, 4)),
@@ -2249,177 +2370,11 @@ class _SchematicPainter extends CustomPainter {
         ..strokeWidth = 0.8
         ..style = PaintingStyle.stroke,
     );
-    if (showGrid) {
-      _drawGrid(
-        canvas,
-        visible.intersect(scene.sheet.showFrame ? page.deflate(32) : page),
-      );
-    }
-    if (!scene.sheet.showFrame) return;
+    if (showGrid) _drawGrid(canvas, visible.intersect(page));
     canvas.save();
-    canvas.scale(
-      scene.sheet.width / SchematicCanvas.pageSize.width,
-      scene.sheet.height / SchematicCanvas.pageSize.height,
-    );
-    const frame = Rect.fromLTRB(32, 32, 1068, 748);
-    canvas.drawRect(
-      frame,
-      Paint()
-        ..color = palette.sheetBorder
-        ..strokeWidth = palette.highContrast ? 1 : 0.65
-        ..style = PaintingStyle.stroke,
-    );
-
-    final line =
-        Paint()
-          ..color = palette.sheetBorder
-          ..strokeWidth = 0.65;
-    const letters = ['A', 'B', 'C', 'D', 'E'];
-    for (var i = 0; i < 5; i++) {
-      final x = 32 + frame.width * (i + 0.5) / 5;
-      _label(
-        canvas,
-        letters[i],
-        Offset(x - 3, 15),
-        color: palette.muted,
-        size: 8,
-      );
-      _label(
-        canvas,
-        letters[i],
-        Offset(x - 3, 757),
-        color: palette.muted,
-        size: 8,
-      );
-      if (i > 0) {
-        final tick = 32 + frame.width * i / 5;
-        canvas.drawLine(Offset(tick, 26), Offset(tick, 32), line);
-        canvas.drawLine(Offset(tick, 748), Offset(tick, 754), line);
-      }
-    }
-    for (var i = 0; i < 4; i++) {
-      final y = 32 + frame.height * (i + 0.5) / 4;
-      _label(
-        canvas,
-        '${i + 1}',
-        Offset(16, y - 4),
-        color: palette.muted,
-        size: 8,
-      );
-      _label(
-        canvas,
-        '${i + 1}',
-        Offset(1077, y - 4),
-        color: palette.muted,
-        size: 8,
-      );
-    }
-
-    canvas.drawRect(
-      const Rect.fromLTWH(54, 48, 435, 59),
-      Paint()..color = palette.paper,
-    );
-    _label(
-      canvas,
-      scene.sheet.type.label.toUpperCase(),
-      const Offset(62, 52),
-      size: 8,
-      letterSpacing: 1.6,
-      color: palette.muted,
-      weight: FontWeight.w500,
-    );
-    _label(
-      canvas,
-      scene.sheet.name,
-      const Offset(61, 69),
-      size: 21,
-      color: palette.ink,
-      weight: FontWeight.w500,
-    );
-    _label(
-      canvas,
-      'LIST  ${fullPageDesignation(scene.sheet)}',
-      const Offset(837, 57),
-      maxWidth: 225,
-      size: 8,
-      letterSpacing: 0.9,
-      color: palette.muted,
-    );
-
-    const block = Rect.fromLTRB(676, 674, 1068, 748);
-    canvas.drawRect(block, Paint()..color = palette.paper);
-    canvas.drawRect(
-      block,
-      Paint()
-        ..color = palette.sheetBorder
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8,
-    );
-    canvas.drawLine(const Offset(676, 719), const Offset(1068, 719), line);
-    canvas.drawLine(const Offset(938, 674), const Offset(938, 748), line);
-    canvas.drawLine(const Offset(818, 719), const Offset(818, 748), line);
-    canvas.drawLine(const Offset(1007, 719), const Offset(1007, 748), line);
-    _label(
-      canvas,
-      'VÝKRES',
-      const Offset(688, 682),
-      color: palette.muted,
-      size: 6.5,
-      letterSpacing: 1,
-    );
-    _label(
-      canvas,
-      scene.sheet.name,
-      const Offset(688, 695),
-      color: palette.ink,
-      size: 10,
-      weight: FontWeight.w500,
-    );
-    _label(
-      canvas,
-      'OPEN ECAD',
-      const Offset(950, 690),
-      color: palette.ink,
-      size: 10,
-      weight: FontWeight.w600,
-      letterSpacing: 0.6,
-    );
-    _label(
-      canvas,
-      'DOKUMENT  /  EC-001',
-      const Offset(688, 729),
-      color: palette.muted,
-      size: 7,
-    );
-    _label(
-      canvas,
-      'MĚŘÍTKO  /  —',
-      const Offset(830, 729),
-      color: palette.muted,
-      size: 7,
-    );
-    _label(
-      canvas,
-      'REV.  /  A',
-      const Offset(950, 729),
-      color: palette.muted,
-      size: 7,
-    );
-    _label(
-      canvas,
-      'LIST ${scene.sheet.number}',
-      const Offset(1017, 729),
-      color: palette.muted,
-      size: 7,
-    );
-    _label(
-      canvas,
-      'OPEN ECAD   ·   ELEKTROPROJEKTOVÁNÍ',
-      const Offset(61, 723),
-      color: palette.muted,
-      size: 7,
-      letterSpacing: 0.5,
-    );
+    canvas.translate(bounds.x, bounds.y);
+    canvas.scale(1 / transform.mmPerUnit);
+    paintFrameLayout(canvas, scene.frame, color: palette.ink);
     canvas.restore();
   }
 

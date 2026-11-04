@@ -12,6 +12,7 @@ import 'package:open_ecad/app/workspace.dart';
 import 'package:open_ecad/editor/schematic_canvas.dart';
 import 'package:open_ecad/widgets/components.dart';
 import 'package:open_ecad/widgets/properties_panel.dart';
+import 'package:open_ecad/widgets/project_panel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<EditorController> mountWorkspace(WidgetTester tester) async {
@@ -32,6 +33,70 @@ Finder fieldWithLabel(String label) => find.byWidgetPredicate(
 );
 
 void main() {
+  testWidgets('one command bar leaves the canvas clear at desktop widths', (
+    tester,
+  ) async {
+    await mountWorkspace(tester);
+    for (final width in [960.0, 1024.0, 1440.0]) {
+      tester.view.physicalSize = Size(width, 900);
+      await tester.pumpAndSettle();
+      final canvas = tester.getRect(find.byType(SchematicCanvas));
+      expect(canvas.top, 40);
+      expect(canvas.bottom, 870);
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('workspace-command-bar')))
+            .height,
+        40,
+      );
+      expect(
+        tester.getRect(find.byTooltip('Celý list · Home')).top,
+        greaterThanOrEqualTo(canvas.bottom),
+      );
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets(
+    'tool groups expose tools on narrow windows and follow the mode',
+    (tester) async {
+      final app = await mountWorkspace(tester);
+      tester.view.physicalSize = const Size(960, 900);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Sada nástrojů'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.widgetWithText(CheckedPopupMenuItem<Object>, 'Kreslení'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Sada nástrojů'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Obdélník ·'));
+      await tester.pumpAndSettle();
+      expect(app.mode, CanvasMode.drawRectangle);
+      expect(find.text('Kreslení'), findsOneWidget);
+      app.setMode(CanvasMode.wire);
+      await tester.pumpAndSettle();
+      expect(find.text('Elektro'), findsOneWidget);
+      expect(tester.getRect(find.byType(SchematicCanvas)).top, 40);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('appearance remains available from compact settings', (
+    tester,
+  ) async {
+    final app = await mountWorkspace(tester);
+    await tester.tap(find.byTooltip('Nastavení programu'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(CheckedPopupMenuItem<String>, 'Barevný'),
+    );
+    await tester.pumpAndSettle();
+    expect(app.appearance, EcadAppearance.studio);
+    expect(tester.getRect(find.byType(SchematicCanvas)).top, 40);
+  });
+
   testWidgets('workspace fits desktop sizes in all three appearances', (
     tester,
   ) async {
@@ -58,12 +123,14 @@ void main() {
 
   testWidgets('icon buttons support semantic activation', (tester) async {
     final handle = tester.ensureSemantics();
-    final app = await mountWorkspace(tester);
-    final node = tester.getSemantics(find.bySemanticsLabel('Barevný'));
+    await mountWorkspace(tester);
+    final node = tester.getSemantics(
+      find.bySemanticsLabel('Zobrazit projekt a knihovnu'),
+    );
     expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
     node.owner!.performAction(node.id, SemanticsAction.tap);
     await tester.pumpAndSettle();
-    expect(app.appearance, EcadAppearance.studio);
+    expect(find.byType(ProjectPanel), findsNothing);
     handle.dispose();
   });
 
@@ -169,7 +236,9 @@ void main() {
     app.setSheet(second.id);
     app.setSheet(first.id);
     await tester.pumpAndSettle();
-    final tab = find.textContaining('· ${second.number} ${second.name}').last;
+    final tab = find.byTooltip(
+      '${app.project.name} · ${second.number} ${second.name}',
+    );
     await tester.ensureVisible(tab);
     await tester.pumpAndSettle();
     await tester.tap(tab);

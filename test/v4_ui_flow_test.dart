@@ -582,7 +582,7 @@ void main() {
       workspace.add(b);
       await tester.pumpAndSettle();
       expect(tester.widget<TextField>(field('Popis')).controller!.text, 'B');
-      await tester.tap(find.textContaining('A ● · 01 První list'));
+      await tester.tap(find.byTooltip('A ● · 01 První list'));
       await tester.pumpAndSettle();
       expect(tester.widget<TextField>(field('Popis')).controller!.text, 'A');
       await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);

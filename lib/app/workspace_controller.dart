@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/foundation.dart';
 import '../services/sheet_navigation.dart';
+import '../services/pdf_frame_import.dart';
+import '../services/project_import.dart';
 import 'controller.dart';
 
 class SheetTab {
@@ -31,6 +33,7 @@ class WorkspaceController extends ChangeNotifier {
   late EditorController _active;
   SheetTab? activeTab;
   int navigationGeneration = 0;
+  int _openRequest = 0;
   EditorController get active => _active;
   List<EditorController> get documents => List.unmodifiable(_documents);
   List<SheetTab> get tabs => List.unmodifiable(_tabs);
@@ -178,16 +181,62 @@ class WorkspaceController extends ChangeNotifier {
     );
   }
 
-  Future<bool> open({String? path, bool importPdf = false}) async {
-    final candidate = _createDocument();
+  Future<bool> open({
+    String? path,
+    bool importPdf = false,
+    PdfImportReview? reviewPdf,
+  }) async {
+    final owner = active;
+    final generation = owner.documentGeneration;
+    final revision = owner.project.revision;
+    final navigation = navigationGeneration;
+    final statusGeneration = owner.statusGeneration;
+    final request = ++_openRequest;
+    bool current() =>
+        !_disposed &&
+        request == _openRequest &&
+        active == owner &&
+        _documents.contains(owner) &&
+        owner.isDocumentCurrent(generation) &&
+        owner.project.revision == revision &&
+        navigationGeneration == navigation;
+    void reportCancelledImport() {
+      if (!_disposed &&
+          request == _openRequest &&
+          active == owner &&
+          _documents.contains(owner) &&
+          owner.isDocumentCurrent(generation) &&
+          owner.statusGeneration == statusGeneration) {
+        owner.reportStatus(
+          'Import PDF zrušen: dokument nebo zobrazený list se mezitím změnil.',
+        );
+      }
+    }
+
+    final candidate = _createDocument(
+      importer:
+          importPdf && reviewPdf != null
+              ? owner.importer.reviewNextImport(
+                reviewPdf,
+                isCurrent: current,
+                reusableTemplates: owner.project.frameTemplates,
+              )
+              : null,
+    );
     if (!await candidate.openProject(path: path, importPdf: importPdf)) {
-      if (_disposed) {
+      if (_disposed || (importPdf && !current())) {
         candidate.dispose();
+        if (importPdf) reportCancelledImport();
         return false;
       }
       active.status = candidate.status;
       candidate.dispose();
       notifyListeners();
+      return false;
+    }
+    if (importPdf && !current()) {
+      candidate.dispose();
+      reportCancelledImport();
       return false;
     }
     return _adopt(candidate);
@@ -234,11 +283,14 @@ class WorkspaceController extends ChangeNotifier {
     return true;
   }
 
-  EditorController _createDocument({bool demo = false}) {
+  EditorController _createDocument({
+    bool demo = false,
+    ProjectImportService? importer,
+  }) {
     final doc = EditorController(
       startEmpty: !demo,
       persistence: active.persistence,
-      importer: active.importer,
+      importer: importer ?? active.importer.source,
     );
     doc.appearance = active.appearance;
     doc.aiSettings = active.aiSettings;

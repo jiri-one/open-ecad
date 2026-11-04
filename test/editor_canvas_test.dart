@@ -402,7 +402,7 @@ void main() {
     await _mount(tester, controller: controller, sheet: sheet);
     controller.fit();
     await tester.pump();
-    expect(controller.zoom, closeTo(720 / 1560, .0001));
+    expect(controller.zoom, closeTo(764 / 1560, .0001));
     expect(controller.totalPrimitiveCount, 2);
     expect(controller.visiblePrimitiveCount, 1);
     expect(tester.takeException(), isNull);

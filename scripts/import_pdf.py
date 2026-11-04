@@ -31,12 +31,47 @@ from pathlib import Path
 
 PINNED_PYMUPDF = '1.26.7'
 TOOL_VERSION = 1
-FORMAT_VERSION = 4
+FORMAT_VERSION = 6
 DESCRIPTION = 'PDF graphic import; connectivity not reconstructed'
 MAX_DASH_VALUES = 64
 MAX_IMAGE_DIMENSION = 16384
 MAX_IMAGE_PIXELS = 64 * 1024 * 1024
 PLACEHOLDER = '�'
+
+
+def _builtin_frame_template():
+    def field(key, x, y, width, text, font=3.0, bold=False):
+        return {
+            'id': key, 'rectMm': {'x': x, 'y': y, 'width': width, 'height': 8},
+            'text': text, 'fontSizeMm': font, 'minFontSizeMm': 2,
+            'bold': bold, 'align': 'left', 'overflow': 'shrink',
+        }
+
+    return {
+        'id': 'frame.generic.v1', 'name': 'Generic',
+        'marginsMm': {'left': 10, 'top': 10, 'right': 10, 'bottom': 10},
+        'contentPaddingMm': 3, 'strokeWidthMm': 0.35,
+        'zones': {'columns': 5, 'rows': 4, 'bandMm': 5, 'tickMm': 2, 'fontSizeMm': 2.5},
+        'titleBlock': {
+            'widthMm': 180, 'heightMm': 36,
+            'lines': [
+                {'from': {'x': 0, 'y': 12}, 'to': {'x': 180, 'y': 12}},
+                {'from': {'x': 0, 'y': 24}, 'to': {'x': 180, 'y': 24}},
+                {'from': {'x': 110, 'y': 12}, 'to': {'x': 110, 'y': 36}},
+            ],
+            'fields': [
+                field('project', 2, 2, 176, '{{project.name}}', font=4, bold=True),
+                field('sheet', 2, 14, 106, '{{sheet.name}}'),
+                field('page', 112, 14, 66,
+                      '{{page.number}} · {{page.index}} / {{page.count}}'),
+                field('author', 2, 26, 106,
+                      '{{document.drawnBy}}  {{document.issueDate}}'),
+                field('revision', 112, 26, 66,
+                      '{{document.drawingRevision}}  {{view.scale}}'),
+            ],
+        },
+    }
+
 
 WARNING_TEXT = {
     'fontSubstitution': (
@@ -1254,7 +1289,8 @@ def _convert_page(doc, page, number: int, name: str, page_id: str,
     head = {'id': page_id, 'name': name, 'number': str(number)}
     head['type'] = sheet_type or 'multiLine'
     head.update({
-        'width': _num(width), 'height': _num(height), 'showFrame': False,
+        'width': _num(width), 'height': _num(height),
+        'frame': {'mode': 'none'}, 'documentFields': {},
         'sourcePage': number,
         'paperSizeMm': {'width': _num(width * 25.4 / 72),
                         'height': _num(height * 25.4 / 72)},
@@ -1481,6 +1517,9 @@ def _convert_document(mu, doc, source, output, report_target, pages_spec,
             'format': 'open-ecad', 'formatVersion': FORMAT_VERSION,
             'id': project_id, 'name': project_name,
             'description': DESCRIPTION, 'revision': 0,
+            'frameTemplates': [_builtin_frame_template()],
+            'defaultFrame': {'mode': 'template', 'templateId': 'frame.generic.v1'},
+            'documentFields': {},
             'articles': [], 'components': [],
             'continuationLinks': [], 'mountingLayouts': [],
         }

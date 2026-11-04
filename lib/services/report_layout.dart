@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/painting.dart';
+
+import 'export_fonts.dart';
+import 'frame_layout.dart';
 
 const reportInk = Color(0xff1e293b);
 const reportMuted = Color(0xff526276);
@@ -57,11 +61,12 @@ class ReportRowFragment {
     required this.lineCount,
     required List<List<String>> cells,
     required this.bounds,
+    required this.referenceBounds,
   }) : cells = List.unmodifiable(cells.map(List<String>.unmodifiable));
   final int rowIndex, startLine, endLine, lineCount;
   final String sourceKey;
   final List<List<String>> cells;
-  final Rect bounds;
+  final Rect bounds, referenceBounds;
   bool get continuesBefore => startLine > 0;
   bool get continuesAfter => endLine < lineCount;
 }
@@ -93,23 +98,110 @@ class ReportLayout {
   final List<ReportPage> pages;
 }
 
-// Paper millimetres keep table typography independent of schematic units.
-ReportLayout layoutReport(EcadProject project, Sheet sheet) =>
-    _ReportBuilder(project, sheet, buildReport(project, sheet)).build();
+class ReportNavigationLink {
+  const ReportNavigationLink(this.bounds, this.target);
+  final Rect bounds;
+  final DeviceOccurrence target;
+}
 
-void paintReportPage(Canvas canvas, ReportPage page) {
+List<ReportNavigationLink> layoutReportNavigationLinks(
+  ProjectResolver resolver,
+  ReportLayout layout,
+  ReportPage page,
+) {
+  if (layout.data.spec.kind != BomReportKind.components) return const [];
+  return [
+    for (final fragment in page.rowFragments)
+      if (layout.data.rows[fragment.rowIndex].componentIds case [final id])
+        if (resolver.schematicOccurrence(id) case final target?)
+          ReportNavigationLink(fragment.referenceBounds, target),
+  ];
+}
+
+final _reportPages = <String, List<ReportPage>>{};
+ExportFonts? _reportFonts;
+
+ReportLayout layoutReport(
+  EcadProject project,
+  Sheet sheet, {
+  ReportData? data,
+}) {
+  data ??= buildReport(project, sheet);
+  final content =
+      layoutFrameGeometry(
+        sheet.paperSizeMm,
+        resolveSheetFrame(project, sheet),
+      ).contentRectMm;
+  final summary = _reportSummary(project);
+  if (!identical(_reportFonts, ExportFonts.loaded)) {
+    _reportPages.clear();
+    _reportFonts = ExportFonts.loaded;
+  }
+  // Position-only edits and title-field drags do not change table pagination.
+  final key = jsonEncode([
+    sheet.id,
+    fullPageDesignation(sheet),
+    sheet.name,
+    sheet.paperSizeMm.width,
+    sheet.paperSizeMm.height,
+    content.x,
+    content.y,
+    content.width,
+    content.height,
+    data.spec.kind.name,
+    data.spec.title,
+    data.spec.note,
+    summary,
+    data.columns,
+    for (final row in data.rows) [row.sourceKey, row.cells],
+  ]);
+  final cached = _reportPages.remove(key);
+  final pages =
+      cached ?? _ReportBuilder(sheet, data, content, summary).build().pages;
+  _reportPages[key] = pages;
+  if (_reportPages.length > 32) _reportPages.remove(_reportPages.keys.first);
+  return ReportLayout(data, pages);
+}
+
+String _reportSummary(EcadProject project) {
+  final usedArticleIds = project.components.map((c) => c.articleId).toSet();
+  final incomplete =
+      project.articles
+          .where(
+            (a) =>
+                usedArticleIds.contains(a.id) &&
+                ((a.manufacturer ?? '').trim().isEmpty ||
+                    (a.partNumber ?? '').trim().isEmpty),
+          )
+          .length;
+  final withoutArticle =
+      project.components.where((c) => c.articleId == null).length;
+  final unknown =
+      project.components.where((c) => c.quantity.baseUnits == null).length;
+  return 'Neúplné artikly: $incomplete · Bez artiklu: $withoutArticle · Neurčená množství: $unknown';
+}
+
+void paintReportPage(
+  Canvas canvas,
+  ReportPage page, {
+  Rect? activeLink,
+  PreparedFrameLayout? frame,
+  Color paper = const Color(0xffffffff),
+  Color? ink,
+}) {
   canvas.drawRect(
     Rect.fromLTWH(0, 0, page.sizeMm.width, page.sizeMm.height),
-    Paint()..color = const Color(0xffffffff),
+    Paint()..color = paper,
   );
+  if (frame != null) paintFrameLayout(canvas, frame, color: ink ?? reportInk);
   for (final box in page.boxes) {
     if (box.fill case final color?) {
-      canvas.drawRect(box.rect, Paint()..color = color);
+      canvas.drawRect(box.rect, Paint()..color = ink == null ? color : paper);
     }
     canvas.drawRect(
       box.rect,
       Paint()
-        ..color = reportGrid
+        ..color = ink ?? reportGrid
         ..style = PaintingStyle.stroke
         ..strokeWidth = 0.18,
     );
@@ -122,7 +214,16 @@ void paintReportPage(Canvas canvas, ReportPage page) {
     );
     painter.text = TextSpan(
       text: text.text,
-      style: (painter.text! as TextSpan).style!.copyWith(color: text.color),
+      style: (painter.text! as TextSpan).style!.copyWith(
+        color:
+            activeLink?.contains(Offset(text.x, text.baseline)) == true
+                ? const Color(0xff1976d2)
+                : ink ?? text.color,
+        decoration:
+            activeLink?.contains(Offset(text.x, text.baseline)) == true
+                ? TextDecoration.underline
+                : null,
+      ),
     );
     painter.layout();
     painter.paint(canvas, Offset(text.x, text.baseline - text.ascent));
@@ -168,7 +269,7 @@ class _Metrics {
           }
           final part = String.fromCharCodes(runes.take(low));
           if (width(part, size, bold) > available) {
-            throw const FormatException('Sloupec reportu je příliš úzký.');
+            throw const FormatException('Sloupec sestavy je příliš úzký.');
           }
           lines.add(part);
           word = String.fromCharCodes(runes.skip(low));
@@ -188,15 +289,18 @@ class _Page {
 }
 
 class _ReportBuilder {
-  _ReportBuilder(this.project, this.sheet, this.data);
-  final EcadProject project;
+  _ReportBuilder(this.sheet, this.data, this.content, this.summary);
+  final RectMm content;
+  final String summary;
   final Sheet sheet;
   final ReportData data;
   final metrics = _Metrics();
   final pages = <_Page>[];
-  static const margin = 10.0, padding = 1.8, size = 2.8, lineHeight = 3.9;
-  late final width = sheet.paperSizeMm.width - margin * 2;
-  late final bottom = sheet.paperSizeMm.height - 18;
+  static const padding = 1.8, size = 2.8, lineHeight = 3.9;
+  double get margin => content.x;
+  double get tableTop => content.y + 11;
+  late final width = content.width;
+  late final bottom = content.bottom - 4;
   late final List<double> columns;
   late double bodyTop;
   var y = 0.0;
@@ -234,14 +338,8 @@ class _ReportBuilder {
         data.spec.kind == BomReportKind.articles
             ? 'Kusovník'
             : 'Seznam komponent';
-    text(title, margin, 8, fontSize: 4.5, bold: true);
-    text(
-      'Revize ${project.revision}',
-      sheet.paperSizeMm.width - 48,
-      10,
-      color: reportMuted,
-    );
-    y = 19;
+    text(title, margin, content.y, fontSize: 4.5, bold: true);
+    y = tableTop;
     if (table) header();
   }
 
@@ -253,9 +351,11 @@ class _ReportBuilder {
     final height =
         headerLines.map((l) => l.length).reduce(math.max) * lineHeight +
         padding * 2;
-    bodyTop = 19 + height;
+    bodyTop = tableTop + height;
     if (bottom - bodyTop < lineHeight + padding * 2 + 4) {
-      throw const FormatException('Papír je příliš malý pro report.');
+      throw const FormatException(
+        'Využitelná plocha rámu je příliš malá pro sestavu.',
+      );
     }
     if (y + height + lineHeight + padding * 2 > bottom) {
       newPage(table: false);
@@ -307,32 +407,22 @@ class _ReportBuilder {
     final sum = weights.reduce((a, b) => a + b);
     columns = weights.map((w) => width * w / sum).toList();
     if (width <= 0 || columns.any((w) => w <= padding * 2)) {
-      throw const FormatException('Papír je příliš malý pro report.');
+      throw const FormatException(
+        'Využitelná plocha rámu je příliš malá pro sestavu.',
+      );
+    }
+    if (content.height < 35 || width < 70) {
+      throw const FormatException(
+        'Využitelná plocha rámu je příliš malá pro sestavu.',
+      );
     }
     newPage(table: false);
-    paragraph(project.name, bold: true);
     paragraph(
       data.spec.title.isEmpty ? sheet.name : data.spec.title,
       bold: true,
     );
     paragraph(data.spec.note);
-    final usedArticleIds = project.components.map((c) => c.articleId).toSet();
-    final incomplete =
-        project.articles
-            .where(
-              (a) =>
-                  usedArticleIds.contains(a.id) &&
-                  ((a.manufacturer ?? '').trim().isEmpty ||
-                      (a.partNumber ?? '').trim().isEmpty),
-            )
-            .length;
-    final withoutArticle =
-        project.components.where((c) => c.articleId == null).length;
-    final unknown =
-        project.components.where((c) => c.quantity.baseUnits == null).length;
-    paragraph(
-      'Neúplné artikly: $incomplete · Bez artiklu: $withoutArticle · Neurčená množství: $unknown',
-    );
+    paragraph(summary);
     header();
     if (data.rows.isEmpty) paragraph('Žádné položky.');
     for (var index = 0; index < data.rows.length; index++) {
@@ -378,6 +468,12 @@ class _ReportBuilder {
             lineCount: count,
             cells: fragmentCells,
             bounds: Rect.fromLTWH(margin, y, width, fragmentHeight),
+            referenceBounds: Rect.fromLTWH(
+              margin,
+              y,
+              columns.first,
+              fragmentHeight,
+            ),
           ),
         );
         y += fragmentHeight;
@@ -386,7 +482,7 @@ class _ReportBuilder {
           text(
             'Řádek ${index + 1} pokračuje na další straně',
             margin,
-            bottom + 2,
+            bottom,
             fontSize: 2.4,
             color: reportMuted,
           );
@@ -401,23 +497,6 @@ class _ReportBuilder {
           i == 0
               ? fullPageDesignation(sheet)
               : '${fullPageDesignation(sheet)}.${i + 1}';
-      final footer = 'List $number · Strana ${i + 1} / ${pages.length}';
-      final painter = reportTextPainter(footer, size);
-      final ascent = painter.computeDistanceToActualBaseline(
-        TextBaseline.alphabetic,
-      );
-      p.texts.add(
-        ReportText(
-          text: footer,
-          x: margin,
-          baseline: sheet.paperSizeMm.height - 8,
-          width: painter.width,
-          ascent: ascent,
-          fontSize: size,
-          color: reportMuted,
-        ),
-      );
-      painter.dispose();
       result.add(
         ReportPage(
           sheetId: sheet.id,

@@ -3,11 +3,11 @@
 Pure Dart document model, symbol geometry, validation, atomic commands, undo/redo,
 and command-line tools for Open ECAD. No Flutter dependency.
 
-The version 5 `.oecad` / `.ecad.json` format contains `format: "open-ecad"`,
-`formatVersion: 5`, a project ID, name, description, monotonic revision, and
-`pages`. The reader accepts versions 4 and 5; saving writes version 5. Older
-formats are rejected without automatic migration. The PDF converter emits
-version 4 graphics, which the editor can open and save as version 5.
+The version 6 `.oecad` / `.ecad.json` format contains `format: "open-ecad"`,
+`formatVersion: 6`, a project ID, name, description, monotonic revision,
+`pages`, embedded `frameTemplates`, a `defaultFrame` and `documentFields`.
+The reader accepts versions 4, 5 and 6; the editor and PDF converter write
+version 6. Earlier versions are rejected.
 
 Articles describe products; components represent physical pieces or material;
 devices are electrical occurrences bound to component functions and terminals.
@@ -29,7 +29,7 @@ best-effort routing when those symbols overlap. Other devices are not obstacles.
 Routing is designed for the editor's 90-degree turns; other rotation angles
 in external documents use best-effort geometry.
 Each sheet also has
-`width`, `height`, `showFrame`, an optional 1-based `sourcePage`, and a `graphics`
+`width`, `height`, `frame`, `documentFields`, an optional 1-based `sourcePage`, and a `graphics`
 collection. `sourcePage` is the page number in the original document, so it may
 exceed the sheet count; it is limited to 1,000,000.
 Graphics remain separate from electrical devices and connections.
@@ -41,7 +41,40 @@ A sheet `type` is `multiLine`, `singleLine`, `cabinetLayout`, `form`, or
 are rejected. Electrical sheets support symbols and wires; cabinet layouts
 display shared physical placements, and BOM sheets display derived reports.
 `SheetTemplates.blankForm()` returns an original blank table of ordinary
-graphics with generic captions only.
+graphics with generic captions only; `contentBounds` fits a new table inside
+the chosen frame's drawing area.
+
+## Drawing frames
+
+New projects embed a generic frame template; sheets inherit the project choice.
+`FrameChoice` selects `inherit`, `template`, or explicit `none`. Border, title
+block and edge zones have independent optional overrides. Templates use paper
+millimetres for margins, strokes, zone divisions, title-block separators and
+editable text boxes. They stay separate from electrical and drawing objects.
+
+`resolveSheetFrame`, `layoutFrameGeometry`, `bindFrame`, and `frameContentUnits`
+provide one layout for rendering, export, pagination and automatic placement.
+The title block reserves a bottom band. Frame changes never transform existing
+native content or change the physical mounting scale.
+
+Field text accepts literal text and allowlisted bindings such as
+`{{project.name}}`, `{{page.number}}`, `{{page.count}}`, `{{view.scale}}` and
+`{{document.drawnBy}}`. Project document fields can be overridden per sheet;
+an omitted sheet key inherits and an empty value suppresses it. The editable
+`drawingRevision` field is separate from the engine's transaction revision.
+
+`AddFrameTemplate`, `UpdateFrameTemplate`, `DeleteFrameTemplate`,
+`SetProjectFrame`, `SetSheetFrame`, `SetProjectDocumentFields`, and
+`SetSheetDocumentFields` use the same atomic command codec and history as
+other edits. Deleting a referenced template requires reassigning its users
+within the transaction. `FrameTemplateCodec` reads and writes standalone
+`open-ecad-frame-template` definitions; assign a fresh ID when importing a
+definition into a project. It carries bindings rather than resolved metadata.
+
+The PDF converter preserves the original artwork with explicit `frame:none`.
+`fitGraphicsToFrame` uniformly fits explicitly retained graphics into the
+chosen content area. The caller must obtain the user's removal selection;
+the helper does not recognize or remove old frames automatically.
 
 ## Native drawing elements
 

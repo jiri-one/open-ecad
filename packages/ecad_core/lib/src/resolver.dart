@@ -204,6 +204,30 @@ class ProjectResolver {
   DeviceOccurrence? mainOccurrence(String componentId) =>
       _mainOccurrences[componentId];
 
+  DeviceOccurrence? schematicOccurrence(
+    String componentId, {
+    String? terminalId,
+  }) {
+    if (!components.containsKey(componentId)) return null;
+    final all = _occurrences[componentId] ?? const <DeviceOccurrence>[];
+    bool eligible(DeviceOccurrence o) =>
+        (o.sheet.type == SheetType.multiLine ||
+            o.sheet.type == SheetType.singleLine) &&
+        (terminalId == null ||
+            ports(o.device).any((p) => p.node.terminalId == terminalId));
+    final explicit = all.where((o) => o.device.isMainFunction).toList();
+    if (explicit.isNotEmpty) {
+      return explicit.length == 1 && eligible(explicit.single)
+          ? explicit.single
+          : null;
+    }
+    final candidates =
+        all
+            .where((o) => eligible(o) && o.device.mode == OccurrenceMode.wiring)
+            .toList();
+    return candidates.length == 1 ? candidates.single : null;
+  }
+
   bool isMainFunction(Device device) =>
       mainOccurrence(device.componentId)?.device.id == device.id;
 

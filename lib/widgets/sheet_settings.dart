@@ -1,8 +1,11 @@
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
 import '../app/controller.dart';
+import '../services/mounting_annotations.dart';
 import 'inventory.dart';
 import 'structure_fields.dart';
+import 'frame_settings.dart';
+import 'frame_settings_draft.dart';
 
 export 'continuation_editor.dart' show editContinuation;
 
@@ -12,6 +15,8 @@ Future<void> editSheetSettings(
 ) async {
   final sheet = app.sheet;
   final generation = app.documentGeneration;
+  final guard = FrameEditGuard(app, sheetId: sheet.id);
+  final frames = FrameSettingsDraft(app.project, sheetId: sheet.id);
   final structure = StructureFieldsController(sheet.structure);
   final fields = {
     for (final e
@@ -26,6 +31,21 @@ Future<void> editSheetSettings(
   };
   var reportKind = sheet.report?.kind ?? BomReportKind.articles;
   var paper = sheet.paperSizeMm;
+  Sheet proposedSheet(Sheet current) => current.copyWith(
+    structure: structure.value,
+    documentCode: fields['Kód dokumentu (&)']!.text.trim(),
+    name: fields['Název listu']!.text.trim(),
+    number: fields['Číslo listu']!.text.trim(),
+    paperSizeMm: paper,
+    report:
+        sheet.type == SheetType.billOfMaterials
+            ? BomTableSpec(
+              kind: reportKind,
+              title: fields['Nadpis reportu']!.text.trim(),
+              note: fields['Poznámka reportu']!.text.trim(),
+            )
+            : null,
+  );
   String? error;
   await showDialog<void>(
     context: context,
@@ -73,6 +93,42 @@ Future<void> editSheetSettings(
                                     ? SizeMm.a3Landscape
                                     : SizeMm.a4Landscape,
                   ),
+                  TextButton.icon(
+                    icon: const Icon(Icons.border_outer),
+                    label: const Text('Rámeček a údaje listu…'),
+                    onPressed: () async {
+                      if (!guard.current) {
+                        refresh(() => error = FrameEditGuard.staleMessage);
+                        return;
+                      }
+                      final staged = FrameSettingsDraft(
+                        frames.project.copyWith(
+                          pages: [
+                            for (final page in frames.project.pages)
+                              page.id == sheet.id ? proposedSheet(page) : page,
+                          ],
+                        ),
+                        sheetId: sheet.id,
+                      );
+                      final edited = await editFrameSettings(
+                        ctx,
+                        app,
+                        sheetId: sheet.id,
+                        draft: staged,
+                        guard: guard,
+                      );
+                      if (!ctx.mounted || edited == null) return;
+                      refresh(() {
+                        frames.templates
+                          ..clear()
+                          ..addAll(edited.templates);
+                        frames.choice = edited.choice;
+                        frames.fields
+                          ..clear()
+                          ..addAll(edited.fields);
+                      });
+                    },
+                  ),
                   if (sheet.type == SheetType.billOfMaterials) ...[
                     DropdownButtonFormField<BomReportKind>(
                       initialValue: reportKind,
@@ -96,32 +152,21 @@ Future<void> editSheetSettings(
                   ],
                 ],
                 save: () {
-                  if (!app.isDocumentCurrent(generation) ||
+                  if (!guard.current ||
+                      !app.isDocumentCurrent(generation) ||
                       app.project.sheetById(sheet.id) == null) {
-                    refresh(() => error = 'Původní list již není otevřen.');
+                    refresh(() => error = FrameEditGuard.staleMessage);
                     return;
                   }
-                  if (app.updateSheet(
-                    app.project
-                        .sheetById(sheet.id)!
-                        .copyWith(
-                          structure: structure.value,
-                          documentCode:
-                              fields['Kód dokumentu (&)']!.text.trim(),
-                          name: fields['Název listu']!.text.trim(),
-                          number: fields['Číslo listu']!.text.trim(),
-                          paperSizeMm: paper,
-                          report:
-                              sheet.type == SheetType.billOfMaterials
-                                  ? BomTableSpec(
-                                    kind: reportKind,
-                                    title:
-                                        fields['Nadpis reportu']!.text.trim(),
-                                    note:
-                                        fields['Poznámka reportu']!.text.trim(),
-                                  )
-                                  : null,
-                        ),
+                  if (app.execute(
+                    [
+                      UpdateSheet(
+                        proposedSheet(app.project.sheetById(sheet.id)!),
+                      ),
+                      ...frames.commands(),
+                    ],
+                    'Vlastnosti listu uloženy',
+                    expectedRevision: guard.project.revision,
                   )) {
                     Navigator.pop(ctx);
                   } else {
@@ -143,7 +188,10 @@ Future<void> editMountingView(
   BuildContext context,
   EditorController app,
 ) async {
+  final sheet = app.sheet;
+  final guard = FrameEditGuard(app, sheetId: sheet.id);
   final view = app.sheet.mountingView;
+  final content = defaultMountingViewport(app.project, sheet);
   String? layoutId = view?.layoutId;
   final fields = {
     for (final e
@@ -153,10 +201,10 @@ Future<void> editMountingView(
           'Měřítko 1 :': decimal(view?.scaleDenominator ?? 5),
           'Počátek X mm': decimal(view?.originMm.x ?? 0),
           'Počátek Y mm': decimal(view?.originMm.y ?? 0),
-          'Okno X': decimal(view?.viewport.x ?? 65),
-          'Okno Y': decimal(view?.viewport.y ?? 120),
-          'Okno šířka': decimal(view?.viewport.width ?? 950),
-          'Okno výška': decimal(view?.viewport.height ?? 520),
+          'Okno X': decimal(view?.viewport.x ?? content.x),
+          'Okno Y': decimal(view?.viewport.y ?? content.y),
+          'Okno šířka': decimal(view?.viewport.width ?? content.width),
+          'Okno výška': decimal(view?.viewport.height ?? content.height),
         }.entries)
       e.key: TextEditingController(text: e.value),
   };
@@ -215,6 +263,9 @@ Future<void> editMountingView(
                 ],
                 save: () {
                   try {
+                    if (!guard.current || app.activeSheetId != sheet.id) {
+                      throw const FormatException(FrameEditGuard.staleMessage);
+                    }
                     if (app.configureMounting(
                       layout: app.project.mountingLayoutById(layoutId ?? ''),
                       width: n('Šířka plochy mm'),

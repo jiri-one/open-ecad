@@ -39,7 +39,46 @@ každé má vlastní číslo sestavení. Stálé odkazy v úvodu vedou na nejnov
 vydání; [historie sestavení](https://github.com/jiri-one/open-ecad/releases)
 uchovává i starší balíčky. Průběžné balíčky v Actions jsou dostupné jen sedm dní.
 
-Webový náhled bez externího CDN:
+### Linux: instalace do nabídky aplikací
+
+Pro místní vývojovou verzi na Arch Linuxu / Manjaru, včetně Niri:
+
+```bash
+./scripts/linux_desktop.py --install
+```
+
+Instalátor sestaví release a přidá **Open ECAD** do nabídky aplikací aktuálního
+uživatele. Nainstaluje příkaz `~/.local/bin/open-ecad`, ikonu a podporu souborů
+`.oecad`. Nepotřebuje root. `~/.local/bin` musí být v `PATH` pro spuštění příkazem;
+položka v nabídce používá absolutní cestu.
+
+Při každém spuštění se kontroluje obsah místních zdrojů, včetně necommitnutých
+změn, a verze Flutter SDK. Změněná aplikace se automaticky sestaví a otevře;
+nezměněná spustí hotový release. Git se automaticky nestahuje ani nepřepisuje.
+Běžící okno zůstává na své verzi; novou verzi získá další spuštění. Při chybě
+sestavení se zobrazí oznámení s cestou k logu a spuštění skončí.
+
+Je potřeba Python 3.10+, Git, Flutter SDK a běžné závislosti pro Flutter Linux:
+Clang, CMake, Ninja, pkg-config, GTK 3 a libstdc++. Integrace nabídky používá
+`desktop-file-utils`, `shared-mime-info` a oznámení `notify-send` z `libnotify`.
+Závislosti Dart se instalují podle `pubspec.lock`; po změně `pubspec.yaml`
+aktualizujte lockfile pomocí `flutter pub get`.
+
+```bash
+open-ecad                         # otevře aplikaci s obvyklou obnovou projektů
+open-ecad cesta/projekt.oecad      # otevře konkrétní soubor
+open-ecad --status                # ověří aktuálnost sestavení
+open-ecad --build-only            # připraví novou verzi bez otevření okna
+```
+
+Sestavení, log a neměnné release balíčky jsou v `.ai/desktop/`. Během sestavení
+se kopírují jen povolené zdrojové soubory a aplikační prostředky; soukromé
+projekty se do aplikace nezabalují. Starší release zůstávají pro již běžící
+okna. Po zavření všech oken lze `.ai/desktop/` smazat; příští spuštění ho obnoví.
+
+### Webový náhled
+
+Bez externího CDN:
 
 ```bash
 flutter --no-version-check --suppress-analytics pub get
@@ -65,9 +104,13 @@ tohoto prototypu; pracovní plocha se ověřuje od šířky 1024 px.
 - Typy listů **vícepólové schéma**, **jednopólové schéma (1P)**, **výstavba
   rozvaděče**, **formulář** a **kusovník**. Typ se volí při vytvoření listu, mění se ve
   vlastnostech listu nebo v nabídce seznamu listů a ukládá se do souboru.
-  Seznam listů typ zobrazuje i vyhledává, záhlaví výkresu i exportu ho uvádí.
+  Seznam listů typ zobrazuje i vyhledává.
   Formulář může začít prázdnou tabulkou k ručnímu vyplnění. List kusovníku
   zobrazuje živý stránkovaný materiálový přehled nebo seznam komponent.
+- Výchozí rámeček všech typů listů včetně stránek reportů, s nastavením projektu
+  a výjimkami pro jednotlivé listy. Obvod, razítko a souřadnice lze samostatně
+  vypnout. Vlastní šablony určují okraje, čáry, rozmístění a obsah polí razítka
+  a lze je přenášet mezi projekty. Zobrazení i PDF/SVG používají stejné rozvržení.
 - Artikly a fyzické komponenty se sdílenými elektrickými a montážními zobrazeními.
   Kusovník počítá fyzický kus jednou. Výstavba používá rozměry a polohy v mm;
   přístroje se umísťují ručně do společného montážního prostoru.
@@ -98,6 +141,25 @@ Je sestavený přímo z kódu aplikace; uživatelské projektové soubory se nez
 Při návrhu výstavby používejte [zásady rozmístění v rozvaděči](docs/cabinet-layout.md):
 svorkovnice k místu vstupu kabelů a přístroje s největším ztrátovým teplem
 co nejvýše, se zachováním chladicích odstupů a přístupu pro zapojení.
+
+## Rámečky a razítko
+
+V nabídce projektu pod ikonou složky otevřete **Rámečky a údaje projektu…**.
+Jednotlivý list upravíte přes **Rámeček a údaje listu…** v jeho kontextové
+nabídce nebo vlastnostech. List může dědit projekt, použít jinou šablonu nebo
+zůstat bez rámečku. Obvod, razítko a souřadnicové zóny se nastavují samostatně.
+
+Karta **Šablony** umožňuje vytvoření, kopírování a úpravu rozvržení. Pole razítka
+lze v náhledu přesouvat myší a přesně zadat jejich rozměry, písmo, text i vazby
+na údaje projektu či stránky. Změna sdílené šablony ovlivní všechny její listy;
+pro odlišný list použijte **Vytvořit a použít samostatnou kopii**. Definici lze
+exportovat jako `.oecadframe` a importovat do jiného projektu.
+
+Karta **Údaje** obsahuje například autora, datum a revizi výkresu. Údaj listu
+může dědit hodnotu projektu, přepsat ji nebo potlačit prázdným textem. Úpravy
+se uloží až potvrzením vnějšího dialogu a lze je vrátit jedním krokem Zpět.
+Příliš dlouhý text a obsah zasahující mimo pracovní oblast jsou označené
+upozorněním; změna rámečku existující kresbu sama nepřesouvá.
 
 ## Asistent: místní příkazy a model
 

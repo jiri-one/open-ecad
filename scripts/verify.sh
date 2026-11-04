@@ -6,6 +6,7 @@ set -euo pipefail
 
 ECAD_PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$ECAD_PROJECT_DIR"
+python3 -I scripts/test_linux_desktop.py
 ECAD_SDK_COMMAND="${ECAD_FLUTTER_BIN:-$(command -v flutter || true)}"
 if [[ -z "$ECAD_SDK_COMMAND" ]]; then
   for candidate in \

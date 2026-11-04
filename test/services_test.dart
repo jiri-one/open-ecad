@@ -181,8 +181,21 @@ void main() {
           }
           final next = proposal.preview(current);
           final device = next.pages.first.devices.last;
-          expect(device.position.x, inInclusiveRange(48, 980));
-          expect(device.position.y, inInclusiveRange(126, 628));
+          final area = frameContentUnits(
+            next.pages.first,
+            layoutFrameGeometry(
+              next.pages.first.paperSizeMm,
+              resolveSheetFrame(next, next.pages.first),
+            ),
+          );
+          expect(
+            device.position.x,
+            inInclusiveRange(area.x, area.x + area.width),
+          );
+          expect(
+            device.position.y,
+            inInclusiveRange(area.y, area.y + area.height),
+          );
           final definition = geometryFor(device);
           for (final existing in current.pages.first.devices) {
             final other = geometryFor(existing);
@@ -229,25 +242,33 @@ void main() {
                 .skip(project.pages.first.devices.length)
                 .toList();
         expect(added.first.position.x, lessThan(300));
+        final area = frameContentUnits(
+          filled.pages.first,
+          layoutFrameGeometry(
+            filled.pages.first.paperSizeMm,
+            resolveSheetFrame(filled, filled.pages.first),
+          ),
+        );
         for (final device in added) {
           final definition = geometryFor(device);
-          expect(device.position.x - definition.width / 2, greaterThan(32));
-          expect(device.position.x + definition.width / 2, lessThan(1068));
-          expect(device.position.y - definition.height / 2, greaterThan(100));
-          expect(device.position.y + definition.height / 2, lessThan(650));
+          expect(device.position.x - definition.width / 2, greaterThan(area.x));
+          expect(
+            device.position.x + definition.width / 2,
+            lessThan(area.x + area.width),
+          );
+          expect(
+            device.position.y - definition.height / 2,
+            greaterThan(area.y),
+          );
+          expect(
+            device.position.y + definition.height / 2,
+            lessThan(area.y + area.height),
+          );
         }
-        final second = assistant.propose(
-          'Vytvoř motorový vývod',
-          project: filled,
-          sheetId: 'sheet_power',
-        );
-        expect(second.supported, isFalse);
-        expect(second.message, contains('Přidejte nový list'));
         final original = jsonEncode(project.toJson());
         final atomic = assistant.fromActions(
           [
-            {'op': 'motor_branch'},
-            {'op': 'motor_branch'},
+            for (var i = 0; i < 10; i++) {'op': 'motor_branch'},
           ],
           project: project,
           sheetId: 'sheet_power',

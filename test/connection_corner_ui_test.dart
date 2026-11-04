@@ -204,7 +204,9 @@ void main() {
       );
       expect(find.byType(DrawingCursorRegion), findsOneWidget);
       expect(regions().any((r) => r.cursor == SystemMouseCursors.none), isTrue);
-      await tester.tap(find.byTooltip('Nastavení kreslicího kurzoru'));
+      await tester.tap(find.byTooltip('Nastavení programu'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Kreslicí kurzor…'));
       await tester.pumpAndSettle();
       expect(find.byType(DrawingCursorDialog), findsOneWidget);
       expect(

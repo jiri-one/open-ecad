@@ -56,8 +56,13 @@ abstract final class ProjectValidator {
 
 /// Checks document integrity and connectivity; does not evaluate electrical
 /// protection, conductor sizing, regulatory compliance, or physical safety.
-List<Diagnostic> validateProject(EcadProject project) =>
-    _Validation(project).run();
+List<Diagnostic> validateProject(EcadProject project) => List.of(
+  _projectDiagnostics[project] ??= List.unmodifiable(
+    _Validation(project).run(),
+  ),
+);
+
+final _projectDiagnostics = Expando<List<Diagnostic>>();
 
 class _Validation {
   _Validation(this.project) : resolver = ProjectResolver(project);
@@ -125,6 +130,11 @@ class _Validation {
 
   List<Diagnostic> run() {
     id(project.id);
+    try {
+      validateProjectFrames(project);
+    } on EcadException catch (error) {
+      add(error.code, error.message);
+    }
     if (!text(project.name, 200, required: true) ||
         !text(project.description, 8192))
       add(
@@ -982,9 +992,12 @@ class _Validation {
   }
 }
 
+final _validProjects = Expando<bool>();
+
 /// Throws only for structural errors; editorial/connectivity warnings remain
 /// valid work-in-progress documents.
 void requireValidProject(EcadProject project) {
+  if (_validProjects[project] == true) return;
   final errors =
       validateProject(
         project,
@@ -995,4 +1008,5 @@ void requireValidProject(EcadProject project) {
       code: errors.first.code,
     );
   }
+  _validProjects[project] = true;
 }

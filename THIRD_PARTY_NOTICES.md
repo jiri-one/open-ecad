@@ -14,6 +14,7 @@ are recorded in `pubspec.lock` and `packages/ecad_core/pubspec.lock`.
 | Material icon font bundled by Flutter | Apache-2.0, Google / Material Design authors |
 | `cupertino_icons` | MIT, Vladimir Kharlampidi; platform-adaptive controls |
 | `file_selector`, `shared_preferences` and platform implementations | BSD-3-Clause, The Flutter Authors |
+| `window_manager`, `screen_retriever` and platform implementations | MIT, LeanFlutter contributors; desktop window controls |
 | `http`, `web` and Dart package dependencies | Their package licenses, included in Flutter license assets |
 | `pdf` | Apache-2.0, David PHAM-VAN and contributors |
 | `image` | MIT, Brendan Duncan and contributors; PNG normalization for PDF export |

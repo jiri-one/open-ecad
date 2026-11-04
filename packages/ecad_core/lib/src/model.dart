@@ -2,9 +2,11 @@
 import 'dart:math' as math;
 
 import 'graphics.dart';
+import 'drawing_frames.dart';
 import 'domain.dart';
 import 'structure.dart';
 export 'domain.dart';
+export 'drawing_frames.dart';
 export 'structure.dart';
 
 /// Shared format limits. Project files are data, never executable instructions.
@@ -398,7 +400,9 @@ class Sheet {
     this.type = SheetType.multiLine,
     this.width = 1100,
     this.height = 780,
-    this.showFrame = true,
+    FrameChoice? frame,
+    bool? showFrame,
+    Map<String, String> documentFields = const {},
     this.sourcePage,
     this.paperSizeMm = SizeMm.a3Landscape,
     this.mountingView,
@@ -408,7 +412,9 @@ class Sheet {
     List<Device> devices = const [],
     List<Wire> wires = const [],
     List<DrawingElement> graphics = const [],
-  }) : corners = List.unmodifiable(corners),
+  }) : frame = _sheetFrame(frame, showFrame),
+       documentFields = Map.unmodifiable(documentFields),
+       corners = List.unmodifiable(corners),
        continuations = List.unmodifiable(continuations),
        devices = List.unmodifiable(devices),
        wires = List.unmodifiable(wires),
@@ -421,7 +427,9 @@ class Sheet {
   final SheetType type;
   final double width;
   final double height;
-  final bool showFrame;
+  final FrameChoice frame;
+  final Map<String, String> documentFields;
+  bool get showFrame => frame.mode != FrameMode.none;
   final int? sourcePage;
   final SizeMm paperSizeMm;
   final MountingView? mountingView;
@@ -459,6 +467,8 @@ class Sheet {
     double? width,
     double? height,
     bool? showFrame,
+    FrameChoice? frame,
+    Map<String, String>? documentFields,
     Object? sourcePage = _unchangedSourcePage,
     SizeMm? paperSizeMm,
     Object? mountingView = unchanged,
@@ -477,7 +487,13 @@ class Sheet {
     type: type ?? this.type,
     width: width ?? this.width,
     height: height ?? this.height,
-    showFrame: showFrame ?? this.showFrame,
+    frame:
+        frame != null || showFrame == false
+            ? _sheetFrame(frame, showFrame)
+            : showFrame == true && !this.showFrame
+            ? const FrameChoice.inherit()
+            : this.frame,
+    documentFields: documentFields ?? this.documentFields,
     sourcePage:
         identical(sourcePage, _unchangedSourcePage)
             ? this.sourcePage
@@ -505,7 +521,8 @@ class Sheet {
     'type': type.name,
     'width': width,
     'height': height,
-    'showFrame': showFrame,
+    'frame': frame.toJson(),
+    'documentFields': documentFields,
     if (sourcePage != null) 'sourcePage': sourcePage,
     'paperSizeMm': paperSizeMm.toJson(),
     if (mountingView != null) 'mountingView': mountingView!.toJson(),
@@ -531,6 +548,8 @@ class Sheet {
         'width',
         'height',
         'showFrame',
+        'frame',
+        'documentFields',
         'sourcePage',
         'paperSizeMm',
         'mountingView',
@@ -589,7 +608,16 @@ class Sheet {
           ).map(ContinuationMarker.fromJson).toList(),
       width: width,
       height: height,
-      showFrame: jsonBool(map, 'showFrame', fallback: true),
+      frame:
+          map.containsKey('frame') ? FrameChoice.fromJson(map['frame']) : null,
+      showFrame:
+          map.containsKey('showFrame')
+              ? jsonBool(map, 'showFrame', fallback: true)
+              : null,
+      documentFields:
+          map.containsKey('documentFields')
+              ? decodeDocumentFields(map['documentFields'])
+              : const {},
       sourcePage: sourcePage,
       devices:
           jsonList(
@@ -614,6 +642,19 @@ class Sheet {
   }
 }
 
+FrameChoice _sheetFrame(FrameChoice? frame, bool? showFrame) {
+  if (frame != null && showFrame != null) {
+    throw const EcadException(
+      'Specify frame or showFrame, not both.',
+      code: 'invalid_frame_choice',
+    );
+  }
+  return frame ??
+      (showFrame == false
+          ? const FrameChoice.none()
+          : const FrameChoice.inherit());
+}
+
 const _unchangedSourcePage = Object();
 
 class EcadProject {
@@ -622,13 +663,20 @@ class EcadProject {
     required this.name,
     this.description = '',
     this.revision = 0,
+    List<FrameTemplate>? frameTemplates,
+    this.defaultFrame = const FrameChoice.template(FrameTemplates.builtinId),
+    Map<String, String> documentFields = const {},
     required List<Sheet> pages,
     List<Article> articles = const [],
     List<Component> components = const [],
     List<ContinuationLink> continuationLinks = const [],
     List<TerminalStrip> terminalStrips = const [],
     List<MountingLayout> mountingLayouts = const [],
-  }) : terminalStrips = List.unmodifiable(terminalStrips),
+  }) : frameTemplates = List.unmodifiable(
+         frameTemplates ?? [FrameTemplates.builtin],
+       ),
+       documentFields = Map.unmodifiable(documentFields),
+       terminalStrips = List.unmodifiable(terminalStrips),
        articles = List.unmodifiable(articles),
        components = List.unmodifiable(components),
        continuationLinks = List.unmodifiable(continuationLinks),
@@ -636,13 +684,16 @@ class EcadProject {
        pages = List.unmodifiable(pages);
   static const format = 'open-ecad';
 
-  /// Bumped whenever written files gain fields that older strict readers
-  /// reject, so they report an unsupported format instead of a schema error.
-  static const formatVersion = 5;
+  static const formatVersion = 6;
   final String id;
   final String name;
   final String description;
   final int revision;
+  final List<FrameTemplate> frameTemplates;
+  final FrameChoice defaultFrame;
+  final Map<String, String> documentFields;
+  FrameTemplate? frameTemplateById(String id) =>
+      findById(frameTemplates, id, (t) => t.id);
   final List<Sheet> pages;
   final List<Article> articles;
   final List<Component> components;
@@ -670,6 +721,9 @@ class EcadProject {
     String? name,
     String? description,
     int? revision,
+    List<FrameTemplate>? frameTemplates,
+    FrameChoice? defaultFrame,
+    Map<String, String>? documentFields,
     List<Sheet>? pages,
     List<Article>? articles,
     List<Component>? components,
@@ -681,6 +735,9 @@ class EcadProject {
     name: name ?? this.name,
     description: description ?? this.description,
     revision: revision ?? this.revision,
+    frameTemplates: frameTemplates ?? this.frameTemplates,
+    defaultFrame: defaultFrame ?? this.defaultFrame,
+    documentFields: documentFields ?? this.documentFields,
     pages: pages ?? this.pages,
     articles: articles ?? this.articles,
     components: components ?? this.components,
@@ -696,6 +753,9 @@ class EcadProject {
     'name': name,
     'description': description,
     'revision': revision,
+    'frameTemplates': frameTemplates.map((v) => v.toJson()).toList(),
+    'defaultFrame': defaultFrame.toJson(),
+    'documentFields': documentFields,
     'articles': articles.map((v) => v.toJson()).toList(),
     'components': components.map((v) => v.toJson()).toList(),
     'continuationLinks': continuationLinks.map((v) => v.toJson()).toList(),
@@ -717,6 +777,9 @@ class EcadProject {
         'name',
         'description',
         'revision',
+        'frameTemplates',
+        'defaultFrame',
+        'documentFields',
         'pages',
         'articles',
         'components',
@@ -728,7 +791,7 @@ class EcadProject {
     final version = map['formatVersion'];
     if (map['format'] != format ||
         version is! int ||
-        (version != formatVersion && version != 4)) {
+        (version != formatVersion && version != 5 && version != 4)) {
       throw const EcadException(
         'Unsupported project format or formatVersion.',
         code: 'unsupported_format',
@@ -897,6 +960,22 @@ class EcadProject {
       name: jsonString(map, 'name', max: 200),
       description: jsonString(map, 'description', fallback: '', max: 8192),
       revision: revision,
+      frameTemplates:
+          version < 6 && !map.containsKey('frameTemplates')
+              ? null
+              : jsonList(
+                map,
+                'frameTemplates',
+                max: FrameLimits.templates,
+              ).map(FrameTemplate.fromJson).toList(),
+      defaultFrame:
+          version < 6 && !map.containsKey('defaultFrame')
+              ? const FrameChoice.template(FrameTemplates.builtinId)
+              : FrameChoice.fromJson(map['defaultFrame']),
+      documentFields:
+          map.containsKey('documentFields')
+              ? decodeDocumentFields(map['documentFields'])
+              : const {},
       pages: rawPages.map(Sheet.fromJson).toList(),
       articles: rawArticles.map(Article.fromJson).toList(),
       components: rawComponents.map(Component.fromJson).toList(),

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../app/controller.dart';
 import '../app/workspace_controller.dart';
 import 'sheet_settings.dart';
+import 'frame_settings.dart';
+import 'frame_settings_draft.dart';
 
 class SheetContextMenu extends StatelessWidget {
   const SheetContextMenu({
@@ -43,6 +45,10 @@ class SheetContextMenu extends StatelessWidget {
       const PopupMenuItem(
         value: 'settings',
         child: Text('Číslo, papír a vlastnosti…'),
+      ),
+      const PopupMenuItem(
+        value: 'frame',
+        child: Text('Rámeček a údaje listu…'),
       ),
       PopupMenuItem(
         value: 'up',
@@ -93,6 +99,8 @@ class SheetContextMenu extends StatelessWidget {
         onRenameSheet();
       case 'settings':
         editSheetSettings(context, controller);
+      case 'frame':
+        editFrameSettings(context, controller, sheetId: sheet.id);
       case 'up':
         controller.reorderSheet(-1);
       case 'down':
@@ -107,9 +115,14 @@ class SheetContextMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (child == null) {
+      FrameEditGuard? menuGuard;
       return PopupMenuButton<String>(
+        onOpened:
+            () => menuGuard = FrameEditGuard(controller, sheetId: sheet.id),
         tooltip: tooltip ?? 'Možnosti listu ${fullPageDesignation(sheet)}',
-        onSelected: (action) => _select(context, action),
+        onSelected: (action) {
+          if (menuGuard?.current ?? false) _select(context, action);
+        },
         itemBuilder: (_) => _items(),
         icon: const Icon(Icons.more_vert, size: 16),
       );
@@ -117,6 +130,7 @@ class SheetContextMenu extends StatelessWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onSecondaryTapUp: (details) async {
+        final guard = FrameEditGuard(controller, sheetId: sheet.id);
         final overlay =
             Overlay.of(context).context.findRenderObject() as RenderBox;
         final action = await showMenu<String>(
@@ -127,7 +141,9 @@ class SheetContextMenu extends StatelessWidget {
           ),
           items: _items(),
         );
-        if (action != null && context.mounted) _select(context, action);
+        if (action != null && context.mounted && guard.current) {
+          _select(context, action);
+        }
       },
       child: child,
     );

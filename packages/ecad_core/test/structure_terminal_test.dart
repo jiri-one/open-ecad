@@ -116,7 +116,7 @@ void main() {
     expect(reopened.components.single.reference, isNull);
     expect(reopened.components.single.designation, '=+OPAQUE-K1.1');
     expect(reopened.pages.single.structure.isEmpty, isTrue);
-    expect(reopened.toJson()['formatVersion'], 5);
+    expect(reopened.toJson()['formatVersion'], EcadProject.formatVersion);
   });
 
   test(

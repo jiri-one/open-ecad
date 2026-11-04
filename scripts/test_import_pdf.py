@@ -282,9 +282,13 @@ class PrimitiveTests(ConverterTestCase):
         project, report, out, report_path = self.convert(pdf)
 
         self.assertEqual(project['format'], 'open-ecad')
-        self.assertEqual(project['formatVersion'], 4)
-        self.assertEqual(report['output']['formatVersion'], 4)
+        self.assertEqual(project['formatVersion'], 6)
+        self.assertEqual(report['output']['formatVersion'], 6)
         self.assertEqual(project['revision'], 0)
+        self.assertEqual(project['defaultFrame'],
+                         {'mode': 'template', 'templateId': 'frame.generic.v1'})
+        self.assertEqual(project['frameTemplates'][0]['id'], 'frame.generic.v1')
+        self.assertEqual(project['documentFields'], {})
         self.assertEqual(project['description'],
                          'PDF graphic import; connectivity not reconstructed')
         digest = hashlib.sha256(pdf.read_bytes()).hexdigest()
@@ -294,7 +298,7 @@ class PrimitiveTests(ConverterTestCase):
         self.assertEqual({tuple(sorted(p)) for p in project['pages']},
                          {tuple(sorted(
                              ['id', 'name', 'number', 'width', 'height',
-                              'showFrame', 'sourcePage', 'devices', 'wires',
+                              'frame', 'documentFields', 'sourcePage', 'devices', 'wires',
                               'graphics', 'type', 'paperSizeMm', 'continuations']))})
         for page in project['pages']:
             self.assertEqual(page['devices'], [])
@@ -302,7 +306,8 @@ class PrimitiveTests(ConverterTestCase):
             self.assertAlmostEqual(page['paperSizeMm']['width'], page['width'] * 25.4 / 72, places=4)
             self.assertAlmostEqual(page['paperSizeMm']['height'], page['height'] * 25.4 / 72, places=4)
             self.assertEqual(page['wires'], [])
-            self.assertIs(page['showFrame'], False)
+            self.assertEqual(page['frame'], {'mode': 'none'})
+            self.assertEqual(page['documentFields'], {})
         self.assertEqual(
             [(p['width'], p['height']) for p in project['pages']],
             [(400, 300), (210, 297), (300, 200)])

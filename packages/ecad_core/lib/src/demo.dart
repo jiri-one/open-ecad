@@ -179,7 +179,7 @@ abstract final class DemoProject {
         type: SheetType.cabinetLayout,
         mountingView: const MountingView(
           layoutId: 'layout_demo',
-          viewport: RectUnits(x: 80, y: 80, width: 900, height: 560),
+          viewport: RectUnits(x: 80, y: 80, width: 900, height: 530),
           scaleDenominator: 2,
         ),
       ),

@@ -5,10 +5,16 @@ chování a škálování ověřte na cílovém počítači následujícím prů
 
 1. Spustit `scripts/run.ps1`, případně rozbalit celý release adresář a spustit
    `open_ecad.exe`. Zaznamenat verzi Windows, rozlišení a škálování monitoru.
+   Přesunout okno za volné místo horní lišty, maximalizovat dvojklikem a obnovit
+   jeho velikost. Ověřit změnu velikosti za okraje a tlačítka okna.
 2. Přepnout všechny tři motivy. Ověřit české popisky, ikony a fokus klávesnice při
    100 %, 125 % a 150 % škálování; zkusit e-ink a zmenšení okna na 1024 × 768.
    V levém panelu přepnout mezi **Listy**, **Značky**, **Přístroje** a **Artikly**, vyhledat symbol
    a ověřit zachování filtru po přepnutí tam a zpět.
+   Motivy jsou v **Nastavení programu**. V horní liště přepnout sady **Elektro**,
+   **Kreslení** a **Úpravy**; při menší šířce jsou nástroje v nabídce sady.
+   **Celý list** ve spodním řádku přizpůsobí list s malým okrajem. Při zobrazení
+   celého listu otevřít a skrýt boční panely; ručně přiblížený pohled zachová měřítko.
 3. Na ukázce vybrat a přesunout symbol, otočit jej a vrátit změny.
    Přidat svorku a propojit její bod s dalším vývodem. Vybrat a odstranit vodič.
    Dva body bez automatického propojení spojit opakovaně, i v opačném pořadí:
@@ -19,6 +25,11 @@ chování a škálování ověřte na cílovém počítači následujícím prů
 4. Projít pět listů ukázky: cívku, kontakt s opakovaným pohledem, výstavbu,
    kusovník a seznam komponent. Ověřit, že relé je stále jeden fyzický kus.
    Přejmenovat list přes nabídku seznamu listů a přidat nový list.
+   Při najetí na odkaz přístroje nebo návaznosti vodiče ověřit podtržení bez Ctrl.
+   Stisknout a uvolnit Ctrl při stojícím kurzoru; Ctrl+klik přejde na konkrétní
+   cíl. Stejně přejít z přístroje v montážním pohledu na určenou hlavní funkci
+   a z jednotlivé svorky na její výskyt ve schématu. Chybějící nebo nejednoznačný
+   cíl nesmí dostat aktivní odkaz. Běžný klik vybírá, přetažení přesouvá.
    Vytvořit formulář s prázdnou tabulkou, změnit typ listu ve **Vlastnostech**
    a vrátit změnu. V hledání listů zkusit „1P“ a „formular“ bez diakritiky.
 5. Zadat `Přidej motorový vývod`. Zkontrolovat náhled, přepnout na původní schéma,

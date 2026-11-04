@@ -134,7 +134,7 @@ void main() {
       await tester.tapAt(point(tester, from, a));
       await tester.pump();
       expect(a.sheet.wires, isEmpty);
-      await tester.tap(find.text('B · 01 Synthetic sheet'));
+      await tester.tap(find.byTooltip('B · 01 Synthetic sheet'));
       await tester.pumpAndSettle();
       expect(workspace.active, same(b));
       b.viewport.reset();
@@ -176,7 +176,9 @@ void main() {
     final workspace =
         tester.widget<EditorWorkspace>(find.byType(EditorWorkspace)).workspace!;
     final opening = workspace.open(path: 'synthetic-b.oecad');
-    await tester.tap(find.text('A').first);
+    await tester.tap(find.byTooltip('Soubor'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Přejmenovat projekt…'));
     await tester.pumpAndSettle();
     expect(find.text('Název projektu'), findsOneWidget);
     await tester.enterText(
@@ -224,7 +226,7 @@ void main() {
               .workspace!;
       final opening = workspace.open(path: 'synthetic-b.oecad');
       if (action == 'sheet') {
-        final tab = find.text('A · 01 Synthetic sheet');
+        final tab = find.byTooltip('A · 01 Synthetic sheet');
         await tester.tap(tab);
         await tester.pump(const Duration(milliseconds: 60));
         await tester.tap(tab);
@@ -274,7 +276,9 @@ void main() {
     await tester.pumpAndSettle();
     final workspace =
         tester.widget<EditorWorkspace>(find.byType(EditorWorkspace)).workspace!;
-    await tester.tap(find.text('A').first);
+    await tester.tap(find.byTooltip('Soubor'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Přejmenovat projekt…'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'Closed owner');
     workspace.closeDocument(a);
@@ -324,7 +328,7 @@ void main() {
       final oldState = tester.state(find.byType(SchematicCanvas));
       await tester.tapAt(point(tester, const Vec2(400, 380), a));
       await tester.pump();
-      await tester.tap(find.text('B · 01 Synthetic sheet'));
+      await tester.tap(find.byTooltip('B · 01 Synthetic sheet'));
       await tester.pumpAndSettle();
       expect(oldState.mounted, isFalse);
       expect(tester.state(find.byType(SchematicCanvas)), isNot(same(oldState)));

@@ -185,6 +185,9 @@ class _Draft {
   late final _links = _Items(_project.continuationLinks, (v) => v.id);
   late final _strips = _Items(_project.terminalStrips, (v) => v.id);
   late final _layouts = _Items(_project.mountingLayouts, (v) => v.id);
+  late final _frameTemplates = _Items(_project.frameTemplates, (v) => v.id);
+  FrameChoice? _defaultFrame;
+  Map<String, String>? _documentFields;
   final List<Sheet> _pages;
 
   // A repeated sheet ID addresses its first sheet until validation rejects it.
@@ -193,6 +196,9 @@ class _Draft {
 
   EcadProject build(int revision) => _project.copyWith(
     name: _name,
+    frameTemplates: _frameTemplates.toList(),
+    defaultFrame: _defaultFrame,
+    documentFields: _documentFields,
     description: _description,
     articles: _articles.toList(),
     components: _components.toList(),
@@ -216,6 +222,20 @@ class _Draft {
 
   void apply(EcadCommand command) {
     switch (command) {
+      case AddFrameTemplate():
+        _add(_frameTemplates, command.template, command.template.id);
+      case UpdateFrameTemplate():
+        _replace(_frameTemplates, command.template, command.template.id);
+      case DeleteFrameTemplate():
+        _remove(_frameTemplates, command.templateId);
+      case SetProjectFrame():
+        _defaultFrame = command.choice;
+      case SetProjectDocumentFields():
+        _documentFields = command.fields;
+      case SetSheetFrame():
+        _sheet(command.sheetId).frame = command.choice;
+      case SetSheetDocumentFields():
+        _sheet(command.sheetId).documentFields = command.fields;
       case RenameStructureBranch():
         _renameStructureBranch(command);
       case AddTerminalStrip():
@@ -607,6 +627,8 @@ class _SheetDraft {
   final Sheet _sheet;
   String? name;
   SheetType? type;
+  FrameChoice? frame;
+  Map<String, String>? documentFields;
   _Items<Device>? _devices;
   _Items<ConnectionCorner>? _corners;
   _Items<ConnectionCorner> get corners =>
@@ -627,6 +649,8 @@ class _SheetDraft {
   Sheet build() => _sheet.copyWith(
     name: name,
     type: type,
+    frame: frame,
+    documentFields: documentFields,
     devices: _devices?.toList(),
     continuations: _markers?.toList(),
     corners: _corners?.toList(),
