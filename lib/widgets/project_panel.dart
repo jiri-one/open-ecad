@@ -1,20 +1,13 @@
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../app/controller.dart';
 import '../app/workspace_controller.dart';
-import '../services/sheet_navigation.dart';
 import '../services/keyboard_shortcuts.dart';
 import 'inventory.dart';
-import 'structure_tree.dart';
-import 'sheet_context_menu.dart';
+import 'sheet_navigator.dart';
 import '../app/theme.dart';
 import '../app/typography.dart';
 import '../editor/schematic_canvas.dart';
-import 'components.dart';
-import 'sheet_types.dart';
-import 'frame_settings.dart';
-import 'frame_settings_draft.dart';
 
 class ProjectPanel extends StatefulWidget {
   const ProjectPanel({
@@ -128,142 +121,13 @@ class _ProjectPanelState extends State<ProjectPanel> {
         ),
       ),
       Expanded(
-        child: ListView(
-          children: [
-            SectionCaption(
-              'Otevřené projekty',
-              trailing: IconButton(
-                tooltip: 'Přidat list',
-                onPressed: widget.onAddSheet,
-                icon: const Icon(Icons.add, size: 18),
-              ),
-            ),
-            for (final doc in widget.workspace?.documents ?? [app])
-              ExpansionTile(
-                key: PageStorageKey(doc.documentSessionId),
-                initiallyExpanded: true,
-                title: Text(
-                  '${doc.project.name}${doc.dirty ? ' ●' : ''}',
-                  style: const TextStyle(fontSize: 14),
-                ),
-                subtitle: Tooltip(
-                  message:
-                      doc.currentFile?.path ?? doc.fileName ?? 'Bez souboru',
-                  child: Text(
-                    doc.fileName ?? 'Bez souboru',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
-                leading: Builder(
-                  builder: (context) {
-                    FrameEditGuard? menuGuard;
-                    return PopupMenuButton<String>(
-                      onOpened: () => menuGuard = FrameEditGuard(doc),
-                      tooltip: 'Projekt ${doc.project.name}',
-                      onSelected: (action) {
-                        if (!(menuGuard?.current ?? false)) return;
-                        if (action == 'frame') {
-                          editFrameSettings(context, doc);
-                        } else {
-                          widget.onCloseProject?.call(doc);
-                        }
-                      },
-                      itemBuilder:
-                          (_) => const [
-                            PopupMenuItem(
-                              value: 'frame',
-                              child: Text('Rámečky a údaje projektu…'),
-                            ),
-                            PopupMenuItem(
-                              value: 'close',
-                              child: Text('Zavřít projekt…'),
-                            ),
-                          ],
-                      child: const Icon(Icons.folder_open, size: 18),
-                    );
-                  },
-                ),
-                children: [
-                  StructureTree<Sheet>(
-                    initialFirst:
-                        widget.workspace?.sheetNavigationAspect(doc) ??
-                        StructureAspect.function,
-                    items:
-                        doc.project.pages
-                            .where(
-                              (s) =>
-                                  sheetMatchesSearch(s, sheetSearch) ||
-                                  foldForSearch(
-                                    fullPageDesignation(s),
-                                  ).contains(foldForSearch(sheetSearch)),
-                            )
-                            .toList(),
-                    contextFor: (s) => s.structure,
-                    compare: compareSheetDesignations,
-                    onFirstChanged:
-                        (aspect) => widget.workspace?.setSheetNavigationAspect(
-                          doc,
-                          aspect,
-                        ),
-                    onRename:
-                        (aspect, path) => renameStructureBranchDialog(
-                          context,
-                          doc,
-                          aspect,
-                          path,
-                        ),
-                    leaf:
-                        (sheet) => SheetContextMenu(
-                          controller: doc,
-                          sheet: sheet,
-                          workspace: widget.workspace,
-                          onRenameSheet: widget.onRenameSheet,
-                          child: ListTile(
-                            dense: true,
-                            selected:
-                                doc == app && sheet.id == app.activeSheetId,
-                            leading: Icon(sheetTypeIcon(sheet.type), size: 16),
-                            title: Text(
-                              '${fullPageDesignation(sheet)} · ${sheet.name}',
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                            subtitle: Text(
-                              sheet.type.label,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            onTap:
-                                () =>
-                                    widget.workspace == null
-                                        ? app.setSheet(sheet.id)
-                                        : widget.workspace!.openSheet(
-                                          doc,
-                                          sheet.id,
-                                          newTab:
-                                              HardwareKeyboard
-                                                  .instance
-                                                  .isControlPressed ||
-                                              HardwareKeyboard
-                                                  .instance
-                                                  .isMetaPressed,
-                                        ),
-                            trailing: SheetContextMenu(
-                              controller: doc,
-                              sheet: sheet,
-                              workspace: widget.workspace,
-                              onRenameSheet: widget.onRenameSheet,
-                              tooltip:
-                                  doc == app && sheet.id == app.activeSheetId
-                                      ? 'Vlastnosti listu'
-                                      : null,
-                            ),
-                          ),
-                        ),
-                  ),
-                ],
-              ),
-          ],
+        child: SheetNavigator(
+          controller: app,
+          workspace: widget.workspace,
+          query: sheetSearch,
+          onAddSheet: widget.onAddSheet,
+          onRenameSheet: widget.onRenameSheet,
+          onCloseProject: widget.onCloseProject,
         ),
       ),
     ],

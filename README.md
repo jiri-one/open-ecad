@@ -214,6 +214,9 @@ Velikosti textů ve výkresu a exportech se tím nemění.
 prostor pro výkres. Dvojklik na úchyt obnoví výchozí šířku daného panelu.
 Úchyt lze také vybrat klávesou Tab a posouvat šipkami vlevo a vpravo.
 
+Názvy listů zůstávají na jednom řádku. Po najetí myší se zobrazí celé označení
+a název; společný vodorovný posuvník umožňuje posouvat celý strom listů.
+
 ## Klávesnice
 
 Zkratky se mění přes **Nastavení programu → Klávesové zkratky…**. Příkaz

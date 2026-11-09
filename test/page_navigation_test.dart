@@ -168,6 +168,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.pageDown);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     expect(workspace.active.activeSheetId, 'first');
+    await tester.ensureVisible(find.byTooltip('Vlastnosti listu'));
     await tester.tap(find.byTooltip('Vlastnosti listu'));
     await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.pageDown);

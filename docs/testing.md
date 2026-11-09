@@ -25,6 +25,9 @@ chování a škálování ověřte na cílovém počítači následujícím prů
    šířce úchytu a zachovat vodorovné šipky po dobu tažení i na hranici rozsahu.
    Zmenšit a znovu zvětšit okno, skrýt a otevřít panely a restartovat aplikaci;
    ověřit zapamatované šířky, dvojklik pro návrat a ovládání úchytu šipkami.
+   V seznamu listů ověřit dlouhé názvy na jednom řádku, celé názvy v bublinách
+   a společný vodorovný posuvník včetně tažení myší. Vyzkoušet rozsáhlý projekt,
+   skok na poslední list, sbalování větví a filtrování po posunutí seznamu.
 3. Na ukázce vybrat a přesunout symbol, otočit jej a vrátit změny.
    V každém typu pohledu přiblížit a oddálit kolečkem, posunout výkres a dvojklikem
    kolečka vrátit celý list doprostřed. Vyzkoušet také okraj plochy mimo papír,

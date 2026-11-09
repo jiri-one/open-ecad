@@ -105,7 +105,7 @@ def assert_decodable(test, project):
 
     ids = [project['id']]
     label(project['name'], 200)
-    test.assertTrue(1 <= len(project['pages']) <= 1024)
+    test.assertTrue(1 <= len(project['pages']) <= import_pdf.Limits().max_pages)
     segments = image_chars = 0
     for page in project['pages']:
         ids.append(page['id'])
@@ -1357,7 +1357,8 @@ class LimitTests(ConverterTestCase):
                 import_pdf.parse_pages(bad, 2000000, limits)
         # Ranges are measured before they are expanded.
         for spec, count in (('1-1000000', 1000000), (None, 10 ** 12)):
-            with self.assertRaisesRegex(import_pdf.UserError, 'limit is 1024'):
+            with self.assertRaisesRegex(import_pdf.UserError,
+                                        f'limit is {limits.max_pages}'):
                 import_pdf.parse_pages(spec, count, limits)
         with self.assertRaisesRegex(import_pdf.UserError, 'above 3'):
             import_pdf.parse_pages(None, 5, import_pdf.Limits(max_source_page=3))

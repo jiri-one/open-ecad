@@ -11,7 +11,7 @@ export 'structure.dart';
 
 /// Shared format limits. Project files are data, never executable instructions.
 abstract final class ProjectLimits {
-  static const maxPages = 1024;
+  static const maxPages = 10000;
   static const maxArticles = 20000;
   static const maxComponents = 20000;
   static const maxTerminals = 100000;

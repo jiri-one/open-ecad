@@ -229,7 +229,13 @@ void main() {
       expect(app.sheet.type, SheetType.form);
       expect(app.sheet.name, 'Nový formulář');
       expect(app.sheet.graphics, isNotEmpty);
-      expect(_inSheetList('Formulář'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(ProjectPanel),
+          matching: find.byTooltip(SheetType.form.label),
+        ),
+        findsOneWidget,
+      );
       app.undo();
       await tester.pumpAndSettle();
       expect(app.project.pages, hasLength(pages));
@@ -286,7 +292,13 @@ void main() {
       await tester.tap(option);
       await tester.pumpAndSettle();
       expect(app.sheet.type, SheetType.cabinetLayout, reason: app.status);
-      expect(_inSheetList(SheetType.cabinetLayout.label), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(ProjectPanel),
+          matching: find.byTooltip(SheetType.cabinetLayout.label),
+        ),
+        findsOneWidget,
+      );
       expect(
         find.descendant(
           of: find.byTooltip(SheetType.cabinetLayout.label),
@@ -310,6 +322,7 @@ void main() {
         DeleteDevices(app.sheet.id, app.sheet.devices.map((d) => d.id).toSet()),
       ], 'Remove occurrences');
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byTooltip('Vlastnosti listu'));
       await tester.tap(find.byTooltip('Vlastnosti listu'));
       await tester.pumpAndSettle();
       await tester.tap(

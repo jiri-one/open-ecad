@@ -143,7 +143,7 @@ class UserError(Exception):
 
 @dataclass(frozen=True)
 class Limits:
-    max_pages: int = 1024
+    max_pages: int = 10000
     max_source_page: int = 1000000
     max_graphics: int = 500000
     max_path_segments: int = 10000

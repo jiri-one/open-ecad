@@ -221,6 +221,7 @@ void main() {
       addTearDown(app.dispose);
       final original = app.project.components.first.reference!.full;
       await ui.mountEditor(tester, app);
+      await tester.ensureVisible(find.byTooltip('Vlastnosti listu'));
       await tester.tap(find.byTooltip('Vlastnosti listu'));
       await tester.pumpAndSettle();
       await ui.click(tester, 'Číslo, papír a vlastnosti…');
