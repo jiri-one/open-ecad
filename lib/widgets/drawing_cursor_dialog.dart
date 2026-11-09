@@ -100,22 +100,25 @@ class _DrawingCursorDialogState extends State<DrawingCursorDialog> {
                         }),
               ),
               DropdownButtonFormField<DrawingCursorColor>(
+                itemHeight: null,
                 key: ValueKey(_draft.color),
                 initialValue: _draft.color,
                 isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Barva křížku'),
+                selectedItemBuilder:
+                    (_) => [
+                      for (final color in DrawingCursorColor.values)
+                        Text(
+                          _colorLabel(color),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
                 items: [
                   for (final color in DrawingCursorColor.values)
                     DropdownMenuItem(
                       value: color,
-                      child: Text(switch (color) {
-                        DrawingCursorColor.automatic =>
-                          'Automatická podle pozadí',
-                        DrawingCursorColor.black => 'Černá',
-                        DrawingCursorColor.white => 'Bílá',
-                        DrawingCursorColor.red => 'Červená',
-                        DrawingCursorColor.cyan => 'Tyrkysová',
-                      }),
+                      child: Text(_colorLabel(color)),
                     ),
                 ],
                 onChanged:
@@ -161,3 +164,11 @@ class _DrawingCursorDialogState extends State<DrawingCursorDialog> {
     ),
   );
 }
+
+String _colorLabel(DrawingCursorColor color) => switch (color) {
+  DrawingCursorColor.automatic => 'Automatická podle pozadí',
+  DrawingCursorColor.black => 'Černá',
+  DrawingCursorColor.white => 'Bílá',
+  DrawingCursorColor.red => 'Červená',
+  DrawingCursorColor.cyan => 'Tyrkysová',
+};

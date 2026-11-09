@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../app/controller.dart';
 import '../app/navigation_press.dart';
 import '../editor/sheet_viewport.dart';
+import '../editor/middle_button_double_click.dart';
 import '../editor/schematic_canvas.dart' show CanvasMode;
 import '../services/report_layout.dart';
 import '../services/document_layout.dart';
@@ -35,9 +36,10 @@ class _ReportViewState extends State<ReportView> {
   List<DocumentPage> documentPages = const [];
   String? layoutError;
   int index = 0;
-  final transformation = SheetViewportController();
+  var transformation = SheetViewportController();
   final _surfaceKey = GlobalKey();
   final _activePointers = <int>{};
+  final _middleDoubleClick = MiddleButtonDoubleClick();
   List<ReportNavigationLink> _links = const [];
   ReportNavigationLink? _hoveredLink;
   ({
@@ -79,6 +81,7 @@ class _ReportViewState extends State<ReportView> {
   }
 
   void _pointerDown(PointerDownEvent event) {
+    _middleDoubleClick.down(event);
     _pressedLink?.guard.dispose();
     _pressedLink = null;
     final link =
@@ -112,6 +115,11 @@ class _ReportViewState extends State<ReportView> {
   void _pointerUp(PointerEvent event) {
     if (!mounted) return;
     _activePointers.remove(event.pointer);
+    if (event is PointerUpEvent && _middleDoubleClick.up(event)) {
+      _fit();
+    } else if (event is! PointerUpEvent) {
+      _middleDoubleClick.reset();
+    }
     final pressed = _pressedLink;
     final current = pressed?.guard.current ?? false;
     pressed?.guard.dispose();
@@ -157,7 +165,7 @@ class _ReportViewState extends State<ReportView> {
     widget.app.viewport.bindNavigation(
       this,
       hasActiveGesture: () => _activePointers.isNotEmpty,
-      fit: () => transformation.value = Matrix4.identity(),
+      fit: _fit,
       zoom: (factor) {
         final current = transformation.value.getMaxScaleOnAxis();
         final next = (current * factor).clamp(.5, 8.0);
@@ -166,6 +174,15 @@ class _ReportViewState extends State<ReportView> {
               ..scaleByDouble(next / current, next / current, 1, 1);
       },
     );
+  }
+
+  void _fit() {
+    // Replace the viewer/controller pair so its old fling cannot overwrite fit.
+    final previous = transformation;
+    previous.removeListener(_zoomChanged);
+    transformation = SheetViewportController()..addListener(_zoomChanged);
+    _zoomChanged();
+    WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
   }
 
   void _zoomChanged() {
@@ -187,6 +204,7 @@ class _ReportViewState extends State<ReportView> {
   Widget build(BuildContext context) {
     final app = widget.app;
     if (!identical(snapshot, app.project) || sheetId != app.sheet.id) {
+      _middleDoubleClick.reset();
       _clearHover();
       _pressedLink?.guard.dispose();
       _pressedLink = null;
@@ -236,6 +254,7 @@ class _ReportViewState extends State<ReportView> {
                           ? null
                           : () => setState(() {
                             index--;
+                            _middleDoubleClick.reset();
                             _clearHover();
                             _pressedLink?.guard.dispose();
                             _pressedLink = null;
@@ -250,6 +269,7 @@ class _ReportViewState extends State<ReportView> {
                           ? null
                           : () => setState(() {
                             index++;
+                            _middleDoubleClick.reset();
                             _clearHover();
                             _pressedLink?.guard.dispose();
                             _pressedLink = null;
@@ -269,6 +289,7 @@ class _ReportViewState extends State<ReportView> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               if (_hoverViewport != constraints.biggest) {
+                _middleDoubleClick.reset();
                 _hoverViewport = constraints.biggest;
                 _clearHover();
               }
@@ -293,8 +314,31 @@ class _ReportViewState extends State<ReportView> {
                   }
                 },
                 child: Listener(
-                  onPointerSignal: (_) => _dismissHover(),
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: _pointerDown,
+                  onPointerMove: (event) {
+                    _middleDoubleClick.move(event);
+                    if (_pressedLink != null &&
+                        (event.position - _pressedLink!.position).distance >=
+                            3) {
+                      _pressedLink?.guard.dispose();
+                      _pressedLink = null;
+                    }
+                  },
+                  onPointerUp: _pointerUp,
+                  onPointerCancel: _pointerUp,
+                  onPointerPanZoomStart: (event) {
+                    _middleDoubleClick.reset();
+                    _activePointers.add(event.pointer);
+                    _dismissHover();
+                  },
+                  onPointerPanZoomEnd: _pointerUp,
+                  onPointerSignal: (_) {
+                    _middleDoubleClick.reset();
+                    _dismissHover();
+                  },
                   child: InteractiveViewer(
+                    key: ObjectKey(transformation),
                     transformationController: transformation,
                     minScale: .5,
                     maxScale: 8,
@@ -305,20 +349,8 @@ class _ReportViewState extends State<ReportView> {
                         maxWidth: page.sizeMm.width * scale,
                         minHeight: page.sizeMm.height * scale,
                         maxHeight: page.sizeMm.height * scale,
-                        child: Listener(
+                        child: SizedBox(
                           key: _surfaceKey,
-                          onPointerDown: _pointerDown,
-                          onPointerMove: (event) {
-                            if (_pressedLink != null &&
-                                (event.position - _pressedLink!.position)
-                                        .distance >=
-                                    3) {
-                              _pressedLink?.guard.dispose();
-                              _pressedLink = null;
-                            }
-                          },
-                          onPointerUp: _pointerUp,
-                          onPointerCancel: _pointerUp,
                           child: CustomPaint(
                             key: const ValueKey('report-surface'),
                             painter: _ReportPainter(

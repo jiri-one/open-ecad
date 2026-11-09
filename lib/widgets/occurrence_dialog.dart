@@ -165,6 +165,7 @@ class _OccurrenceDialogState extends State<_OccurrenceDialog> {
       },
       children: [
         DropdownButtonFormField<String>(
+          itemHeight: null,
           initialValue: componentId,
           isExpanded: true,
           decoration: const InputDecoration(
@@ -197,6 +198,7 @@ class _OccurrenceDialogState extends State<_OccurrenceDialog> {
               }),
         ),
         DropdownButtonFormField<String>(
+          itemHeight: null,
           key: ValueKey('$componentId-$functionId'),
           initialValue: functionId ?? '',
           isExpanded: true,
@@ -241,6 +243,7 @@ class _OccurrenceDialogState extends State<_OccurrenceDialog> {
           const Text('Průchozí svorka · jedna vodivá funkce'),
         if (widget.replace == null && component?.terminal == null)
           DropdownButtonFormField<String>(
+            itemHeight: null,
             key: ValueKey('symbol-$componentId'),
             initialValue: kind?.name ?? '',
             isExpanded: true,
@@ -269,6 +272,7 @@ class _OccurrenceDialogState extends State<_OccurrenceDialog> {
           ),
           for (final p in geometryFor(device).ports)
             DropdownButtonFormField<String>(
+              itemHeight: null,
               key: ValueKey('$componentId-$functionId-${p.id}'),
               decoration: InputDecoration(labelText: 'Port ${p.id} → vývod'),
               items: [
@@ -284,6 +288,7 @@ class _OccurrenceDialogState extends State<_OccurrenceDialog> {
             ),
         ],
         DropdownButtonFormField<OccurrenceMode>(
+          itemHeight: null,
           key: ValueKey(mode),
           initialValue: mode,
           decoration: const InputDecoration(labelText: 'Režim'),
@@ -548,6 +553,7 @@ class _PortsDialogState extends State<_PortsDialog> {
               children: [
                 if (widget.device.symbol is PortBlockSpec)
                   DropdownButtonFormField<String>(
+                    itemHeight: null,
                     key: ValueKey('${row.portId}-${row.terminalId}'),
                     initialValue:
                         electrical.terminalById(row.terminalId) == null
@@ -587,6 +593,7 @@ class _PortsDialogState extends State<_PortsDialog> {
                     children: [
                       Expanded(
                         child: DropdownButtonFormField<PortSide>(
+                          itemHeight: null,
                           initialValue: row.side,
                           decoration: const InputDecoration(
                             labelText: 'Strana',
@@ -684,6 +691,7 @@ Future<void> showMountPlacementDialog(
                     'Souřadnice středu v mm. Vyžaduje doloženou šířku a výšku. Komponenta má jednu fyzickou polohu sdílenou všemi pohledy.',
                   ),
                   DropdownButtonFormField<String>(
+                    itemHeight: null,
                     initialValue: id,
                     isExpanded: true,
                     decoration: const InputDecoration(labelText: 'Komponenta'),

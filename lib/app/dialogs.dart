@@ -30,6 +30,7 @@ Future<ConnectionCorner?> showCornerEditor(
                       ),
                       const SizedBox(height: 16),
                       DropdownButtonFormField<CornerOrientation>(
+                        itemHeight: null,
                         initialValue: orientation,
                         decoration: const InputDecoration(
                           labelText: 'Orientace rohu',
@@ -193,7 +194,7 @@ class _NewSheetDialogState extends State<_NewSheetDialog> {
             const Text(
               'TYP LISTU',
               style: TextStyle(
-                fontSize: 10,
+                fontSize: 12,
                 letterSpacing: 1.1,
                 fontWeight: FontWeight.w600,
               ),
@@ -216,11 +217,11 @@ class _NewSheetDialogState extends State<_NewSheetDialog> {
                     (value) => setState(() => formStarter = value ?? false),
                 title: const Text(
                   'Vložit prázdnou tabulku',
-                  style: TextStyle(fontSize: 12),
+                  style: TextStyle(fontSize: 14),
                 ),
                 subtitle: const Text(
                   'Obecné záhlaví a řádky k ručnímu vyplnění, bez údajů z projektu.',
-                  style: TextStyle(fontSize: 10),
+                  style: TextStyle(fontSize: 12),
                 ),
               ),
           ],
@@ -326,7 +327,7 @@ class _AiSettingsDialogState extends State<_AiSettingsDialog> {
           children: [
             const Text(
               'Bez modelu fungují místní příkazy. Pro volné zadání lze připojit vlastní server Ollama.',
-              style: TextStyle(fontSize: 12, height: 1.7),
+              style: TextStyle(fontSize: 14, height: 1.35),
             ),
             const SizedBox(height: 18),
             SwitchListTile(
@@ -337,7 +338,7 @@ class _AiSettingsDialogState extends State<_AiSettingsDialog> {
               ),
               subtitle: const Text(
                 'Připojení se použije až při odeslání zadání.',
-                style: TextStyle(fontSize: 11),
+                style: TextStyle(fontSize: 13),
               ),
               value: enabled,
               onChanged: (value) => setState(() => enabled = value),
@@ -362,7 +363,7 @@ class _AiSettingsDialogState extends State<_AiSettingsDialog> {
             const SizedBox(height: 18),
             const Text(
               'Na nastavený server se odešle zadání, výběr a nejvýše 200 zobrazení z aktuálního listu s údaji jejich komponent a vývodů. Poznámky komponent se neposílají. Návrhy se kontrolují stejnými pravidly jako ruční úpravy. Model se v této aplikaci automaticky nestahuje.',
-              style: TextStyle(fontSize: 11, height: 1.65),
+              style: TextStyle(fontSize: 13, height: 1.35),
             ),
             if (error != null)
               Padding(
@@ -371,7 +372,7 @@ class _AiSettingsDialogState extends State<_AiSettingsDialog> {
                   error!,
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
-                    fontSize: 12,
+                    fontSize: 14,
                   ),
                 ),
               ),
@@ -619,7 +620,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
                     leading: Icon(command.icon, size: 18),
                     title: Text(
                       command.title,
-                      style: const TextStyle(fontSize: 12),
+                      style: const TextStyle(fontSize: 14),
                     ),
                     trailing:
                         command.shortcut.isEmpty
@@ -638,7 +639,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
               ),
               child: const Text(
                 'Enter spustí první výsledek · Esc zavře nabídku',
-                style: TextStyle(fontSize: 10),
+                style: TextStyle(fontSize: 12),
               ),
             ),
           ],
@@ -666,8 +667,8 @@ Future<void> showHelpDialog(
                 Text('Výkres', style: TextStyle(fontWeight: FontWeight.w600)),
                 SizedBox(height: 10),
                 Text(
-                  'Dvojklik — vlastnosti objektu či odkazu\nKolečko — zoom pod kurzorem\nProstřední/pravé tlačítko + tažení — posun\nShift + kliknutí — rozšířit výběr\nPravý klik na list nebo tab — možnosti listu\nCtrl/Cmd + kliknutí na list — otevřít v novém tabu',
-                  style: TextStyle(fontSize: 12, height: 1.9),
+                  'Dvojklik — vlastnosti objektu či odkazu\nKolečko — zoom pod kurzorem\nDvojklik kolečkem — celý list doprostřed\nProstřední/pravé tlačítko + tažení — posun\nShift + kliknutí — rozšířit výběr\nPravý klik na list nebo tab — možnosti listu\nCtrl/Cmd + kliknutí na list — otevřít v novém tabu',
+                  style: TextStyle(fontSize: 14, height: 1.35),
                 ),
                 SizedBox(height: 20),
                 Text(
@@ -680,7 +681,7 @@ Future<void> showHelpDialog(
                     for (final command in EditorCommand.values)
                       '${shortcuts.labelFor(command).isEmpty ? 'Bez zkratky' : shortcuts.labelFor(command)} — ${command.label}',
                   ].join('\n'),
-                  style: TextStyle(fontSize: 12, height: 1.9),
+                  style: TextStyle(fontSize: 14, height: 1.35),
                 ),
                 SizedBox(height: 20),
                 Text(
@@ -690,12 +691,12 @@ Future<void> showHelpDialog(
                 SizedBox(height: 10),
                 Text(
                   '„Přidej motorový vývod“\n„Vlož jistič QF2“\n„Duplikuj výběr 3×“\n„Přejmenuj výběr na KM2“\n„Zkontroluj projekt“',
-                  style: TextStyle(fontSize: 12, height: 1.9),
+                  style: TextStyle(fontSize: 14, height: 1.35),
                 ),
                 SizedBox(height: 20),
                 Text(
                   'Prototyp 0.1 · Otevřený formát projektu · GPL-3.0-or-later',
-                  style: TextStyle(fontSize: 10),
+                  style: TextStyle(fontSize: 12),
                 ),
               ],
             ),

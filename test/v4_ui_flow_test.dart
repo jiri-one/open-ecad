@@ -314,6 +314,7 @@ void main() {
       addTearDown(app.dispose);
       await tester.pumpWidget(OpenEcadApp(controller: app));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.widgetWithText(Tab, 'Artikly'));
       await tester.tap(find.widgetWithText(Tab, 'Artikly'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Nový artikl'));
@@ -331,6 +332,7 @@ void main() {
       }
       await saveDialog(tester);
       expect(app.project.articles.single.dimensionsMm!.width, 40.5);
+      await tester.ensureVisible(find.widgetWithText(Tab, 'Přístroje'));
       await tester.tap(find.widgetWithText(Tab, 'Přístroje'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Nový kus / materiál'));
@@ -423,6 +425,7 @@ void main() {
       await tester.pump();
       expect(app.viewport.zoom, 1);
       expect(app.bom.articles.single.requiredTotal.knownBaseUnits, 1);
+      await tester.ensureVisible(find.widgetWithText(Tab, 'Artikly'));
       await tester.tap(find.widgetWithText(Tab, 'Artikly'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Demo relé').first);

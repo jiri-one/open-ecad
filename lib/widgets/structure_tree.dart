@@ -67,7 +67,7 @@ class _StructureTreeState<T> extends State<StructureTree<T>> {
             dense: true,
             title: Text(
               '${['=', '+', '-'][aspect.index]}$name',
-              style: const TextStyle(fontSize: 11),
+              style: const TextStyle(fontSize: 13),
             ),
             trailing: IconButton(
               tooltip: 'Přejmenovat větev',
@@ -88,6 +88,7 @@ class _StructureTreeState<T> extends State<StructureTree<T>> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10),
           child: DropdownButton<StructureAspect>(
+            itemHeight: null,
             isExpanded: true,
             value: first,
             items: const [

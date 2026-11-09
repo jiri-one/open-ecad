@@ -119,7 +119,7 @@ class _GraphicInspectorState extends State<GraphicInspector> {
       minLines: lines,
       maxLines: lines,
       cursorOpacityAnimates: false,
-      style: const TextStyle(fontSize: 12),
+      style: const TextStyle(fontSize: 14),
       decoration: InputDecoration(labelText: label, hintText: hint),
       onSubmitted: lines == 1 ? (_) => save() : null,
     ),
@@ -131,12 +131,12 @@ class _GraphicInspectorState extends State<GraphicInspector> {
     children: [
       Text(
         graphicKindLabel(widget.graphic.kind),
-        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+        style: Theme.of(context).textTheme.titleMedium,
       ),
       const SizedBox(height: 8),
       const Text(
         'Grafický objekt bez elektrických vývodů.',
-        style: TextStyle(fontSize: 11),
+        style: TextStyle(fontSize: 13),
       ),
       const SizedBox(height: 24),
       if (widget.graphic.kind == DrawingKind.text) ...[
@@ -172,7 +172,7 @@ class _GraphicInspectorState extends State<GraphicInspector> {
       if (error != null)
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
-          child: Text(error!, style: const TextStyle(fontSize: 12)),
+          child: Text(error!, style: const TextStyle(fontSize: 14)),
         ),
       FilledButton(onPressed: save, child: const Text('Použít vlastnosti')),
       const SizedBox(height: 16),

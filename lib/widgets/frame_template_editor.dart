@@ -284,6 +284,7 @@ class _FrameTemplateEditorState extends State<FrameTemplateEditor> {
       ),
       const SizedBox(height: 12),
       DropdownButtonFormField<String>(
+        itemHeight: null,
         key: ValueKey('field-picker-$selected'),
         initialValue: selected,
         isExpanded: true,
@@ -482,6 +483,7 @@ class _FrameTemplateEditorState extends State<FrameTemplateEditor> {
           onChanged: (v) => _field(f.copyWith(bold: v)),
         ),
         DropdownButtonFormField<FrameTextAlign>(
+          itemHeight: null,
           isExpanded: true,
           key: ValueKey('align-${f.id}-${f.align}'),
           initialValue: f.align,
@@ -501,6 +503,7 @@ class _FrameTemplateEditorState extends State<FrameTemplateEditor> {
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<FrameTextOverflow>(
+          itemHeight: null,
           isExpanded: true,
           key: ValueKey('overflow-${f.id}-${f.overflow}'),
           initialValue: f.overflow,
@@ -753,7 +756,7 @@ class _FrameTemplateEditorState extends State<FrameTemplateEditor> {
           ),
         const Text(
           'Náhled rámečku bez kresby listu. Šedý obrys: prostor pro kresbu. Modrý: vybrané pole. Export obsahuje pouze definici šablony.',
-          style: TextStyle(fontSize: 12),
+          style: TextStyle(fontSize: 14),
         ),
       ],
     );

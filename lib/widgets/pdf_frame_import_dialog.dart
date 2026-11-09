@@ -164,6 +164,7 @@ class _PdfFrameImportDialogState extends State<PdfFrameImportDialog> {
                   ),
                   Expanded(
                     child: DropdownButton<int>(
+                      itemHeight: null,
                       key: const ValueKey('pdf-import-page'),
                       isExpanded: true,
                       value: pageIndex,
@@ -314,6 +315,7 @@ class _PdfFrameImportDialogState extends State<PdfFrameImportDialog> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             DropdownButton<bool>(
+              itemHeight: null,
               key: const ValueKey('pdf-frame-mode'),
               isExpanded: true,
               value: choice.replace,
@@ -342,6 +344,7 @@ class _PdfFrameImportDialogState extends State<PdfFrameImportDialog> {
               warningList(),
             ] else ...[
               DropdownButton<String>(
+                itemHeight: null,
                 key: const ValueKey('pdf-frame-template'),
                 isExpanded: true,
                 value: choice.templateId,
@@ -397,9 +400,10 @@ class _PdfFrameImportDialogState extends State<PdfFrameImportDialog> {
               ),
               const Text(
                 'Strana bez starého rámečku: nevybírejte žádný objekt.',
-                style: TextStyle(fontSize: 12),
+                style: TextStyle(fontSize: 14),
               ),
               DropdownButton<_ObjectFilter>(
+                itemHeight: null,
                 isExpanded: true,
                 value: filter,
                 items: [
@@ -421,7 +425,7 @@ class _PdfFrameImportDialogState extends State<PdfFrameImportDialog> {
               if (filter == _ObjectFilter.hit && hits.length > 1)
                 const Text(
                   'Objekty se překrývají. Vyberte je jednotlivě v seznamu.',
-                  style: TextStyle(fontSize: 12),
+                  style: TextStyle(fontSize: 14),
                 ),
               TextField(
                 controller: search,
@@ -702,7 +706,7 @@ class _PdfImportPagePreviewState extends State<PdfImportPagePreview> {
                     padding: EdgeInsets.all(6),
                     child: Text(
                       'Kolečko: přiblížení · tažení: posun',
-                      style: TextStyle(fontSize: 11),
+                      style: TextStyle(fontSize: 13),
                     ),
                   ),
                 ),

@@ -5,10 +5,13 @@ import 'package:window_manager/window_manager.dart';
 import '../editor/schematic_canvas.dart';
 import '../editor/drawing_cursor.dart';
 import '../services/drawing_cursor_settings.dart';
+import '../services/interface_preferences.dart';
+import '../services/system_typography.dart';
 import '../services/keyboard_shortcuts.dart';
 import '../services/pointer_warp.dart';
 import '../services/desktop_window.dart';
 import '../widgets/drawing_cursor_dialog.dart';
+import '../widgets/interface_settings_dialog.dart';
 import '../widgets/keyboard_shortcuts_dialog.dart';
 import '../widgets/sheet_context_menu.dart';
 import '../widgets/sheet_settings.dart';
@@ -29,10 +32,12 @@ import 'workspace_controller.dart';
 import '../widgets/assistant_panel.dart';
 import '../widgets/components.dart';
 import '../widgets/project_panel.dart';
+import '../widgets/workspace_panels.dart';
 import '../widgets/properties_panel.dart';
 import 'controller.dart';
 import 'dialogs.dart';
 import 'theme.dart';
+import 'typography.dart';
 
 class OpenEcadApp extends StatefulWidget {
   const OpenEcadApp({super.key, required this.controller});
@@ -43,23 +48,57 @@ class OpenEcadApp extends StatefulWidget {
 
 class _OpenEcadAppState extends State<OpenEcadApp> {
   late final workspace = WorkspaceController(widget.controller);
+  final interfacePreferences = InterfacePreferences();
+  final systemTypography = SystemTypographyService();
+  late final changes = Listenable.merge([
+    workspace,
+    interfacePreferences,
+    systemTypography,
+  ]);
+
+  @override
+  void initState() {
+    super.initState();
+    interfacePreferences.load().catchError((Object _) {});
+    systemTypography.load().catchError((Object _) {});
+  }
+
   @override
   void dispose() {
+    interfacePreferences.dispose();
+    systemTypography.dispose();
     workspace.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: workspace,
+    listenable: changes,
     builder:
         (context, _) => MaterialApp(
           title: 'Open ECAD',
           debugShowCheckedModeBanner: false,
-          theme: buildEcadTheme(workspace.active.appearance),
+          theme: buildEcadTheme(
+            workspace.active.appearance,
+            fontFamily: systemTypography.value.fontFamily,
+          ),
           themeAnimationDuration: Duration.zero,
           scrollBehavior: const _EditorScrollBehavior(),
-          builder: (_, child) => DesktopWindowFrame(child: child!),
+          builder:
+              (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: InterfaceTextScaler(
+                    system: MediaQuery.textScalerOf(context),
+                    fontSize: systemTypography.value.fontSize ?? 14,
+                    magnification: interfacePreferences.effectiveScale,
+                    gtkFontScale: systemTypography.value.fontScale,
+                  ),
+                ),
+                child: InterfacePreferencesScope(
+                  preferences: interfacePreferences,
+                  child: DesktopWindowFrame(child: child!),
+                ),
+              ),
           home: EditorWorkspace(
             controller: workspace.active,
             workspace: workspace,
@@ -97,6 +136,7 @@ enum _ToolGroup {
 }
 
 class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
+  final _resizingPanels = ValueNotifier(false);
   _ToolGroup toolGroup = _ToolGroup.electrical;
   CanvasMode? _lastMode;
   final _activeTabKey = GlobalKey();
@@ -125,6 +165,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
   EditorController get app => workspace.active;
   @override
   void dispose() {
+    _resizingPanels.dispose();
     if (DesktopWindow.enabled) windowManager.removeListener(this);
     drawingCursor.removeListener(_preferencesChanged);
     drawingCursor.dispose();
@@ -794,354 +835,338 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
             child: LayoutBuilder(
               builder: (context, bounds) {
                 final compact = bounds.maxWidth < 1120;
-                final projectVisible = showProject && bounds.maxWidth >= 950;
-                final assistantVisible =
-                    showAssistant && bounds.maxWidth >= 680;
-                return Column(
-                  children: [
-                    _commandBar(c, bounds.maxWidth),
-                    Expanded(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (projectVisible) ...[
-                            SizedBox(
-                              width: compact ? 240 : 285,
-                              child: ProjectPanel(
-                                controller: app,
-                                workspace: workspace,
-                                onCloseProject: closeProject,
-                                onRenameSheet: renameSheet,
-                                onAddSheet: addSheet,
-                                shortcuts: keyboardShortcuts.value,
-                              ),
-                            ),
-                            VerticalDivider(
-                              width: 1,
-                              thickness: 1,
-                              color: c.border,
-                            ),
-                          ],
-                          Expanded(
-                            child: Column(
-                              children: [
-                                Expanded(
-                                  child: Stack(
-                                    children: [
-                                      Positioned.fill(
-                                        child:
-                                            workspace.activeTab == null
-                                                ? const Center(
-                                                  child: Text(
-                                                    'Otevřete list ze stromu projektů',
-                                                  ),
-                                                )
-                                                : app.sheet.type ==
-                                                    SheetType.billOfMaterials
-                                                ? ReportView(
-                                                  key: ValueKey(
-                                                    SheetTab(
-                                                      app.documentSessionId,
-                                                      app.sheet.id,
-                                                    ),
-                                                  ),
-                                                  app: app,
-                                                  showControls: false,
-                                                  isNavigationCurrent:
-                                                      canvasContextCurrent,
-                                                )
-                                                : app.sheet.type ==
-                                                        SheetType
-                                                            .cabinetLayout &&
-                                                    (app.sheet.mountingView !=
-                                                            null ||
-                                                        app
-                                                            .sheet
-                                                            .graphics
-                                                            .isEmpty)
-                                                ? MountingCanvas(
-                                                  key: ValueKey(
-                                                    SheetTab(
-                                                      app.documentSessionId,
-                                                      app.sheet.id,
-                                                    ),
-                                                  ),
-                                                  app: app,
-                                                  showControls: false,
-                                                  isNavigationCurrent:
-                                                      canvasContextCurrent,
-                                                  cursorSettings:
-                                                      drawingCursor.value,
-                                                )
-                                                : DrawingCursorRegion(
-                                                  settings: drawingCursor.value,
-                                                  backgroundColor:
-                                                      c
-                                                          .canvasPalette
-                                                          .background,
-                                                  resetKey: (
+                return ValueListenableBuilder(
+                  valueListenable: _resizingPanels,
+                  child: Column(
+                    children: [
+                      _commandBar(c, bounds.maxWidth),
+                      Expanded(
+                        child: WorkspacePanels(
+                          onResizeActiveChanged: (active) {
+                            if (mounted) _resizingPanels.value = active;
+                          },
+                          showProject: showProject,
+                          showInspector: showAssistant,
+                          project: ProjectPanel(
+                            controller: app,
+                            workspace: workspace,
+                            onCloseProject: closeProject,
+                            onRenameSheet: renameSheet,
+                            onAddSheet: addSheet,
+                            shortcuts: keyboardShortcuts.value,
+                          ),
+                          editor: Column(
+                            children: [
+                              Expanded(
+                                child: Stack(
+                                  children: [
+                                    Positioned.fill(
+                                      child:
+                                          workspace.activeTab == null
+                                              ? const Center(
+                                                child: Text(
+                                                  'Otevřete list ze stromu projektů',
+                                                ),
+                                              )
+                                              : app.sheet.type ==
+                                                  SheetType.billOfMaterials
+                                              ? ReportView(
+                                                key: ValueKey(
+                                                  SheetTab(
                                                     app.documentSessionId,
                                                     app.sheet.id,
                                                   ),
-                                                  child: SchematicCanvas(
-                                                    key: ValueKey(
-                                                      SheetTab(
-                                                        app.documentSessionId,
-                                                        app.sheet.id,
-                                                      ),
+                                                ),
+                                                app: app,
+                                                showControls: false,
+                                                isNavigationCurrent:
+                                                    canvasContextCurrent,
+                                              )
+                                              : app.sheet.type ==
+                                                      SheetType.cabinetLayout &&
+                                                  (app.sheet.mountingView !=
+                                                          null ||
+                                                      app
+                                                          .sheet
+                                                          .graphics
+                                                          .isEmpty)
+                                              ? MountingCanvas(
+                                                key: ValueKey(
+                                                  SheetTab(
+                                                    app.documentSessionId,
+                                                    app.sheet.id,
+                                                  ),
+                                                ),
+                                                app: app,
+                                                showControls: false,
+                                                isNavigationCurrent:
+                                                    canvasContextCurrent,
+                                                cursorSettings:
+                                                    drawingCursor.value,
+                                              )
+                                              : DrawingCursorRegion(
+                                                settings: drawingCursor.value,
+                                                backgroundColor:
+                                                    c.canvasPalette.background,
+                                                resetKey: (
+                                                  app.documentSessionId,
+                                                  app.sheet.id,
+                                                ),
+                                                child: SchematicCanvas(
+                                                  key: ValueKey(
+                                                    SheetTab(
+                                                      app.documentSessionId,
+                                                      app.sheet.id,
                                                     ),
-                                                    documentIdentity: app,
-                                                    project: app.displayProject,
-                                                    sheet: app.displaySheet,
-                                                    readOnly:
-                                                        app.showingProposal,
-                                                    selectedIds:
-                                                        app.selectedIds,
-                                                    mode: app.mode,
-                                                    placingKind:
-                                                        app.placingKind,
-                                                    terminalSides:
-                                                        app.terminalSides,
-                                                    cornerOrientation:
-                                                        app.cornerOrientation,
-                                                    onPlaceCorner:
-                                                        app.placeCorner,
-                                                    showGrid: app.showGrid,
-                                                    palette: c.canvasPalette,
-                                                    controller: app.viewport,
-                                                    shortcuts:
-                                                        keyboardShortcuts.value,
-                                                    onSelectionChanged: (ids) {
-                                                      if (!app
-                                                          .showingProposal) {
-                                                        app.select(ids);
-                                                        if (ids.isNotEmpty) {
-                                                          app.setPanel(
-                                                            SidePanel
-                                                                .properties,
-                                                          );
-                                                        }
+                                                  ),
+                                                  documentIdentity: app,
+                                                  project: app.displayProject,
+                                                  sheet: app.displaySheet,
+                                                  readOnly: app.showingProposal,
+                                                  selectedIds: app.selectedIds,
+                                                  mode: app.mode,
+                                                  placingKind: app.placingKind,
+                                                  terminalSides:
+                                                      app.terminalSides,
+                                                  cornerOrientation:
+                                                      app.cornerOrientation,
+                                                  onPlaceCorner:
+                                                      app.placeCorner,
+                                                  showGrid: app.showGrid,
+                                                  palette: c.canvasPalette,
+                                                  controller: app.viewport,
+                                                  shortcuts:
+                                                      keyboardShortcuts.value,
+                                                  onSelectionChanged: (ids) {
+                                                    if (!app.showingProposal) {
+                                                      app.select(ids);
+                                                      if (ids.isNotEmpty) {
+                                                        app.setPanel(
+                                                          SidePanel.properties,
+                                                        );
                                                       }
-                                                    },
-                                                    onMoveDevices:
-                                                        app.moveDevices,
-                                                    onMoveSelection:
-                                                        app.moveSelection,
-                                                    onCreateGraphic:
-                                                        app.createGraphic,
-                                                    onPlaceDevice:
-                                                        app.placeDevice,
-                                                    onConnect: app.connect,
-                                                    onDeleteWire:
-                                                        app.deleteWire,
-                                                    onEditDevice:
-                                                        (id) =>
-                                                            showDeviceProperties(
-                                                              context,
-                                                              app,
-                                                              id,
-                                                            ),
-                                                    onEditDrawingObject:
-                                                        editDrawingObject,
-                                                    onFollowDevice:
-                                                        followDevice,
-                                                    onEditContinuation:
-                                                        editContinuationMarker,
-                                                    onFollowContinuation: (id) {
-                                                      if (canvasContextCurrent()) {
-                                                        followContinuation(id);
-                                                      }
-                                                    },
-                                                    onPlaceContinuation:
-                                                        placeContinuation,
-                                                    pastePreview:
-                                                        app.pastePreview,
-                                                    onPlacePaste:
-                                                        app.placeClipboard,
-                                                  ),
+                                                    }
+                                                  },
+                                                  onMoveDevices:
+                                                      app.moveDevices,
+                                                  onMoveSelection:
+                                                      app.moveSelection,
+                                                  onCreateGraphic:
+                                                      app.createGraphic,
+                                                  onPlaceDevice:
+                                                      app.placeDevice,
+                                                  onConnect: app.connect,
+                                                  onDeleteWire: app.deleteWire,
+                                                  onEditDevice:
+                                                      (id) =>
+                                                          showDeviceProperties(
+                                                            context,
+                                                            app,
+                                                            id,
+                                                          ),
+                                                  onEditDrawingObject:
+                                                      editDrawingObject,
+                                                  onFollowDevice: followDevice,
+                                                  onEditContinuation:
+                                                      editContinuationMarker,
+                                                  onFollowContinuation: (id) {
+                                                    if (canvasContextCurrent()) {
+                                                      followContinuation(id);
+                                                    }
+                                                  },
+                                                  onPlaceContinuation:
+                                                      placeContinuation,
+                                                  pastePreview:
+                                                      app.pastePreview,
+                                                  onPlacePaste:
+                                                      app.placeClipboard,
                                                 ),
-                                      ),
-                                      if (app.showingProposal)
-                                        Positioned(
-                                          right: 16,
-                                          top: 16,
-                                          child: Container(
-                                            padding: const EdgeInsets.fromLTRB(
-                                              10,
-                                              3,
-                                              3,
-                                              3,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: c.accent,
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Icon(
-                                                  Icons.visibility_outlined,
-                                                  color: c.onAccent,
-                                                  size: 14,
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Text(
-                                                  'NÁHLED NÁVRHU',
-                                                  style: TextStyle(
-                                                    fontSize: 9,
-                                                    letterSpacing: 0.6,
-                                                    color: c.onAccent,
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 5),
-                                                IconButton(
-                                                  onPressed:
-                                                      app.toggleProposalPreview,
-                                                  tooltip:
-                                                      'Zobrazit původní schéma',
-                                                  icon: Icon(
-                                                    Icons.close,
-                                                    color: c.onAccent,
-                                                    size: 15,
-                                                  ),
-                                                  constraints:
-                                                      const BoxConstraints.tightFor(
-                                                        width: 28,
-                                                        height: 26,
-                                                      ),
-                                                  padding: EdgeInsets.zero,
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      if (app.mode == CanvasMode.corner ||
-                                          app.mode == CanvasMode.place ||
-                                          app.mode == CanvasMode.wire)
-                                        Positioned(
-                                          left: 16,
-                                          bottom: 16,
-                                          child: Container(
-                                            constraints: const BoxConstraints(
-                                              maxWidth: 250,
-                                            ),
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 10,
-                                              vertical: 8,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: c.accent,
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                            ),
-                                            child: Text(
-                                              app.mode == CanvasMode.wire
-                                                  ? 'Klikněte na první a druhý připojovací bod'
-                                                  : 'Klikněte do výkresu · ${keyboardShortcuts.value.labelFor(EditorCommand.cancelTool)} ukončí vkládání',
-                                              style: TextStyle(
-                                                color: c.onAccent,
-                                                fontSize: 10,
                                               ),
+                                    ),
+                                    if (app.showingProposal)
+                                      Positioned(
+                                        right: 16,
+                                        top: 16,
+                                        child: Container(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            10,
+                                            3,
+                                            3,
+                                            3,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: c.accent,
+                                            borderRadius: BorderRadius.circular(
+                                              4,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                Icons.visibility_outlined,
+                                                color: c.onAccent,
+                                                size: 14,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                'NÁHLED NÁVRHU',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  letterSpacing: 0.6,
+                                                  color: c.onAccent,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 5),
+                                              IconButton(
+                                                onPressed:
+                                                    app.toggleProposalPreview,
+                                                tooltip:
+                                                    'Zobrazit původní schéma',
+                                                icon: Icon(
+                                                  Icons.close,
+                                                  color: c.onAccent,
+                                                  size: 15,
+                                                ),
+                                                constraints:
+                                                    const BoxConstraints.tightFor(
+                                                      width: 28,
+                                                      height: 26,
+                                                    ),
+                                                padding: EdgeInsets.zero,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    if (app.mode == CanvasMode.corner ||
+                                        app.mode == CanvasMode.place ||
+                                        app.mode == CanvasMode.wire)
+                                      Positioned(
+                                        left: 16,
+                                        bottom: 16,
+                                        child: Container(
+                                          constraints: const BoxConstraints(
+                                            maxWidth: 250,
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: c.accent,
+                                            borderRadius: BorderRadius.circular(
+                                              4,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            app.mode == CanvasMode.wire
+                                                ? 'Klikněte na první a druhý připojovací bod'
+                                                : 'Klikněte do výkresu · ${keyboardShortcuts.value.labelFor(EditorCommand.cancelTool)} ukončí vkládání',
+                                            style: TextStyle(
+                                              color: c.onAccent,
+                                              fontSize: 12,
                                             ),
                                           ),
                                         ),
-                                    ],
-                                  ),
-                                ),
-                                if (app.diagnosticsVisible)
-                                  _diagnosticsPanel(c),
-                              ],
-                            ),
-                          ),
-                          if (assistantVisible) ...[
-                            VerticalDivider(
-                              width: 1,
-                              thickness: 1,
-                              color: c.border,
-                            ),
-                            SizedBox(
-                              width: compact ? 300 : 330,
-                              child: Material(
-                                color: c.panel,
-                                child: Column(
-                                  children: [
-                                    Container(
-                                      decoration: BoxDecoration(
-                                        border: Border(
-                                          bottom: BorderSide(color: c.border),
-                                        ),
                                       ),
-                                      child: Row(
-                                        children: [
-                                          PanelTab(
-                                            label: 'Asistent',
-                                            icon: Icons.auto_awesome_outlined,
-                                            selected:
-                                                app.sidePanel ==
-                                                SidePanel.assistant,
-                                            onTap:
-                                                () => app.setPanel(
-                                                  SidePanel.assistant,
-                                                ),
-                                          ),
-                                          PanelTab(
-                                            label: 'Vlastnosti',
-                                            icon: Icons.tune,
-                                            selected:
-                                                app.sidePanel ==
-                                                SidePanel.properties,
-                                            count: app.selectedIds.length,
-                                            onTap:
-                                                () => app.setPanel(
-                                                  SidePanel.properties,
-                                                ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: IndexedStack(
-                                        index: app.sidePanel.index,
-                                        children: [
-                                          AssistantPanel(
-                                            controller: app,
-                                            onSettings:
-                                                () => showAiSettings(
-                                                  context,
-                                                  app,
-                                                ),
-                                            inputFocus: promptFocus,
-                                          ),
-                                          PropertiesPanel(
-                                            controller: app,
-                                            shortcuts: keyboardShortcuts.value,
-                                            onEditContinuation:
-                                                editContinuationMarker,
-                                            onAddContinuation:
-                                                startContinuation,
-                                            onAddContinuationPeer:
-                                                placeContinuationPeer,
-                                            onFollowContinuation:
-                                                (id, target) =>
-                                                    followContinuation(
-                                                      id,
-                                                      target: target,
-                                                    ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
                                   ],
                                 ),
                               ),
+                              if (app.diagnosticsVisible) _diagnosticsPanel(c),
+                            ],
+                          ),
+                          inspector: Material(
+                            color: c.panel,
+                            child: Column(
+                              children: [
+                                Container(
+                                  decoration: BoxDecoration(
+                                    border: Border(
+                                      bottom: BorderSide(color: c.border),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      PanelTab(
+                                        label: 'Asistent',
+                                        icon: Icons.auto_awesome_outlined,
+                                        selected:
+                                            app.sidePanel ==
+                                            SidePanel.assistant,
+                                        onTap:
+                                            () => app.setPanel(
+                                              SidePanel.assistant,
+                                            ),
+                                      ),
+                                      PanelTab(
+                                        label: 'Vlastnosti',
+                                        icon: Icons.tune,
+                                        selected:
+                                            app.sidePanel ==
+                                            SidePanel.properties,
+                                        count: app.selectedIds.length,
+                                        onTap:
+                                            () => app.setPanel(
+                                              SidePanel.properties,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Expanded(
+                                  child: IndexedStack(
+                                    index: app.sidePanel.index,
+                                    children: [
+                                      AssistantPanel(
+                                        controller: app,
+                                        onSettings:
+                                            () => showAiSettings(context, app),
+                                        inputFocus: promptFocus,
+                                      ),
+                                      PropertiesPanel(
+                                        controller: app,
+                                        shortcuts: keyboardShortcuts.value,
+                                        onEditContinuation:
+                                            editContinuationMarker,
+                                        onAddContinuation: startContinuation,
+                                        onAddContinuationPeer:
+                                            placeContinuationPeer,
+                                        onFollowContinuation:
+                                            (id, target) => followContinuation(
+                                              id,
+                                              target: target,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
+                          ),
+                        ),
+                      ),
+                      _statusBar(
+                        c,
+                        compact ||
+                            MediaQuery.textScalerOf(context).scale(12) > 18,
+                      ),
+                    ],
+                  ),
+                  builder:
+                      (context, active, child) => Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          child!,
+                          if (active)
+                            const Positioned.fill(
+                              child: MouseRegion(
+                                cursor: SystemMouseCursors.resizeLeftRight,
+                                child: ColoredBox(color: Colors.transparent),
+                              ),
+                            ),
                         ],
                       ),
-                    ),
-                    _statusBar(c, compact),
-                  ],
                 );
               },
             ),
@@ -1183,7 +1208,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
     }
     return Container(
       key: const ValueKey('workspace-command-bar'),
-      height: 40,
+      height: interfaceRowHeight(context),
       decoration: BoxDecoration(
         color: c.panel,
         border: Border(bottom: BorderSide(color: c.border)),
@@ -1246,7 +1271,11 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
               () => editSheetSettings(context, app),
             )
           else ...[
-            _toolGroupMenu(),
+            _toolGroupMenu(
+              showLabel:
+                  width >= 1280 ||
+                  MediaQuery.textScalerOf(context).scale(13) <= 26,
+            ),
             if (width >= 1120) ..._groupTools(),
           ],
           _toolbarDivider(c),
@@ -1429,7 +1458,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
     }
   }
 
-  Widget _toolGroupMenu() => PopupMenuButton<Object>(
+  Widget _toolGroupMenu({bool showLabel = true}) => PopupMenuButton<Object>(
     tooltip: 'Sada nástrojů',
     padding: EdgeInsets.zero,
     offset: const Offset(0, 36),
@@ -1561,14 +1590,16 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
           ],
         ],
     child: Container(
-      height: 30,
-      padding: const EdgeInsets.symmetric(horizontal: 7),
+      constraints: const BoxConstraints(minHeight: 30),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(toolGroup.icon, size: 15),
-          const SizedBox(width: 5),
-          Text(toolGroup.label, style: const TextStyle(fontSize: 11)),
+          if (showLabel) ...[
+            const SizedBox(width: 5),
+            Text(toolGroup.label, style: const TextStyle(fontSize: 13)),
+          ],
           const SizedBox(width: 3),
           const Icon(Icons.expand_more, size: 14),
         ],
@@ -1698,6 +1729,11 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
       icon: const Icon(Icons.settings_outlined, size: 18),
       onSelected: (value) {
         switch (value) {
+          case 'typography':
+            final preferences = InterfacePreferencesScope.maybeOf(context);
+            if (preferences != null) {
+              showInterfaceSettingsDialog(context, preferences: preferences);
+            }
           case 'keyboard':
             showKeyboardShortcutsDialog(
               context,
@@ -1713,6 +1749,10 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
       },
       itemBuilder:
           (_) => [
+            const PopupMenuItem(
+              value: 'typography',
+              child: Text('Písmo rozhraní…'),
+            ),
             const PopupMenuItem(
               value: 'keyboard',
               child: Text('Klávesové zkratky…'),
@@ -1772,7 +1812,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
   );
 
   Widget _sheetTabs(EcadColors c) => SizedBox(
-    height: 39,
+    height: interfaceRowHeight(context) - 1,
     child: Row(
       children: [
         _pageButton(
@@ -1830,7 +1870,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
                                   onRenameSheet: renameSheet,
                                   child: Container(
                                     width: 210,
-                                    height: 39,
+                                    height: interfaceRowHeight(context) - 1,
                                     decoration: BoxDecoration(
                                       color:
                                           workspace.activeTab == tab
@@ -1857,7 +1897,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
                                                 padding:
                                                     const EdgeInsets.symmetric(
                                                       horizontal: 8,
-                                                      vertical: 10,
+                                                      vertical: 4,
                                                     ),
                                                 child: Text(
                                                   label,
@@ -1865,7 +1905,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
                                                   overflow:
                                                       TextOverflow.ellipsis,
                                                   style: TextStyle(
-                                                    fontSize: 11,
+                                                    fontSize: 13,
                                                     fontWeight:
                                                         workspace.activeTab ==
                                                                 tab
@@ -1932,12 +1972,15 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
       ListenableBuilder(
         listenable: app.viewport,
         builder:
-            (_, _) => SizedBox(
-              width: 45,
-              child: Text(
-                '${(app.viewport.zoom * 100).round()} %',
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 10),
+            (_, _) => ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 45),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text(
+                  '${(app.viewport.zoom * 100).round()} %',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12),
+                ),
               ),
             ),
       ),
@@ -1959,7 +2002,8 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
   );
 
   Widget _statusBar(EcadColors c, bool compact) => Container(
-    height: 30,
+    key: const ValueKey('workspace-status-bar'),
+    height: interfaceRowHeight(context, minimum: 30, fontSize: 12, padding: 6),
     padding: const EdgeInsets.symmetric(horizontal: 8),
     decoration: BoxDecoration(
       color: c.panel,
@@ -1976,7 +2020,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
               app.status,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 10),
+              style: const TextStyle(fontSize: 12),
             ),
           ),
         ),
@@ -1993,7 +2037,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
           message: app.sheet.type.label,
           child: Text(
             fullPageDesignation(app.sheet),
-            style: const TextStyle(fontSize: 10),
+            style: const TextStyle(fontSize: 12),
           ),
         ),
         if (!compact) ...[
@@ -2002,14 +2046,14 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
             app.sheet.graphics.isEmpty
                 ? '${app.sheet.devices.length} přístrojů · ${AutoConnect.wires(app.sheet).length} vodičů'
                 : '${app.sheet.graphics.length} grafických objektů · ${app.selectedIds.length} vybráno',
-            style: const TextStyle(fontSize: 9),
+            style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(width: 12),
           Tooltip(
             message: app.fileName ?? 'Projekt bez souboru',
             child: Text(
               app.autosaveStatus,
-              style: TextStyle(fontSize: 9, color: c.muted),
+              style: TextStyle(fontSize: 12, color: c.muted),
             ),
           ),
         ],
@@ -2032,14 +2076,15 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
               children: [
                 const Icon(Icons.fact_check_outlined, size: 15),
                 const SizedBox(width: 8),
-                Text(
-                  'Kontrola projektu · ${app.diagnostics.length}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
+                Expanded(
+                  child: Text(
+                    'Kontrola projektu · ${app.diagnostics.length}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-                const Spacer(),
                 EcadIconButton(
                   icon: Icons.close,
                   label: 'Zavřít kontrolu',
@@ -2057,7 +2102,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
                     ? const Center(
                       child: Text(
                         'Struktura projektu je v pořádku. Kontrola neposuzuje návrh elektrické instalace.',
-                        style: TextStyle(fontSize: 11),
+                        style: TextStyle(fontSize: 13),
                       ),
                     )
                     : ListView.builder(
@@ -2076,7 +2121,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
                           ),
                           title: Text(
                             diagnosticText(app.project, issue),
-                            style: const TextStyle(fontSize: 11),
+                            style: const TextStyle(fontSize: 13),
                           ),
                           onTap: () {
                             if (issue.sheetId != null) {

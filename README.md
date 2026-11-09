@@ -196,6 +196,24 @@ nebyla v této první verzi ověřena proti běžícímu Ollama serveru. Webové
 navíc podléhá pravidlům pro CORS a HTTP/HTTPS; povolení konkrétního původu řeší
 `OLLAMA_ORIGINS` podle [Ollama FAQ](https://docs.ollama.com/faq).
 
+## Písmo rozhraní
+
+Na Linuxu aplikace přebírá rodinu a velikost písma z nastavení prostředí GTK
+a reaguje na jejich změny za běhu. Respektuje také systémové zvětšení textu.
+Na všech platformách lze písmo dále zvětšit přes **Nastavení programu →
+Písmo rozhraní…** v rozsahu 100–200 %. Změna se ihned zobrazí v celém rozhraní;
+**Uložit** ji uchová pro všechny projekty i po restartu, **Zrušit** obnoví
+původní velikost. **Podle systému** vrátí zvětšení na 100 %.
+
+Ikony a mezery zůstávají kompaktní. Výška textových řádků se přizpůsobuje písmu
+a záložky bočního panelu lze při nedostatku místa vodorovně posouvat.
+Velikosti textů ve výkresu a exportech se tím nemění.
+
+Šířku obou bočních panelů změníte tažením úchytu mezi panelem a výkresem.
+Šířky se uchovávají po restartu; zmenšení okna je dočasně omezí tak, aby zůstal
+prostor pro výkres. Dvojklik na úchyt obnoví výchozí šířku daného panelu.
+Úchyt lze také vybrat klávesou Tab a posouvat šipkami vlevo a vpravo.
+
 ## Klávesnice
 
 Zkratky se mění přes **Nastavení programu → Klávesové zkratky…**. Příkaz
@@ -225,6 +243,10 @@ zkratky. Následující tabulka uvádí výchozí nastavení.
 | Ctrl + kliknutí na odkaz u přístroje | Přejít na uvedené zobrazení přístroje |
 | Prostřední/pravé tlačítko, případně mezerník + tažení | Posun plochy |
 | Enter / Shift + Enter v asistentovi | Odeslat / nový řádek |
+
+Dvojklik kolečkem funguje i mimo papír v ploše výkresu, ve schématu,
+montážním pohledu a reportu. Vrátí zobrazení celého aktuálního listu po zoomu
+i posunu; tažení kolečkem zůstává samostatným gestem a výběr se zachová.
 
 Pravý klik na list ve stromu nebo na horní tab otevře nabídku pro otevření,
 otevření v novém tabu, přejmenování a vlastnosti listu. Stejná nabídka je

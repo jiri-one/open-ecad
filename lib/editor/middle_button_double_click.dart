@@ -22,7 +22,9 @@ class MiddleButtonDoubleClick {
 
   void move(PointerMoveEvent event) {
     if (_down?.pointer == event.pointer &&
-        (event.position - _down!.position).distance > 3) {
+        (event.buttons != kMiddleMouseButton ||
+            (event.position - _down!.position).distance >
+                kDoubleTapTouchSlop)) {
       reset();
     }
   }
@@ -32,13 +34,16 @@ class MiddleButtonDoubleClick {
     _down = null;
     if (down == null ||
         down.pointer != event.pointer ||
+        event.timeStamp < down.timeStamp ||
         event.timeStamp - down.timeStamp > kDoubleTapTimeout ||
-        (event.position - down.position).distance > 3) {
+        (event.position - down.position).distance > kDoubleTapTouchSlop) {
       _previous = null;
       return false;
     }
     final previous = _previous;
     if (previous != null &&
+        previous.device == down.device &&
+        down.timeStamp >= previous.timeStamp &&
         down.timeStamp - previous.timeStamp <= kDoubleTapTimeout &&
         (down.position - previous.position).distance <= kDoubleTapSlop) {
       _previous = null;

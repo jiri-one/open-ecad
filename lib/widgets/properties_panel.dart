@@ -149,16 +149,16 @@ class PropertiesPanel extends StatelessWidget {
           const SizedBox(height: 20),
           const Icon(Icons.touch_app_outlined, size: 32),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'Vyberte objekt',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
           Text(
             'Kliknutím na přístroj nebo grafiku otevřete jeho vlastnosti.',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12, color: c.muted, height: 1.7),
+            style: TextStyle(fontSize: 14, color: c.muted, height: 1.35),
           ),
           const SizedBox(height: 28),
           const Divider(),
@@ -166,7 +166,7 @@ class PropertiesPanel extends StatelessWidget {
           const Text(
             'AKTUÁLNÍ LIST',
             style: TextStyle(
-              fontSize: 10,
+              fontSize: 12,
               letterSpacing: 1.1,
               fontWeight: FontWeight.w600,
             ),
@@ -202,7 +202,7 @@ class PropertiesPanel extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 10),
-          const Text('Typ listu', style: TextStyle(fontSize: 11)),
+          const Text('Typ listu', style: TextStyle(fontSize: 13)),
           const SizedBox(height: 8),
           SheetTypeSelector(
             value: controller.sheet.type,
@@ -212,7 +212,7 @@ class PropertiesPanel extends StatelessWidget {
           const SizedBox(height: 20),
           Text(
             'Shift + kliknutí rozšíří výběr. Tažením prázdnou plochou vyberete více přístrojů.',
-            style: TextStyle(fontSize: 11, height: 1.65, color: c.muted),
+            style: TextStyle(fontSize: 13, height: 1.35, color: c.muted),
           ),
         ],
       );
@@ -223,7 +223,7 @@ class PropertiesPanel extends StatelessWidget {
         children: [
           Text(
             '$selectionCount objektů ve výběru',
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 16),
           Wrap(
@@ -257,7 +257,7 @@ class PropertiesPanel extends StatelessWidget {
                   controller.componentFor(device),
                 ),
                 style: const TextStyle(
-                  fontSize: 12,
+                  fontSize: 14,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -265,7 +265,7 @@ class PropertiesPanel extends StatelessWidget {
                 device.kind == null
                     ? 'Obecný blok'
                     : SymbolCatalog.definitionFor(device.kind!).label,
-                style: const TextStyle(fontSize: 10),
+                style: const TextStyle(fontSize: 12),
               ),
               onTap: () => controller.select({device.id}),
             ),
@@ -318,12 +318,12 @@ class PropertiesPanel extends StatelessWidget {
       children: [
         SizedBox(
           width: 80,
-          child: Text(title, style: const TextStyle(fontSize: 11)),
+          child: Text(title, style: const TextStyle(fontSize: 13)),
         ),
         Expanded(
           child: Text(
             value,
-            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
           ),
         ),
       ],
@@ -409,7 +409,7 @@ class _DeviceInspectorState extends State<_DeviceInspector> {
       children: [
         Text(
           app.resolver.fullDesignation(component),
-          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+          style: Theme.of(context).textTheme.titleMedium,
         ),
         Text(component.electrical!.functionById(device.functionId)!.name),
         Text(
@@ -565,7 +565,7 @@ class _MountingInspectorState extends State<_MountingInspector> {
       children: [
         Text(
           app.resolver.fullDesignation(c),
-          style: const TextStyle(fontSize: 20),
+          style: Theme.of(context).textTheme.titleMedium,
         ),
         Text(
           'Montážní poloha · ${decimal(size.width)} × ${decimal(size.height)} mm · ${p.rotation.toInt()}°',

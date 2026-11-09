@@ -7,6 +7,7 @@
 
 #include "flutter/generated_plugin_registrant.h"
 #include "pointer_warp.h"
+#include "system_typography.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -62,6 +63,7 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
   register_pointer_warp(view);
+  register_system_typography(view);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }

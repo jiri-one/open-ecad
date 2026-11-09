@@ -2,6 +2,8 @@ import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:open_ecad/app/theme.dart';
+import 'package:open_ecad/app/typography.dart';
 import 'package:open_ecad/widgets/continuation_editor.dart';
 import 'package:open_ecad/widgets/continuation_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -194,6 +196,77 @@ EcadProject _smallProject() => EcadProject(
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets(
+    'combined system and app magnification leaves a usable result viewport',
+    (tester) async {
+      const family = 'PickerReadability';
+      await (FontLoader(family)
+        ..addFont(rootBundle.load('assets/fonts/NotoSans-Regular.ttf'))).load();
+      tester.view.physicalSize = const Size(960, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      String? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildEcadTheme(EcadAppearance.paper, fontFamily: family),
+          builder:
+              (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: const InterfaceTextScaler(
+                    system: TextScaler.noScaling,
+                    fontSize: 24,
+                    magnification: 2,
+                  ),
+                ),
+                child: child!,
+              ),
+          home: Scaffold(
+            body: Builder(
+              builder:
+                  (context) => TextButton(
+                    child: const Text('Open'),
+                    onPressed:
+                        () async =>
+                            result = await showContinuationLinkPicker(
+                              context,
+                              project: EcadProject(
+                                id: 'picker-font',
+                                name: 'Picker',
+                                pages: [],
+                                continuationLinks: const [
+                                  ContinuationLink(
+                                    id: 'signal',
+                                    label: 'Signal',
+                                  ),
+                                ],
+                              ),
+                              currentLinkId: 'signal',
+                              isCurrent: () => true,
+                            ),
+                  ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      final firstRow =
+          find.descendant(of: _list, matching: find.byType(ListTile)).first;
+      expect(
+        tester.getSize(_list).height,
+        greaterThanOrEqualTo(tester.getSize(firstRow).height),
+      );
+      expect(tester.takeException(), isNull);
+      final target = _link('signal', null);
+      await tester.ensureVisible(target);
+      await tester.pumpAndSettle();
+      await tester.tap(target);
+      await tester.pumpAndSettle();
+      expect(result, 'signal');
+    },
+  );
 
   testWidgets(
     '1200 networks build only visible rows and reuse metadata while typing',

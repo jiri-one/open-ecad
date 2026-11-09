@@ -75,6 +75,8 @@ Finder dropdown(String label) => find.byWidgetPredicate(
 );
 
 Future<void> select(WidgetTester tester, String label, String value) async {
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pumpAndSettle();
   await Scrollable.ensureVisible(
     tester.element(dropdown(label)),
     alignment: .3,

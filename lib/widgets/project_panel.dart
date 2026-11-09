@@ -9,6 +9,7 @@ import 'inventory.dart';
 import 'structure_tree.dart';
 import 'sheet_context_menu.dart';
 import '../app/theme.dart';
+import '../app/typography.dart';
 import '../editor/schematic_canvas.dart';
 import 'components.dart';
 import 'sheet_types.dart';
@@ -51,6 +52,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
   Widget build(BuildContext context) {
     final c = EcadColors.of(context);
     final app = widget.controller;
+    final tabHeight = interfaceRowHeight(context, minimum: 46);
     return DefaultTabController(
       length: 4,
       animationDuration: Duration.zero,
@@ -63,27 +65,32 @@ class _ProjectPanelState extends State<ProjectPanel> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 SizedBox(
-                  height: 46,
+                  height: tabHeight,
                   child: TabBar(
+                    isScrollable: true,
+                    tabAlignment: TabAlignment.start,
                     labelColor: c.foreground,
                     unselectedLabelColor: c.muted,
                     labelStyle: const TextStyle(
-                      fontSize: 11,
+                      fontSize: 13,
                       fontWeight: FontWeight.w600,
                     ),
                     unselectedLabelStyle: const TextStyle(
-                      fontSize: 11,
+                      fontSize: 13,
                       fontWeight: FontWeight.w400,
                     ),
-                    labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 4),
                     indicatorColor: c.foreground,
                     indicatorSize: TabBarIndicatorSize.tab,
                     dividerColor: c.border,
-                    tabs: const [
-                      Tab(text: 'Listy'),
-                      Tab(text: 'Značky'),
-                      Tab(text: 'Přístroje'),
-                      Tab(text: 'Artikly'),
+                    tabs: [
+                      for (final label in const [
+                        'Listy',
+                        'Značky',
+                        'Přístroje',
+                        'Artikly',
+                      ])
+                        Tab(text: label, height: tabHeight - 2),
                     ],
                   ),
                 ),
@@ -109,14 +116,6 @@ class _ProjectPanelState extends State<ProjectPanel> {
 
   Widget _buildSheets(EditorController app, EcadColors c) => Column(
     children: [
-      SectionCaption(
-        'Otevřené projekty',
-        trailing: IconButton(
-          tooltip: 'Přidat list',
-          onPressed: widget.onAddSheet,
-          icon: const Icon(Icons.add, size: 18),
-        ),
-      ),
       Padding(
         padding: const EdgeInsets.all(10),
         child: TextField(
@@ -131,13 +130,21 @@ class _ProjectPanelState extends State<ProjectPanel> {
       Expanded(
         child: ListView(
           children: [
+            SectionCaption(
+              'Otevřené projekty',
+              trailing: IconButton(
+                tooltip: 'Přidat list',
+                onPressed: widget.onAddSheet,
+                icon: const Icon(Icons.add, size: 18),
+              ),
+            ),
             for (final doc in widget.workspace?.documents ?? [app])
               ExpansionTile(
                 key: PageStorageKey(doc.documentSessionId),
                 initiallyExpanded: true,
                 title: Text(
                   '${doc.project.name}${doc.dirty ? ' ●' : ''}',
-                  style: const TextStyle(fontSize: 12),
+                  style: const TextStyle(fontSize: 14),
                 ),
                 subtitle: Tooltip(
                   message:
@@ -146,7 +153,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
                     doc.fileName ?? 'Bez souboru',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 9),
+                    style: const TextStyle(fontSize: 12),
                   ),
                 ),
                 leading: Builder(
@@ -220,11 +227,11 @@ class _ProjectPanelState extends State<ProjectPanel> {
                             leading: Icon(sheetTypeIcon(sheet.type), size: 16),
                             title: Text(
                               '${fullPageDesignation(sheet)} · ${sheet.name}',
-                              style: const TextStyle(fontSize: 11),
+                              style: const TextStyle(fontSize: 13),
                             ),
                             subtitle: Text(
                               sheet.type.label,
-                              style: const TextStyle(fontSize: 9),
+                              style: const TextStyle(fontSize: 12),
                             ),
                             onTap:
                                 () =>
@@ -280,7 +287,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
             controller: searchController,
             onChanged: (value) => setState(() => search = value),
             cursorOpacityAnimates: false,
-            style: const TextStyle(fontSize: 11),
+            style: const TextStyle(fontSize: 13),
             decoration: const InputDecoration(
               hintText: 'Najít symbol…',
               prefixIcon: Icon(Icons.search, size: 17),
@@ -301,8 +308,9 @@ class _ProjectPanelState extends State<ProjectPanel> {
                   : ListView.builder(
                     key: const PageStorageKey('device-library'),
                     padding: const EdgeInsets.symmetric(horizontal: 8),
-                    itemCount: kinds.length,
+                    itemCount: kinds.length + 1,
                     itemBuilder: (context, index) {
+                      if (index == kinds.length) return _libraryHelp(c);
                       final kind = kinds[index];
                       final definition = SymbolCatalog.definitionFor(kind);
                       final active =
@@ -318,9 +326,10 @@ class _ProjectPanelState extends State<ProjectPanel> {
                                 () => app.setMode(CanvasMode.place, kind: kind),
                             borderRadius: BorderRadius.circular(4),
                             child: Container(
-                              height: 51,
+                              constraints: const BoxConstraints(minHeight: 51),
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 10,
+                                vertical: 5,
                               ),
                               margin: const EdgeInsets.only(bottom: 3),
                               decoration: BoxDecoration(
@@ -346,6 +355,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
                                   const SizedBox(width: 11),
                                   Expanded(
                                     child: Column(
+                                      mainAxisSize: MainAxisSize.min,
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       mainAxisAlignment:
@@ -353,10 +363,8 @@ class _ProjectPanelState extends State<ProjectPanel> {
                                       children: [
                                         Text(
                                           definition.label,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
                                           style: const TextStyle(
-                                            fontSize: 11,
+                                            fontSize: 13,
                                             fontWeight: FontWeight.w600,
                                           ),
                                         ),
@@ -369,7 +377,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                           style: TextStyle(
-                                            fontSize: 9,
+                                            fontSize: 12,
                                             color: c.muted,
                                           ),
                                         ),
@@ -386,26 +394,25 @@ class _ProjectPanelState extends State<ProjectPanel> {
                     },
                   ),
         ),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            border: Border(top: BorderSide(color: c.border)),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Icon(Icons.keyboard_outlined, size: 16),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  'Značka vytvoří nový fyzický kus. Další zobrazení existujícího kusu přidejte přes Přístroje. PE je pokračování bez kusu. ${widget.shortcuts.labelFor(EditorCommand.cancelTool)} ukončí vkládání.',
-                  style: TextStyle(fontSize: 10, color: c.muted, height: 1.6),
-                ),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }
+
+  Widget _libraryHelp(EcadColors c) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(border: Border(top: BorderSide(color: c.border))),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.keyboard_outlined, size: 16),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            'Značka vytvoří nový fyzický kus. Další zobrazení existujícího kusu přidejte přes Přístroje. PE je pokračování bez kusu. ${widget.shortcuts.labelFor(EditorCommand.cancelTool)} ukončí vkládání.',
+            style: TextStyle(fontSize: 12, color: c.muted, height: 1.35),
+          ),
+        ),
+      ],
+    ),
+  );
 }

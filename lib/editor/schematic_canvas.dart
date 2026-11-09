@@ -917,7 +917,10 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
     if (event.kind == PointerDeviceKind.mouse) {
       _lastPointerGlobal = event.position;
     }
-    if (_activePointer != null) return;
+    if (_activePointer != null) {
+      _middleDoubleClick.reset();
+      return;
+    }
     _middleDoubleClick.down(event);
     final reference =
         _canInteract &&
@@ -1448,6 +1451,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
       builder: (context, constraints) {
         final nextSize = constraints.biggest;
         if (_viewport != nextSize) {
+          _middleDoubleClick.reset();
           _clearHover();
           final previous = _viewport;
           _viewport = nextSize;
@@ -1546,6 +1550,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
                     },
                     onPointerHover: _pointerHover,
                     onPointerSignal: (event) {
+                      _middleDoubleClick.reset();
                       if (event is PointerScrollEvent) {
                         GestureBinding.instance.pointerSignalResolver.register(
                           event,
@@ -1560,6 +1565,7 @@ class _SchematicCanvasState extends State<SchematicCanvas> {
                       }
                     },
                     onPointerPanZoomStart: (_) {
+                      _middleDoubleClick.reset();
                       setState(() {
                         _clearHover();
                         _panZoomActive = true;

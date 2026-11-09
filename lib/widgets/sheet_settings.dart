@@ -79,6 +79,7 @@ Future<void> editSheetSettings(
                     'Změna struktury listu nepřejmenuje existující fyzické přístroje.',
                   ),
                   DropdownButtonFormField<String>(
+                    itemHeight: null,
                     initialValue:
                         paper.width == SizeMm.a4Landscape.width ? 'a4' : 'a3',
                     decoration: const InputDecoration(labelText: 'Papír'),
@@ -131,6 +132,7 @@ Future<void> editSheetSettings(
                   ),
                   if (sheet.type == SheetType.billOfMaterials) ...[
                     DropdownButtonFormField<BomReportKind>(
+                      itemHeight: null,
                       initialValue: reportKind,
                       decoration: const InputDecoration(
                         labelText: 'Obsah reportu',
@@ -223,6 +225,7 @@ Future<void> editMountingView(
                 error: error,
                 children: [
                   DropdownButtonFormField<String>(
+                    itemHeight: null,
                     initialValue: layoutId ?? '',
                     isExpanded: true,
                     decoration: const InputDecoration(

@@ -15,7 +15,20 @@ chování a škálování ověřte na cílovém počítači následujícím prů
    **Kreslení** a **Úpravy**; při menší šířce jsou nástroje v nabídce sady.
    **Celý list** ve spodním řádku přizpůsobí list s malým okrajem. Při zobrazení
    celého listu otevřít a skrýt boční panely; ručně přiblížený pohled zachová měřítko.
+   V **Písmo rozhraní…** vyzkoušet 150 % a 200 %, uložení, zrušení náhledu
+   a návrat **Podle systému**. Projít záložky levého panelu, knihovnu značek,
+   asistenta, vlastnosti a dialogy; text se nesmí svisle ořezávat. Zvětšení
+   písma má zachovat velikost ikon a ručně nastavené přiblížení výkresu.
+   Na Linuxu změnit systémovou rodinu i velikost GTK písma za běhu aplikace;
+   zkontrolovat také kombinaci se systémovým zvětšením textu.
+   Roztáhnout oba boční panely za úchyty u výkresu. Kurzor musí reagovat v celé
+   šířce úchytu a zachovat vodorovné šipky po dobu tažení i na hranici rozsahu.
+   Zmenšit a znovu zvětšit okno, skrýt a otevřít panely a restartovat aplikaci;
+   ověřit zapamatované šířky, dvojklik pro návrat a ovládání úchytu šipkami.
 3. Na ukázce vybrat a přesunout symbol, otočit jej a vrátit změny.
+   V každém typu pohledu přiblížit a oddálit kolečkem, posunout výkres a dvojklikem
+   kolečka vrátit celý list doprostřed. Vyzkoušet také okraj plochy mimo papír,
+   mírný pohyb myši při kliknutí a samostatné tažení bez následného přizpůsobení.
    Přidat svorku a propojit její bod s dalším vývodem. Vybrat a odstranit vodič.
    Dva body bez automatického propojení spojit opakovaně, i v opačném pořadí:
    zůstane jediný vodič a stavový řádek oznámí existující spoj. Jediné Undo spoj

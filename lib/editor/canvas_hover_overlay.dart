@@ -211,7 +211,7 @@ class _Bubble extends StatelessWidget {
               ),
               style: (theme.textTheme.bodySmall ?? const TextStyle()).copyWith(
                 color: colors.onInverseSurface,
-                fontSize: 12,
+                fontSize: 14,
                 height: 1.3,
               ),
               maxLines: maxLines,

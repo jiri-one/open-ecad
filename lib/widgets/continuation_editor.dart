@@ -164,6 +164,7 @@ Future<void> editContinuation(
                   ],
                 ),
                 DropdownButtonFormField<PortSide>(
+                  itemHeight: null,
                   initialValue: side,
                   decoration: const InputDecoration(labelText: 'Směr portu'),
                   items: [
@@ -173,6 +174,7 @@ Future<void> editContinuation(
                   onChanged: (value) => side = value!,
                 ),
                 DropdownButtonFormField<ContinuationGlyph>(
+                  itemHeight: null,
                   initialValue: glyph,
                   decoration: const InputDecoration(labelText: 'Značka'),
                   items: const [

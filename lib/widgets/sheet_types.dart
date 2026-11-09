@@ -104,7 +104,7 @@ class SheetTypeSelector extends StatelessWidget {
                             Text(
                               type.label,
                               style: TextStyle(
-                                fontSize: 12,
+                                fontSize: 14,
                                 fontWeight: FontWeight.w600,
                                 color:
                                     type == value ? c.onAccent : c.foreground,
@@ -114,7 +114,7 @@ class SheetTypeSelector extends StatelessWidget {
                             Text(
                               sheetTypeHint(type),
                               style: TextStyle(
-                                fontSize: 10,
+                                fontSize: 12,
                                 color: type == value ? c.onAccent : c.muted,
                               ),
                             ),

@@ -50,296 +50,291 @@ class _InventoryPanelState extends State<InventoryPanel> {
             onChanged: (v) => setState(() => query = v),
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: FilledButton.icon(
-            onPressed:
-                () =>
-                    widget.articles
-                        ? editArticle(context, app)
-                        : editComponent(context, app),
-            icon: const Icon(Icons.add, size: 16),
-            label: Text(
-              widget.articles ? 'Nový artikl' : 'Nový kus / materiál',
-            ),
-          ),
-        ),
         Expanded(
           child: ListView(
-            children:
-                widget.articles
-                    ? [
-                      for (final article in app.project.articles.where(
-                        (a) => matches(
-                          '${a.name} ${a.manufacturer} ${a.partNumber}',
+            children: [
+              _addButton(app),
+              ...(widget.articles
+                  ? [
+                    for (final article in app.project.articles.where(
+                      (a) => matches(
+                        '${a.name} ${a.manufacturer} ${a.partNumber}',
+                      ),
+                    ))
+                      ListTile(
+                        dense: true,
+                        title: Text(article.name),
+                        subtitle: Text(
+                          '${article.manufacturer ?? 'Výrobce neuveden'} · ${article.partNumber ?? 'Kód neuveden'} · ${unitLabel(article.unit)}',
                         ),
-                      ))
-                        ListTile(
-                          dense: true,
-                          title: Text(article.name),
-                          subtitle: Text(
-                            '${article.manufacturer ?? 'Výrobce neuveden'} · ${article.partNumber ?? 'Kód neuveden'} · ${unitLabel(article.unit)}',
-                          ),
-                          onTap:
-                              () => editArticle(context, app, article: article),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (v) {
-                              if (v == 'copy') {
-                                editArticle(
-                                  context,
-                                  app,
-                                  article: article.copyWith(
-                                    id: newId('article'),
-                                    name: '${article.name} — kopie',
-                                  ),
+                        onTap:
+                            () => editArticle(context, app, article: article),
+                        trailing: PopupMenuButton<String>(
+                          onSelected: (v) {
+                            if (v == 'copy') {
+                              editArticle(
+                                context,
+                                app,
+                                article: article.copyWith(
+                                  id: newId('article'),
+                                  name: '${article.name} — kopie',
+                                ),
+                              );
+                            }
+                            if (v == 'assign') {
+                              assignArticle(context, app, article);
+                            }
+                            if (v == 'delete') {
+                              if (app.project.components.any(
+                                (c) => c.articleId == article.id,
+                              )) {
+                                app.reportStatus(
+                                  'Artikl je přiřazený komponentě. Před odstraněním zrušte jeho přiřazení.',
                                 );
+                                return;
                               }
-                              if (v == 'assign') {
-                                assignArticle(context, app, article);
-                              }
-                              if (v == 'delete') {
-                                if (app.project.components.any(
-                                  (c) => c.articleId == article.id,
-                                )) {
-                                  app.reportStatus(
-                                    'Artikl je přiřazený komponentě. Před odstraněním zrušte jeho přiřazení.',
-                                  );
-                                  return;
-                                }
-                                app.execute([
-                                  DeleteArticle(article.id),
-                                ], 'Artikl odstraněn');
-                              }
-                            },
-                            itemBuilder:
-                                (_) => const [
-                                  PopupMenuItem(
-                                    value: 'copy',
-                                    child: Text('Kopírovat artikl'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'assign',
-                                    child: Text('Přiřadit komponentě…'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'delete',
-                                    child: Text('Odstranit nepoužitý artikl'),
-                                  ),
-                                ],
-                          ),
+                              app.execute([
+                                DeleteArticle(article.id),
+                              ], 'Artikl odstraněn');
+                            }
+                          },
+                          itemBuilder:
+                              (_) => const [
+                                PopupMenuItem(
+                                  value: 'copy',
+                                  child: Text('Kopírovat artikl'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'assign',
+                                  child: Text('Přiřadit komponentě…'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'delete',
+                                  child: Text('Odstranit nepoužitý artikl'),
+                                ),
+                              ],
                         ),
-                      if (app.project.articles.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Text(
-                            'Artikly jsou katalog výrobků. Přiřazují se fyzickým komponentám a materiálu.',
-                          ),
+                      ),
+                    if (app.project.articles.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text(
+                          'Artikly jsou katalog výrobků. Přiřazují se fyzickým komponentám a materiálu.',
                         ),
-                    ]
-                    : [
-                      StructureTree<ComponentRow>(
-                        items:
-                            bom.components
-                                .where(
-                                  (r) => matches(
-                                    '${app.resolver.fullDesignation(r.component)} ${r.component.description} ${r.article?.name ?? ''}',
-                                  ),
-                                )
-                                .toList(),
-                        contextFor: (r) => app.resolver.contextFor(r.component),
-                        compare: (a, b) {
-                          final left = app.resolver.fullDesignation(
-                                a.component,
-                              ),
-                              right = app.resolver.fullDesignation(b.component);
-                          final n = naturalCompare(left, right);
-                          return n != 0
-                              ? n
-                              : left != right
-                              ? left.compareTo(right)
-                              : a.component.id.compareTo(b.component.id);
-                        },
-                        onRename:
-                            (aspect, path) => renameStructureBranchDialog(
-                              context,
-                              app,
-                              aspect,
-                              path,
+                      ),
+                  ]
+                  : [
+                    StructureTree<ComponentRow>(
+                      items:
+                          bom.components
+                              .where(
+                                (r) => matches(
+                                  '${app.resolver.fullDesignation(r.component)} ${r.component.description} ${r.article?.name ?? ''}',
+                                ),
+                              )
+                              .toList(),
+                      contextFor: (r) => app.resolver.contextFor(r.component),
+                      compare: (a, b) {
+                        final left = app.resolver.fullDesignation(a.component),
+                            right = app.resolver.fullDesignation(b.component);
+                        final n = naturalCompare(left, right);
+                        return n != 0
+                            ? n
+                            : left != right
+                            ? left.compareTo(right)
+                            : a.component.id.compareTo(b.component.id);
+                      },
+                      onRename:
+                          (aspect, path) => renameStructureBranchDialog(
+                            context,
+                            app,
+                            aspect,
+                            path,
+                          ),
+                      leaf:
+                          (row) => ExpansionTile(
+                            key: PageStorageKey(
+                              '${app.documentSessionId}-${row.component.id}',
                             ),
-                        leaf:
-                            (row) => ExpansionTile(
-                              key: PageStorageKey(
-                                '${app.documentSessionId}-${row.component.id}',
-                              ),
+                            dense: true,
+                            title: ListTile(
                               dense: true,
-                              title: ListTile(
-                                dense: true,
-                                title: Text(
-                                  app.resolver
-                                          .fullDesignation(row.component)
-                                          .isEmpty
-                                      ? row.article?.name ??
-                                          'Materiál bez označení'
-                                      : app.resolver.fullDesignation(
-                                        row.component,
-                                      ),
-                                ),
-                                subtitle: Text(
-                                  '${row.article?.name ?? '⚠ Chybí artikl'}\n${decimal(row.component.quantity.amount ?? 'neurčeno')} ${unitLabel(row.component.quantity.unit)} · ${row.component.usage == ComponentUsage.spare ? 'rezerva' : 'instalace'} · ${row.hasRepresentation ? '${row.occurrences.length} zobrazení' : 'bez zobrazení'}${row.article != null && (row.article!.manufacturer == null || row.article!.partNumber == null) ? '\n⚠ Neúplný artikl' : ''}',
-                                ),
-                                onTap:
-                                    () => editComponent(
+                              title: Text(
+                                app.resolver
+                                        .fullDesignation(row.component)
+                                        .isEmpty
+                                    ? row.article?.name ??
+                                        'Materiál bez označení'
+                                    : app.resolver.fullDesignation(
+                                      row.component,
+                                    ),
+                              ),
+                              subtitle: Text(
+                                '${row.article?.name ?? '⚠ Chybí artikl'}\n${decimal(row.component.quantity.amount ?? 'neurčeno')} ${unitLabel(row.component.quantity.unit)} · ${row.component.usage == ComponentUsage.spare ? 'rezerva' : 'instalace'} · ${row.hasRepresentation ? '${row.occurrences.length} zobrazení' : 'bez zobrazení'}${row.article != null && (row.article!.manufacturer == null || row.article!.partNumber == null) ? '\n⚠ Neúplný artikl' : ''}',
+                              ),
+                              onTap:
+                                  () => editComponent(
+                                    context,
+                                    app,
+                                    component: row.component,
+                                  ),
+                              trailing: PopupMenuButton<String>(
+                                onSelected: (v) {
+                                  if (v == 'show') {
+                                    showOccurrenceDialog(
                                       context,
                                       app,
                                       component: row.component,
-                                    ),
-                                trailing: PopupMenuButton<String>(
-                                  onSelected: (v) {
-                                    if (v == 'show') {
-                                      showOccurrenceDialog(
-                                        context,
-                                        app,
-                                        component: row.component,
-                                      );
-                                    }
-                                    if (v == 'mount') {
-                                      showMountPlacementDialog(
-                                        context,
-                                        app,
-                                        component: row.component,
-                                      );
-                                    }
-                                    if (v == 'copy') {
-                                      final copy = app
-                                          .duplicateInventoryComponent(
-                                            row.component,
-                                          );
-                                      if (copy == null) return;
-                                      editComponent(
-                                        context,
-                                        app,
-                                        component: copy,
-                                      );
-                                    }
-                                    if (v == 'delete') {
-                                      if (app.bom.components.any(
-                                            (r) =>
-                                                r.component.id ==
-                                                    row.component.id &&
-                                                r.hasRepresentation,
-                                          ) ||
-                                          app.project.components.any(
-                                            (c) =>
-                                                c
-                                                    .procurement
-                                                    .includedInComponentId ==
-                                                row.component.id,
-                                          )) {
-                                        app.reportStatus(
-                                          'Komponenta je stále používána ve výkresu, montáži nebo dodávce jiného kusu. Nejprve zrušte tyto vazby.',
+                                    );
+                                  }
+                                  if (v == 'mount') {
+                                    showMountPlacementDialog(
+                                      context,
+                                      app,
+                                      component: row.component,
+                                    );
+                                  }
+                                  if (v == 'copy') {
+                                    final copy = app
+                                        .duplicateInventoryComponent(
+                                          row.component,
                                         );
-                                        return;
-                                      }
-                                      app.execute([
-                                        DeleteComponent(row.component.id),
-                                      ], 'Komponenta odstraněna');
+                                    if (copy == null) return;
+                                    editComponent(
+                                      context,
+                                      app,
+                                      component: copy,
+                                    );
+                                  }
+                                  if (v == 'delete') {
+                                    if (app.bom.components.any(
+                                          (r) =>
+                                              r.component.id ==
+                                                  row.component.id &&
+                                              r.hasRepresentation,
+                                        ) ||
+                                        app.project.components.any(
+                                          (c) =>
+                                              c
+                                                  .procurement
+                                                  .includedInComponentId ==
+                                              row.component.id,
+                                        )) {
+                                      app.reportStatus(
+                                        'Komponenta je stále používána ve výkresu, montáži nebo dodávce jiného kusu. Nejprve zrušte tyto vazby.',
+                                      );
+                                      return;
                                     }
-                                    if (v.startsWith('goto:')) {
-                                      final id = v.substring(5);
-                                      app.setSheet(id);
-                                    }
-                                  },
-                                  itemBuilder:
-                                      (_) => [
-                                        if (row.component.kind ==
-                                                ComponentKind.physical &&
-                                            row.component.usage !=
-                                                ComponentUsage.spare) ...[
-                                          const PopupMenuItem(
-                                            value: 'show',
-                                            child: Text(
-                                              'Další elektrické zobrazení…',
-                                            ),
-                                          ),
-                                          const PopupMenuItem(
-                                            value: 'mount',
-                                            child: Text('Umístit v montáži…'),
-                                          ),
-                                        ],
-                                        for (final id in {
-                                          ...row.occurrences.map(
-                                            (o) => o.sheetId,
-                                          ),
-                                          ...row.mountingSheetIds,
-                                        })
-                                          PopupMenuItem(
-                                            value: 'goto:$id',
-                                            child: Text(
-                                              'Přejít na list ${fullPageDesignation(app.project.sheetById(id)!)}',
-                                            ),
-                                          ),
+                                    app.execute([
+                                      DeleteComponent(row.component.id),
+                                    ], 'Komponenta odstraněna');
+                                  }
+                                  if (v.startsWith('goto:')) {
+                                    final id = v.substring(5);
+                                    app.setSheet(id);
+                                  }
+                                },
+                                itemBuilder:
+                                    (_) => [
+                                      if (row.component.kind ==
+                                              ComponentKind.physical &&
+                                          row.component.usage !=
+                                              ComponentUsage.spare) ...[
                                         const PopupMenuItem(
-                                          value: 'copy',
+                                          value: 'show',
                                           child: Text(
-                                            'Nový skutečný kus podle tohoto…',
+                                            'Další elektrické zobrazení…',
                                           ),
                                         ),
                                         const PopupMenuItem(
-                                          value: 'delete',
-                                          child: Text(
-                                            'Odstranit nepoužitou komponentu',
-                                          ),
+                                          value: 'mount',
+                                          child: Text('Umístit v montáži…'),
                                         ),
                                       ],
-                                ),
-                              ),
-                              children: [
-                                for (final occurrence in row.occurrences)
-                                  ListTile(
-                                    dense: true,
-                                    title: Text(
-                                      fullPageDesignation(
-                                        app.project.sheetById(
-                                          occurrence.sheetId,
-                                        )!,
+                                      for (final id in {
+                                        ...row.occurrences.map(
+                                          (o) => o.sheetId,
+                                        ),
+                                        ...row.mountingSheetIds,
+                                      })
+                                        PopupMenuItem(
+                                          value: 'goto:$id',
+                                          child: Text(
+                                            'Přejít na list ${fullPageDesignation(app.project.sheetById(id)!)}',
+                                          ),
+                                        ),
+                                      const PopupMenuItem(
+                                        value: 'copy',
+                                        child: Text(
+                                          'Nový skutečný kus podle tohoto…',
+                                        ),
                                       ),
-                                    ),
-                                    subtitle: Text(
-                                      app.project
-                                          .sheetById(occurrence.sheetId)!
-                                          .name,
-                                    ),
-                                    onTap: () {
-                                      app.setSheet(occurrence.sheetId);
-                                      app.select({occurrence.deviceId});
-                                      app.setPanel(SidePanel.properties);
-                                    },
-                                  ),
-                              ],
+                                      const PopupMenuItem(
+                                        value: 'delete',
+                                        child: Text(
+                                          'Odstranit nepoužitou komponentu',
+                                        ),
+                                      ),
+                                    ],
+                              ),
                             ),
-                      ),
-                      if (app.project.components.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Text(
-                            'Založte skutečný přístroj nebo materiál. Elektrická značka ani montážní pohled nejsou další kus.',
+                            children: [
+                              for (final occurrence in row.occurrences)
+                                ListTile(
+                                  dense: true,
+                                  title: Text(
+                                    fullPageDesignation(
+                                      app.project.sheetById(
+                                        occurrence.sheetId,
+                                      )!,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    app.project
+                                        .sheetById(occurrence.sheetId)!
+                                        .name,
+                                  ),
+                                  onTap: () {
+                                    app.setSheet(occurrence.sheetId);
+                                    app.select({occurrence.deviceId});
+                                    app.setPanel(SidePanel.properties);
+                                  },
+                                ),
+                            ],
                           ),
+                    ),
+                    if (app.project.components.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text(
+                          'Založte skutečný přístroj nebo materiál. Elektrická značka ani montážní pohled nejsou další kus.',
                         ),
-                    ],
+                      ),
+                  ]),
+              if (app.status.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Text(app.status, style: const TextStyle(fontSize: 12)),
+                ),
+            ],
           ),
         ),
-        if (app.status.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Text(
-              app.status,
-              maxLines: 3,
-              style: const TextStyle(fontSize: 10),
-            ),
-          ),
       ],
     );
   }
+
+  Widget _addButton(EditorController app) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 10),
+    child: FilledButton.icon(
+      onPressed:
+          () =>
+              widget.articles
+                  ? editArticle(context, app)
+                  : editComponent(context, app),
+      icon: const Icon(Icons.add, size: 16),
+      label: Text(widget.articles ? 'Nový artikl' : 'Nový kus / materiál'),
+    ),
+  );
 }
 
 Future<void> editArticle(
@@ -469,6 +464,7 @@ class _ArticleDialogState extends State<_ArticleDialog> {
     children: [
       for (final entry in fields.entries) formField(entry.key, entry.value),
       DropdownButtonFormField<QuantityUnit>(
+        itemHeight: null,
         initialValue: unit,
         decoration: const InputDecoration(labelText: 'Jednotka'),
         items: [
@@ -655,6 +651,7 @@ class _ComponentDialogState extends State<_ComponentDialog> {
     save: save,
     children: [
       DropdownButtonFormField<ComponentKind>(
+        itemHeight: null,
         initialValue: kind,
         decoration: const InputDecoration(labelText: 'Druh'),
         items: const [
@@ -677,6 +674,7 @@ class _ComponentDialogState extends State<_ComponentDialog> {
       ),
       if (stripId != null) ...[
         DropdownButtonFormField<String>(
+          itemHeight: null,
           key: ValueKey('strip-$stripId'),
           initialValue: stripId,
           isExpanded: true,
@@ -736,6 +734,7 @@ class _ComponentDialogState extends State<_ComponentDialog> {
       ),
       formField('Popis', fields['Popis']!),
       DropdownButtonFormField<String>(
+        itemHeight: null,
         key: ValueKey('article-$articleId-$kind'),
         initialValue: articleId ?? '',
         isExpanded: true,
@@ -769,6 +768,7 @@ class _ComponentDialogState extends State<_ComponentDialog> {
           hint: 'Prázdné = neurčeno, např. 2,75',
         ),
         DropdownButtonFormField<QuantityUnit>(
+          itemHeight: null,
           key: ValueKey(unit),
           initialValue: unit,
           decoration: const InputDecoration(labelText: 'Jednotka'),
@@ -781,6 +781,7 @@ class _ComponentDialogState extends State<_ComponentDialog> {
         ),
       ],
       DropdownButtonFormField<ComponentUsage>(
+        itemHeight: null,
         initialValue: usage,
         decoration: const InputDecoration(labelText: 'Použití'),
         items: const [
@@ -793,6 +794,7 @@ class _ComponentDialogState extends State<_ComponentDialog> {
         onChanged: (v) => setState(() => usage = v!),
       ),
       DropdownButtonFormField<ProcurementSource>(
+        itemHeight: null,
         initialValue: source,
         decoration: const InputDecoration(labelText: 'Dostupnost'),
         items: const [
@@ -813,6 +815,7 @@ class _ComponentDialogState extends State<_ComponentDialog> {
       ),
       if (source == ProcurementSource.included)
         DropdownButtonFormField<String>(
+          itemHeight: null,
           initialValue: included,
           isExpanded: true,
           decoration: const InputDecoration(labelText: 'Zahrnuto v komponentě'),
@@ -910,6 +913,7 @@ Future<void> assignArticle(
                 title: 'Přiřadit ${article.name}',
                 children: [
                   DropdownButtonFormField<String>(
+                    itemHeight: null,
                     isExpanded: true,
                     decoration: const InputDecoration(labelText: 'Komponenta'),
                     items: [

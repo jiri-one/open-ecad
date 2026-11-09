@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../app/theme.dart';
+import '../app/typography.dart';
 
 class EcadIconButton extends StatelessWidget {
   const EcadIconButton({
@@ -66,10 +67,8 @@ class SectionCaption extends StatelessWidget {
       children: [
         Expanded(
           child: Text(
-            text.toUpperCase(),
-            style: TextStyle(
-              fontSize: 10,
-              letterSpacing: 1.25,
+            text,
+            style: Theme.of(context).textTheme.bodySmall!.copyWith(
               fontWeight: FontWeight.w600,
               color: EcadColors.of(context).muted,
             ),
@@ -95,7 +94,7 @@ class Keycap extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: TextStyle(fontSize: 9, color: c.muted, height: 1.2),
+        style: TextStyle(fontSize: 12, color: c.muted, height: 1.2),
       ),
     );
   }
@@ -169,7 +168,9 @@ class PanelTab extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: Container(
-            height: 46,
+            constraints: BoxConstraints(
+              minHeight: interfaceRowHeight(context, minimum: 46),
+            ),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -183,16 +184,20 @@ class PanelTab extends StatelessWidget {
               children: [
                 Icon(icon, size: 15),
                 const SizedBox(width: 7),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    ),
                   ),
                 ),
                 if (count != null && count! > 0) ...[
                   const SizedBox(width: 5),
-                  Text('$count', style: const TextStyle(fontSize: 10)),
+                  Text('$count', style: const TextStyle(fontSize: 12)),
                 ],
               ],
             ),

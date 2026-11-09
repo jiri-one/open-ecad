@@ -326,6 +326,17 @@ void main() {
         find.byKey(const ValueKey('pdf-object-page1-text1')),
         findsOneWidget,
       );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('pdf-object-page1-overlay')),
+        100,
+        scrollable:
+            find
+                .descendant(
+                  of: find.byKey(const ValueKey('pdf-object-list-page1-true')),
+                  matching: find.byType(Scrollable),
+                )
+                .first,
+      );
       expect(
         find.byKey(const ValueKey('pdf-object-page1-overlay')),
         findsOneWidget,
@@ -333,6 +344,9 @@ void main() {
       expect(
         find.byKey(const ValueKey('pdf-object-page1-border1')),
         findsNothing,
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('pdf-object-page1-text1')),
       );
       await tester.tap(find.byKey(const ValueKey('pdf-object-page1-text1')));
       await tester.pumpAndSettle();

@@ -43,7 +43,7 @@ class _MountingCanvasState extends State<MountingCanvas> {
   Vec2? start, preview;
   final _activePointers = <int>{};
   final _middleDoubleClick = MiddleButtonDoubleClick();
-  final transformation = SheetViewportController();
+  var transformation = SheetViewportController();
   final images = DrawingImageCache();
   EcadProject? diagnosticSnapshot;
   List<Diagnostic> diagnostics = [];
@@ -191,7 +191,7 @@ class _MountingCanvasState extends State<MountingCanvas> {
     widget.app.viewport.bindNavigation(
       this,
       hasActiveGesture: () => _activePointers.isNotEmpty || moving != null,
-      fit: () => transformation.value = Matrix4.identity(),
+      fit: _fit,
       zoom: (factor) {
         final current = transformation.value.getMaxScaleOnAxis();
         final next = (current * factor).clamp(.5, 8.0);
@@ -200,6 +200,15 @@ class _MountingCanvasState extends State<MountingCanvas> {
               ..scaleByDouble(next / current, next / current, 1, 1);
       },
     );
+  }
+
+  void _fit() {
+    // Replace the viewer/controller pair so its old fling cannot overwrite fit.
+    final previous = transformation;
+    previous.removeListener(_zoomChanged);
+    transformation = SheetViewportController()..addListener(_zoomChanged);
+    _zoomChanged();
+    WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
   }
 
   void _zoomChanged() {
@@ -265,7 +274,11 @@ class _MountingCanvasState extends State<MountingCanvas> {
               ),
             );
     setState(() {
-      if (event is PointerDownEvent) _middleDoubleClick.down(event);
+      if (event is PointerDownEvent) {
+        _middleDoubleClick.down(event);
+      } else {
+        _middleDoubleClick.reset();
+      }
       _activePointers.add(event.pointer);
       _clearHover();
     });
@@ -283,7 +296,7 @@ class _MountingCanvasState extends State<MountingCanvas> {
       _activePointers.remove(event.pointer);
       _clearHover();
       if (event is PointerUpEvent && _middleDoubleClick.up(event)) {
-        transformation.value = Matrix4.identity();
+        _fit();
       } else if (event is! PointerUpEvent) {
         _middleDoubleClick.reset();
       }
@@ -369,6 +382,7 @@ class _MountingCanvasState extends State<MountingCanvas> {
   Widget build(BuildContext context) {
     final app = widget.app, layout = app.activeLayout;
     if (!identical(diagnosticSnapshot, app.project)) {
+      _middleDoubleClick.reset();
       diagnosticSnapshot = app.project;
       moving = null;
       start = null;
@@ -387,6 +401,7 @@ class _MountingCanvasState extends State<MountingCanvas> {
       app.pastePreview,
     );
     if (_hoverContext != hoverContext) {
+      _middleDoubleClick.reset();
       _hoverContext = hoverContext;
       _clearHover();
     }
@@ -451,6 +466,7 @@ class _MountingCanvasState extends State<MountingCanvas> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               if (_hoverViewport != constraints.biggest) {
+                _middleDoubleClick.reset();
                 _hoverViewport = constraints.biggest;
                 _clearHover();
               }
@@ -521,13 +537,17 @@ class _MountingCanvasState extends State<MountingCanvas> {
                             onPointerCancel: _pointerEnded,
                             onPointerPanZoomStart: _pointerStarted,
                             onPointerPanZoomEnd: _pointerEnded,
-                            onPointerSignal: (_) => _dismissHover(),
+                            onPointerSignal: (_) {
+                              _middleDoubleClick.reset();
+                              _dismissHover();
+                            },
                             onPointerHover: (event) {
                               if (layout != null) {
                                 _hover(event, scale, transform, layout);
                               }
                             },
                             child: InteractiveViewer(
+                              key: ObjectKey(transformation),
                               transformationController: transformation,
                               minScale: .5,
                               maxScale: 8,

@@ -57,7 +57,7 @@ class StructureFields extends StatelessWidget {
         ),
       const Text(
         'Jedna úroveň na řádek. Lomítko a tečka jsou součástí kódu. Prázdné pole = nezařazeno.',
-        style: TextStyle(fontSize: 11),
+        style: TextStyle(fontSize: 13),
       ),
     ],
   );

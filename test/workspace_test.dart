@@ -107,7 +107,9 @@ void main() {
         await app.setAppearance(appearance);
         await tester.pumpAndSettle();
         for (final tab in ['Listy', 'Značky', 'Přístroje', 'Artikly']) {
-          await tester.tap(find.widgetWithText(Tab, tab));
+          final target = find.widgetWithText(Tab, tab);
+          await tester.ensureVisible(target);
+          await tester.tap(target);
           await tester.pumpAndSettle();
           expect(find.byType(SchematicCanvas), findsOneWidget);
           expect(find.text('Asistent'), findsOneWidget);

@@ -479,7 +479,13 @@ void main() {
     await _middleClick(mouse, point, 100);
     await _middleClick(mouse, point, 230);
     await tester.pump();
-    expect(transformation.value, Matrix4.identity());
+    expect(
+      tester
+          .widget<InteractiveViewer>(find.byType(InteractiveViewer))
+          .transformationController!
+          .value,
+      Matrix4.identity(),
+    );
     expect(app.canUndo, isFalse);
     await mouse.removePointer();
     await _finish(tester);

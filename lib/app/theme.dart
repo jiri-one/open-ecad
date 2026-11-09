@@ -128,7 +128,7 @@ class EcadColors extends ThemeExtension<EcadColors> {
       t < 0.5 ? this : (other ?? this);
 }
 
-ThemeData buildEcadTheme(EcadAppearance appearance) {
+ThemeData buildEcadTheme(EcadAppearance appearance, {String? fontFamily}) {
   final c = EcadColors.forAppearance(appearance);
   final scheme = ColorScheme.fromSeed(
     seedColor: c.accent,
@@ -147,9 +147,13 @@ ThemeData buildEcadTheme(EcadAppearance appearance) {
     onError: c.panel,
     surfaceContainerHighest: c.subtle,
   );
+  final body = TextStyle(fontSize: 14, color: c.foreground, height: 1.35);
+  final title = body.copyWith(fontWeight: FontWeight.w600);
+  final heading = title.copyWith(fontSize: 16, height: 1.25);
   return ThemeData(
     useMaterial3: true,
-    fontFamily: 'NotoSans',
+    fontFamily: fontFamily,
+    fontFamilyFallback: const ['NotoSans'],
     colorScheme: scheme,
     scaffoldBackgroundColor: c.background,
     dividerColor: c.border,
@@ -161,14 +165,21 @@ ThemeData buildEcadTheme(EcadAppearance appearance) {
     visualDensity: VisualDensity.compact,
     extensions: <ThemeExtension<dynamic>>[c],
     textTheme: TextTheme(
-      bodyMedium: TextStyle(fontSize: 12, color: c.foreground, height: 1.5),
-      bodySmall: TextStyle(fontSize: 11, color: c.muted, height: 1.45),
+      displayLarge: heading,
+      displayMedium: heading,
+      displaySmall: heading,
+      headlineLarge: heading,
+      headlineMedium: heading,
+      headlineSmall: heading,
+      titleLarge: heading,
+      titleMedium: title,
+      titleSmall: title,
+      bodyLarge: body,
+      bodyMedium: body,
+      bodySmall: body.copyWith(fontSize: 12, color: c.muted),
+      labelSmall: TextStyle(fontSize: 12, color: c.foreground),
+      labelMedium: TextStyle(fontSize: 13, color: c.foreground),
       labelLarge: TextStyle(
-        fontSize: 12,
-        fontWeight: FontWeight.w600,
-        color: c.foreground,
-      ),
-      titleMedium: TextStyle(
         fontSize: 14,
         fontWeight: FontWeight.w600,
         color: c.foreground,
@@ -179,8 +190,8 @@ ThemeData buildEcadTheme(EcadAppearance appearance) {
     tooltipTheme: TooltipThemeData(
       textStyle: TextStyle(
         color: c.onAccent,
-        fontSize: 11,
-        fontFamily: 'NotoSans',
+        fontSize: 13,
+        fontFamily: fontFamily,
       ),
       decoration: BoxDecoration(
         color: c.accent,
@@ -193,8 +204,16 @@ ThemeData buildEcadTheme(EcadAppearance appearance) {
       filled: true,
       fillColor: c.panel,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      hintStyle: TextStyle(fontSize: 12, color: c.muted),
-      labelStyle: TextStyle(fontSize: 12, color: c.muted),
+      hintStyle: TextStyle(
+        fontSize: 14,
+        color: c.muted,
+        fontFamily: fontFamily,
+      ),
+      labelStyle: TextStyle(
+        fontSize: 14,
+        color: c.muted,
+        fontFamily: fontFamily,
+      ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(5),
         borderSide: BorderSide(color: c.border),
@@ -217,10 +236,10 @@ ThemeData buildEcadTheme(EcadAppearance appearance) {
         minimumSize: const Size(0, 36),
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
-        textStyle: const TextStyle(
-          fontSize: 12,
+        textStyle: TextStyle(
+          fontSize: 14,
           fontWeight: FontWeight.w600,
-          fontFamily: 'NotoSans',
+          fontFamily: fontFamily,
         ),
         animationDuration: Duration.zero,
       ),
@@ -232,14 +251,14 @@ ThemeData buildEcadTheme(EcadAppearance appearance) {
         minimumSize: const Size(0, 34),
         padding: const EdgeInsets.symmetric(horizontal: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
-        textStyle: const TextStyle(fontSize: 12, fontFamily: 'NotoSans'),
+        textStyle: TextStyle(fontSize: 14, fontFamily: fontFamily),
         animationDuration: Duration.zero,
       ),
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
         foregroundColor: c.foreground,
-        textStyle: const TextStyle(fontSize: 12, fontFamily: 'NotoSans'),
+        textStyle: TextStyle(fontSize: 14, fontFamily: fontFamily),
         animationDuration: Duration.zero,
       ),
     ),
@@ -250,12 +269,7 @@ ThemeData buildEcadTheme(EcadAppearance appearance) {
         borderRadius: BorderRadius.circular(8),
         side: BorderSide(color: c.border),
       ),
-      titleTextStyle: TextStyle(
-        fontFamily: 'NotoSans',
-        fontSize: 18,
-        color: c.foreground,
-        fontWeight: FontWeight.w600,
-      ),
+      titleTextStyle: heading.copyWith(fontFamily: fontFamily),
     ),
   );
 }

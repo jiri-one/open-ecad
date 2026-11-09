@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/material.dart';
+import '../app/typography.dart';
 import 'package:flutter/services.dart';
 
 import 'occurrence_dialog.dart' show electricalSheet;
@@ -267,7 +268,7 @@ class _PickerDialogState<T> extends State<_PickerDialog<T>> {
   late int _count;
   bool _searching = false;
   String? _error;
-  static const _rowHeight = 68.0;
+  double get _rowHeight => math.max(68, interfaceLineHeight(context) * 2 + 16);
 
   @override
   void initState() {
@@ -493,180 +494,257 @@ class _PickerDialogState<T> extends State<_PickerDialog<T>> {
           height: 660,
           child: Padding(
             padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  widget.title,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                if (widget.currentLabel != null)
-                  Text(
-                    'Aktuální síť: ${widget.currentLabel}',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                const SizedBox(height: 12),
-                CallbackShortcuts(
-                  bindings: _navigationKeys,
-                  child: TextField(
-                    key: const ValueKey('continuation-picker-search'),
-                    autofocus: true,
-                    focusNode: _searchFocus,
-                    controller: _query,
-                    onChanged: _filter,
-                    onSubmitted: (_) => _activate(),
-                    decoration: InputDecoration(
-                      labelText: 'Hledat síť, list, strukturu nebo ID',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon:
-                          _query.text.isEmpty
-                              ? null
-                              : IconButton(
-                                tooltip: 'Vymazat hledání',
-                                icon: const Icon(Icons.clear),
-                                onPressed: () {
-                                  _query.clear();
-                                  _filter('');
-                                  _searchFocus.requestFocus();
-                                },
+            child: LayoutBuilder(
+              builder:
+                  (context, bounds) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: bounds.maxHeight * .35,
+                        ),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                widget.title,
+                                style: Theme.of(context).textTheme.titleLarge,
                               ),
-                    ),
-                  ),
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Výsledky: $_count / $_total${_matches.length == _count ? '' : ' · míst: ${_matches.length}'}',
-                        key: const ValueKey('continuation-picker-count'),
-                      ),
-                    ),
-                    DropdownButton<StructureAspect>(
-                      key: const ValueKey('continuation-picker-aspect'),
-                      value: _first,
-                      items: const [
-                        DropdownMenuItem(
-                          value: StructureAspect.function,
-                          child: Text('Nejprve = funkce'),
-                        ),
-                        DropdownMenuItem(
-                          value: StructureAspect.location,
-                          child: Text('Nejprve + umístění'),
-                        ),
-                        DropdownMenuItem(
-                          value: StructureAspect.product,
-                          child: Text('Nejprve - produkt'),
-                        ),
-                      ],
-                      onChanged:
-                          _searching
-                              ? null
-                              : (value) {
-                                setState(() {
-                                  _first = value!;
-                                  _cursor = 0;
-                                  _rebuildRows(revealCurrent: true);
-                                });
-                                WidgetsBinding.instance.addPostFrameCallback(
-                                  (_) => _revealCursor(),
-                                );
-                              },
-                    ),
-                  ],
-                ),
-                Expanded(
-                  child:
-                      _rows.isEmpty
-                          ? Center(
-                            child: Text(
-                              _searching
-                                  ? 'Nic neodpovídá hledání. Zkraťte text nebo hledejte podle označení listu či ID.'
-                                  : 'Žádné položky k výběru.',
-                            ),
-                          )
-                          : CallbackShortcuts(
-                            bindings: {
-                              ..._navigationKeys,
-                              const SingleActivator(
-                                    LogicalKeyboardKey.arrowLeft,
-                                  ):
-                                  () => _branchKey(false),
-                              const SingleActivator(
-                                    LogicalKeyboardKey.arrowRight,
-                                  ):
-                                  () => _branchKey(true),
-                            },
-                            child: Focus(
-                              focusNode: _listFocus,
-                              child: Scrollbar(
-                                controller: _scroll,
-                                thumbVisibility: true,
-                                child: ListView.builder(
+                              if (widget.currentLabel != null)
+                                Text(
+                                  'Aktuální síť: ${widget.currentLabel}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              const SizedBox(height: 12),
+                              CallbackShortcuts(
+                                bindings: _navigationKeys,
+                                child: TextField(
                                   key: const ValueKey(
-                                    'continuation-picker-list',
+                                    'continuation-picker-search',
                                   ),
-                                  controller: _scroll,
-                                  itemExtent: _rowHeight,
-                                  itemCount: _rows.length,
-                                  itemBuilder:
-                                      (context, index) =>
-                                          _buildRow(context, index),
+                                  autofocus: true,
+                                  focusNode: _searchFocus,
+                                  controller: _query,
+                                  onChanged: _filter,
+                                  onSubmitted: (_) => _activate(),
+                                  decoration: InputDecoration(
+                                    labelText:
+                                        'Hledat síť, list, strukturu nebo ID',
+                                    prefixIcon: const Icon(Icons.search),
+                                    suffixIcon:
+                                        _query.text.isEmpty
+                                            ? null
+                                            : IconButton(
+                                              tooltip: 'Vymazat hledání',
+                                              icon: const Icon(Icons.clear),
+                                              onPressed: () {
+                                                _query.clear();
+                                                _filter('');
+                                                _searchFocus.requestFocus();
+                                              },
+                                            ),
+                                  ),
                                 ),
                               ),
-                            ),
+                              LayoutBuilder(
+                                builder:
+                                    (context, bounds) => Wrap(
+                                      alignment: WrapAlignment.spaceBetween,
+                                      crossAxisAlignment:
+                                          WrapCrossAlignment.center,
+                                      children: [
+                                        Text(
+                                          'Výsledky: $_count / $_total${_matches.length == _count ? '' : ' · míst: ${_matches.length}'}',
+                                          key: const ValueKey(
+                                            'continuation-picker-count',
+                                          ),
+                                        ),
+                                        ConstrainedBox(
+                                          constraints: BoxConstraints(
+                                            maxWidth: bounds.maxWidth,
+                                          ),
+                                          child: IntrinsicWidth(
+                                            child: DropdownButton<
+                                              StructureAspect
+                                            >(
+                                              isExpanded: true,
+                                              itemHeight: null,
+                                              key: const ValueKey(
+                                                'continuation-picker-aspect',
+                                              ),
+                                              value: _first,
+                                              items: const [
+                                                DropdownMenuItem(
+                                                  value:
+                                                      StructureAspect.function,
+                                                  child: Text(
+                                                    'Nejprve = funkce',
+                                                  ),
+                                                ),
+                                                DropdownMenuItem(
+                                                  value:
+                                                      StructureAspect.location,
+                                                  child: Text(
+                                                    'Nejprve + umístění',
+                                                  ),
+                                                ),
+                                                DropdownMenuItem(
+                                                  value:
+                                                      StructureAspect.product,
+                                                  child: Text(
+                                                    'Nejprve - produkt',
+                                                  ),
+                                                ),
+                                              ],
+                                              onChanged:
+                                                  _searching
+                                                      ? null
+                                                      : (value) {
+                                                        setState(() {
+                                                          _first = value!;
+                                                          _cursor = 0;
+                                                          _rebuildRows(
+                                                            revealCurrent: true,
+                                                          );
+                                                        });
+                                                        WidgetsBinding.instance
+                                                            .addPostFrameCallback(
+                                                              (_) =>
+                                                                  _revealCursor(),
+                                                            );
+                                                      },
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                              ),
+                            ],
                           ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  selected == null
-                      ? (active == null ? 'Výběr: —' : 'Větev: ${active.label}')
-                      : 'Výběr: ${selected.title}\n${selected.detail}',
-                  key: const ValueKey('continuation-picker-selection'),
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const Text(
-                  '↑ ↓ výběr · Enter potvrdit / rozbalit · Esc zrušit',
-                  style: TextStyle(fontSize: 12),
-                ),
-                if (_error != null)
-                  Text(
-                    _error!,
-                    key: const ValueKey('continuation-picker-error'),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
+                        ),
+                      ),
+                      Expanded(
+                        child:
+                            _rows.isEmpty
+                                ? Center(
+                                  child: Text(
+                                    _searching
+                                        ? 'Nic neodpovídá hledání. Zkraťte text nebo hledejte podle označení listu či ID.'
+                                        : 'Žádné položky k výběru.',
+                                  ),
+                                )
+                                : CallbackShortcuts(
+                                  bindings: {
+                                    ..._navigationKeys,
+                                    const SingleActivator(
+                                          LogicalKeyboardKey.arrowLeft,
+                                        ):
+                                        () => _branchKey(false),
+                                    const SingleActivator(
+                                          LogicalKeyboardKey.arrowRight,
+                                        ):
+                                        () => _branchKey(true),
+                                  },
+                                  child: Focus(
+                                    focusNode: _listFocus,
+                                    child: Scrollbar(
+                                      controller: _scroll,
+                                      thumbVisibility: true,
+                                      child: ListView.builder(
+                                        key: const ValueKey(
+                                          'continuation-picker-list',
+                                        ),
+                                        controller: _scroll,
+                                        itemExtent: _rowHeight,
+                                        itemCount: _rows.length,
+                                        itemBuilder:
+                                            (context, index) =>
+                                                _buildRow(context, index),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                      ),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: bounds.maxHeight * .3,
+                        ),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(height: 8),
+                              Text(
+                                selected == null
+                                    ? (active == null
+                                        ? 'Výběr: —'
+                                        : 'Větev: ${active.label}')
+                                    : 'Výběr: ${selected.title}\n${selected.detail}',
+                                key: const ValueKey(
+                                  'continuation-picker-selection',
+                                ),
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const Text(
+                                '↑ ↓ výběr · Enter potvrdit / rozbalit · Esc zrušit',
+                                style: TextStyle(fontSize: 14),
+                              ),
+                              if (_error != null)
+                                Text(
+                                  _error!,
+                                  key: const ValueKey(
+                                    'continuation-picker-error',
+                                  ),
+                                  style: TextStyle(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                                ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                alignment: WrapAlignment.end,
+                                spacing: 8,
+                                runSpacing: 4,
+                                children: [
+                                  if (widget.newChoice != null)
+                                    TextButton.icon(
+                                      key: const ValueKey(
+                                        'continuation-picker-new',
+                                      ),
+                                      onPressed:
+                                          () => _accept(widget.newChoice as T),
+                                      icon: const Icon(Icons.add),
+                                      label: const Text('Nová samostatná síť'),
+                                    ),
+                                  TextButton(
+                                    onPressed:
+                                        () => Navigator.of(context).pop(),
+                                    child: const Text('Zrušit'),
+                                  ),
+                                  FilledButton(
+                                    onPressed:
+                                        active == null ? null : _activate,
+                                    child: Text(
+                                      selected != null
+                                          ? 'Vybrat'
+                                          : active != null &&
+                                              _expanded.contains(active)
+                                          ? 'Sbalit'
+                                          : 'Rozbalit',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    if (widget.newChoice != null)
-                      TextButton.icon(
-                        key: const ValueKey('continuation-picker-new'),
-                        onPressed: () => _accept(widget.newChoice as T),
-                        icon: const Icon(Icons.add),
-                        label: const Text('Nová samostatná síť'),
-                      ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Zrušit'),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      onPressed: active == null ? null : _activate,
-                      child: Text(
-                        selected != null
-                            ? 'Vybrat'
-                            : active != null && _expanded.contains(active)
-                            ? 'Sbalit'
-                            : 'Rozbalit',
-                      ),
-                    ),
-                  ],
-                ),
-              ],
             ),
           ),
         ),

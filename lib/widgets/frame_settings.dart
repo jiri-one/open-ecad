@@ -192,6 +192,7 @@ class _FrameSettingsDialogState extends State<FrameSettingsDialog> {
       bool inherited,
       void Function(bool?) change,
     ) => DropdownButtonFormField<int>(
+      itemHeight: null,
       key: ValueKey(
         'frame-part-$key-${value ?? 'inherit'}-${draft.choice.mode.name}',
       ),
@@ -240,6 +241,7 @@ class _FrameSettingsDialogState extends State<FrameSettingsDialog> {
       padding: const EdgeInsets.symmetric(vertical: 12),
       children: [
         DropdownButtonFormField<String>(
+          itemHeight: null,
           key: ValueKey('frame-choice-$selection'),
           initialValue: selection,
           isExpanded: true,
@@ -431,6 +433,7 @@ class _FrameSettingsDialogState extends State<FrameSettingsDialog> {
       ),
       const SizedBox(height: 14),
       DropdownButtonFormField<String>(
+        itemHeight: null,
         key: ValueKey('managed-template-$managedId'),
         initialValue: managedId,
         isExpanded: true,
@@ -604,6 +607,7 @@ class _FrameDocumentRowState extends State<_FrameDocumentRow> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       DropdownButtonFormField<int>(
+        itemHeight: null,
         initialValue: mode,
         decoration: InputDecoration(labelText: widget.label),
         items: [
