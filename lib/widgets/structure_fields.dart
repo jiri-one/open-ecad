@@ -42,9 +42,9 @@ class StructureFields extends StatelessWidget {
     children: [
       for (final (index, label)
           in const [
-            'Funkční označení (=)',
-            'Umístění (+)',
-            'Nadřazené produkty (-)',
+            'Označení funkce (=)',
+            'Označení umístění (+)',
+            'Označení produktu (-)',
           ].indexed)
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
@@ -52,7 +52,13 @@ class StructureFields extends StatelessWidget {
             controller: controller.fields[index],
             minLines: 1,
             maxLines: 4,
-            decoration: InputDecoration(labelText: label),
+            decoration: InputDecoration(
+              labelText: label,
+              helper:
+                  index == 2
+                      ? const Text('Nadřazený přístroj nebo sestava.')
+                      : null,
+            ),
           ),
         ),
       const Text(

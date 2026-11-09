@@ -63,9 +63,9 @@ void main() {
       await ui.mountEditor(tester, app);
       await ui.doubleClickSymbol(tester);
       await ui.click(tester, 'Komponenta, artikl a dostupnost…');
-      await tester.enterText(ui.field('Umístění (+)'), 'ROOM/3');
+      await tester.enterText(ui.field('Označení umístění (+)'), 'ROOM/3');
       await tester.enterText(
-        ui.field('Nadřazené produkty (-)'),
+        ui.field('Označení produktu (-)'),
         'GROUP\nUNIT.1',
       );
       await tester.pump();
@@ -224,7 +224,7 @@ void main() {
       await tester.tap(find.byTooltip('Vlastnosti listu'));
       await tester.pumpAndSettle();
       await ui.click(tester, 'Číslo, papír a vlastnosti…');
-      await tester.enterText(ui.field('Umístění (+)'), 'ROOM/3');
+      await tester.enterText(ui.field('Označení umístění (+)'), 'ROOM/3');
       await tester.enterText(ui.field('Kód dokumentu (&)'), 'DOC');
       await ui.click(tester, 'Uložit');
       expect(fullPageDesignation(app.sheet), '=FUNC+ROOM/3&DOC/01');

@@ -213,7 +213,7 @@ void main() {
       );
       await tester.tap(find.byType(DropdownButton<StructureAspect>));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Struktura: umístění').last);
+      await tester.tap(find.text('Označení umístění (+)').last);
       await tester.pumpAndSettle();
       expect(
         workspace.sheetNavigationAspect(workspace.active),

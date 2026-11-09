@@ -87,29 +87,39 @@ class _StructureTreeState<T> extends State<StructureTree<T>> {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: DropdownButton<StructureAspect>(
-            itemHeight: null,
-            isExpanded: true,
-            value: first,
-            items: const [
-              DropdownMenuItem(
-                value: StructureAspect.function,
-                child: Text('Struktura: funkce'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Seskupit podle…',
+                style: Theme.of(context).textTheme.bodySmall,
               ),
-              DropdownMenuItem(
-                value: StructureAspect.location,
-                child: Text('Struktura: umístění'),
-              ),
-              DropdownMenuItem(
-                value: StructureAspect.product,
-                child: Text('Struktura: produkty'),
+              DropdownButton<StructureAspect>(
+                itemHeight: null,
+                isExpanded: true,
+                style: Theme.of(context).textTheme.bodyMedium,
+                value: first,
+                items: const [
+                  DropdownMenuItem(
+                    value: StructureAspect.function,
+                    child: Text('Označení funkce (=)'),
+                  ),
+                  DropdownMenuItem(
+                    value: StructureAspect.location,
+                    child: Text('Označení umístění (+)'),
+                  ),
+                  DropdownMenuItem(
+                    value: StructureAspect.product,
+                    child: Text('Označení produktu (-)'),
+                  ),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() => first = v);
+                  widget.onFirstChanged?.call(v);
+                },
               ),
             ],
-            onChanged: (v) {
-              if (v == null) return;
-              setState(() => first = v);
-              widget.onFirstChanged?.call(v);
-            },
           ),
         ),
         ...level([...widget.items], 0, [], ''),
