@@ -2,8 +2,8 @@
 
 Skript `scripts/build_windows_portable.ps1` na **Windows x64** sestaví release
 a vytvoří přenosný ZIP. Kolega pak rozbalí celý archiv a spustí `open_ecad.exe`;
-nepotřebuje Flutter, Visual Studio, Python ani instalátor. Nastavení a malá
-automatická pracovní kopie se ukládají do uživatelského profilu Windows, takže
+nepotřebuje Flutter, Visual Studio, Python ani instalátor. Nastavení a automaticky
+ukládané místní projekty se ukládají do uživatelského profilu Windows, takže
 „přenosný“ neznamená, že se nastavení ukládá vedle EXE.
 
 GitHub Actions sestaví aplikaci na Windows, ověří obsah archivu a spustí EXE

@@ -39,33 +39,52 @@ class EditorController extends ChangeNotifier {
     AssistantService? assistant,
     ProjectImportService? importer,
     bool startEmpty = false,
+    bool autosaveEnabled = true,
   }) : persistence = persistence ?? ProjectPersistence(),
        assistant = assistant ?? AssistantService(),
        importer = importer ?? ProjectImportService(),
-       _restoreAutosave = initialProject == null {
+       _restoreAutosave = initialProject == null,
+       _autosaveEnabled = autosaveEnabled,
+       _persistable = initialProject != null || !startEmpty {
     _session = DocumentSession(
       initialProject ?? (startEmpty ? _emptyProject() : DemoProject.create()),
       persistence: this.persistence,
     );
     activeSheetId = project.pages.first.id;
     showGrid = project.pages.first.sourcePage == null;
+    if (!_persistable) autosaveStatus = 'Bez změn';
   }
 
   static EcadProject _emptyProject() => EcadProject(
     id: newId('project'),
     name: 'Nový projekt',
-    pages: [Sheet(id: newId('sheet'), name: 'První schéma', number: '01')],
+    pages: [
+      Sheet(
+        id: newId('sheet'),
+        name: 'První schéma',
+        number: '01',
+        paperSizeMm: SizeMm.a4Landscape,
+      ),
+    ],
   );
 
   late final DocumentSession _session;
   final bool _restoreAutosave;
+  bool _autosaveEnabled;
+  bool _persistable;
+  bool _initializing = false;
+  bool _startupFailed = false;
+  bool get canRememberStartup => !_startupFailed;
+  bool get initializing => _initializing;
+  Object? _autosaveFailure;
   ProjectEngine get _engine => _session.engine;
   final ProjectPersistence persistence;
   final AssistantService assistant;
   final ProjectExportService exporter = ProjectExportService();
   final ProjectImportService importer;
   final SchematicViewportController viewport = SchematicViewportController();
-  Timer? _autosaveTimer;
+  Future<bool>? _autosaving;
+  EcadProject? _autosavedProject;
   bool _disposed = false;
   int _requestId = 0;
   int get _documentGeneration => _session.generation;
@@ -100,7 +119,12 @@ class EditorController extends ChangeNotifier {
   int get documentGeneration => _documentGeneration;
   bool isDocumentCurrent(int generation) => _isCurrentDocument(generation);
   int? get savedRevision => _session.savedRevision;
-  String autosaveStatus = 'Pracovní kopie se ukládá místně';
+  String autosaveStatus = 'Ukládání…';
+  String? autosaveError;
+  String? autosaveWarning;
+  bool get canContinueLocally =>
+      autosaveError != null &&
+      (currentFile != null || _autosaveFailure is ProjectStorageConflict);
   AiProviderSettings aiSettings = const AiProviderSettings();
   AssistantProposal? proposal;
   EcadProject? _proposalPreview;
@@ -136,6 +160,9 @@ class EditorController extends ChangeNotifier {
   bool get canUndo => _engine.canUndo;
   bool get canRedo => _engine.canRedo;
   bool get dirty => _session.dirty;
+  bool get changesSaved =>
+      !_persistable ||
+      (identical(_autosavedProject, project) && autosaveError == null);
   bool get proposalIsCurrent =>
       proposal != null && proposal!.baseRevision == project.revision;
   List<Device> get selectedDevices =>
@@ -148,51 +175,64 @@ class EditorController extends ChangeNotifier {
     String? startupProjectPath,
     String? startupError,
   }) async {
-    final generation = _documentGeneration;
-    final revision = project.revision;
+    if (_disposed || _initializing) return;
+    _initializing = true;
+    notifyListeners();
     try {
-      final preferences = await SharedPreferences.getInstance();
-      final theme = preferences.getString('open_ecad.appearance');
-      appearance = EcadAppearance.values.firstWhere(
-        (m) => m.name == theme,
-        orElse: () => EcadAppearance.paper,
-      );
-      aiSettings =
-          await persistence.loadAiSettings() ?? const AiProviderSettings();
-    } catch (_) {
-      // Preferences must not prevent an explicit file from opening.
-    }
-    if (!_isCurrentDocument(generation) || project.revision != revision) return;
-    try {
-      final result = await _session.initialize(
-        startupProjectPath: startupProjectPath,
-        startupError: startupError,
-        restoreAutosave: _restoreAutosave,
-      );
-      if (result == DocumentIoResult.opened ||
-          result == DocumentIoResult.restored) {
-        if (!_isCurrentDocument(generation + 1)) return;
-        _resetDocumentView();
-        status =
-            result == DocumentIoResult.opened
-                ? 'Projekt otevřen'
-                : 'Obnovena místní pracovní kopie';
-        if (result == DocumentIoResult.opened) {
-          _scheduleAutosave();
-        } else {
-          autosaveStatus = 'Obnoveno z tohoto zařízení';
-        }
+      final generation = _documentGeneration;
+      final revision = project.revision;
+      try {
+        final preferences = await SharedPreferences.getInstance();
+        final theme = preferences.getString('open_ecad.appearance');
+        appearance = EcadAppearance.values.firstWhere(
+          (m) => m.name == theme,
+          orElse: () => EcadAppearance.paper,
+        );
+        aiSettings =
+            await persistence.loadAiSettings() ?? const AiProviderSettings();
+      } catch (_) {
+        // Preferences must not prevent an explicit file from opening.
       }
-    } catch (error) {
       if (!_isCurrentDocument(generation) || project.revision != revision) {
         return;
       }
-      status =
-          startupProjectPath != null || startupError != null
-              ? 'Otevření při startu selhalo${startupProjectPath == null ? '' : ': $startupProjectPath'}: $error'
-              : 'Pracovní kopii se nepodařilo obnovit: $error';
+      try {
+        final result = await _session.initialize(
+          startupProjectPath: startupProjectPath,
+          startupError: startupError,
+          restoreAutosave: _restoreAutosave,
+        );
+        if (result == DocumentIoResult.opened ||
+            result == DocumentIoResult.restored) {
+          if (!_isCurrentDocument(generation + 1)) return;
+          _resetDocumentView();
+          status =
+              result == DocumentIoResult.opened
+                  ? 'Projekt otevřen'
+                  : 'Otevřen místně uložený projekt';
+          _scheduleAutosave();
+        } else if (result == DocumentIoResult.unchanged) {
+          _scheduleAutosave();
+        }
+      } catch (error) {
+        if (!_isCurrentDocument(generation) || project.revision != revision) {
+          return;
+        }
+        _startupFailed = true;
+        _persistable = !_restoreAutosave;
+        if (!_persistable) autosaveStatus = 'Bez změn';
+        status =
+            startupProjectPath != null || startupError != null
+                ? 'Otevření při startu selhalo${startupProjectPath == null ? '' : ': $startupProjectPath'}: $error'
+                : 'Pracovní kopii se nepodařilo obnovit: $error';
+      }
+    } finally {
+      _initializing = false;
+      if (!_disposed) {
+        if (_persistable && !changesSaved) _scheduleAutosave();
+        notifyListeners();
+      }
     }
-    if (!_disposed) notifyListeners();
   }
 
   Future<void> setAppearance(EcadAppearance value) async {
@@ -339,6 +379,8 @@ class EditorController extends ChangeNotifier {
   }
 
   void _changed() {
+    _startupFailed = false;
+    _persistable = true;
     cancelClipboardPreview();
     showingProposal = false;
     if (!project.pages.any((p) => p.id == activeSheetId)) {
@@ -358,33 +400,89 @@ class EditorController extends ChangeNotifier {
   }
 
   void _scheduleAutosave() {
-    _autosaveTimer?.cancel();
-    autosaveStatus = 'Ukládání pracovní kopie…';
-    _autosaveTimer = Timer(const Duration(milliseconds: 400), _autosave);
+    if (!_persistable || _initializing || changesSaved) return;
+    autosaveWarning = null;
+    _autosaveFailure = null;
+    autosaveStatus = 'Ukládání…';
+    autosaveError = null;
+    if (_autosaveEnabled) unawaited(flushWorkingCopy());
   }
 
-  Future<void> flushWorkingCopy() {
-    _autosaveTimer?.cancel();
-    return _autosave();
+  void enableAutosave() {
+    _autosaveEnabled = true;
+    if (!_initializing && !changesSaved) _scheduleAutosave();
   }
 
-  Future<void> _autosave() async {
-    final snapshot = project;
+  Future<bool> flushWorkingCopy() {
+    if (_disposed) return Future.value(false);
+    final pending = _autosaving;
+    if (pending != null) return pending;
+    if (changesSaved) return Future.value(true);
     final generation = _documentGeneration;
-    var message = 'Pracovní kopie uložena místně';
-    try {
-      await persistence.saveWorkingCopy(_session.workingCopy);
-    } on AutosaveTooLargeException {
-      message = 'Velký projekt · ukládejte do souboru';
-    } catch (_) {
-      message = 'Automatické uložení selhalo — uložte soubor';
-    }
-    if (!_isCurrentDocument(generation) ||
-        snapshot.revision != project.revision) {
-      return;
-    }
-    autosaveStatus = message;
+    late final Future<bool> saving;
+    saving = Future<bool>.microtask(() => _autosave(generation)).whenComplete(
+      () {
+        if (identical(_autosaving, saving)) {
+          _autosaving = null;
+          if (!_disposed) notifyListeners();
+        }
+      },
+    );
+    _autosaving = saving;
+    return saving;
+  }
+
+  Future<bool> retryAutosave() {
+    if (_disposed) return Future.value(false);
+    _autosavedProject = null;
+    autosaveError = null;
+    autosaveWarning = null;
+    _autosaveFailure = null;
+    final saving = flushWorkingCopy();
     notifyListeners();
+    return saving;
+  }
+
+  Future<bool> _autosave(int generation) async {
+    if (!_isCurrentDocument(generation)) return false;
+    autosaveStatus = 'Ukládání…';
+    autosaveError = null;
+    while (_isCurrentDocument(generation)) {
+      final revision = project.revision;
+      try {
+        final result = await _session.autosave();
+        if (!_isCurrentDocument(generation) ||
+            result != DocumentIoResult.saved) {
+          return false;
+        }
+      } catch (error) {
+        if (!_isCurrentDocument(generation)) return false;
+        if (revision != project.revision) continue;
+        autosaveStatus = 'Chyba ukládání';
+        _autosaveFailure = error;
+        autosaveError = 'Automatické uložení selhalo: $error';
+        status = autosaveError!;
+        return false;
+      }
+      if (revision != project.revision || dirty) continue;
+      _autosavedProject = project;
+      final warning = _session.checkpointWarning;
+      autosaveWarning =
+          warning == null
+              ? null
+              : 'Uloženo do souboru; místní kopie se nezdařila: $warning';
+      autosaveStatus =
+          warning != null
+              ? 'Uloženo do souboru'
+              : currentFile == null
+              ? 'Uloženo místně'
+              : 'Uloženo';
+      if (status.startsWith('Automatické uložení selhalo:')) {
+        status = 'Automaticky uloženo';
+      }
+      return true;
+    }
+    return false;
   }
 
   void undo() {
@@ -774,11 +872,32 @@ class EditorController extends ChangeNotifier {
       structure: sheet.structure,
       documentCode: sheet.documentCode,
       type: type,
+      paperSizeMm: SizeMm.a4Landscape,
       report:
           type == SheetType.billOfMaterials
               ? const BomTableSpec(kind: BomReportKind.articles)
               : null,
     );
+    final frame = resolveSheetFrame(project, page);
+    SizeMm? paper;
+    for (final candidate in [
+      SizeMm.a4Landscape,
+      SizeMm.a3Landscape,
+      ...project.pages.map((existing) => existing.paperSizeMm),
+    ]) {
+      try {
+        layoutFrameGeometry(candidate, frame);
+        paper = candidate;
+        break;
+      } on EcadException catch (error) {
+        if (error.code != 'invalid_frame_layout') rethrow;
+      }
+    }
+    if (paper == null) {
+      reportStatus('Rámeček projektu se nevejde na dostupné formáty papíru.');
+      return;
+    }
+    page = page.copyWith(paperSizeMm: paper);
     if (formStarter && type == SheetType.form) {
       page = page.copyWith(
         graphics: SheetTemplates.blankForm(
@@ -1374,8 +1493,15 @@ class EditorController extends ChangeNotifier {
   }
 
   void _resetDocumentView() {
+    _startupFailed = false;
+    _persistable = true;
+    autosaveWarning = null;
+    _autosaveFailure = null;
     cancelClipboardPreview();
-    _autosaveTimer?.cancel();
+    _autosaving = null;
+    _autosavedProject = null;
+    autosaveError = null;
+    autosaveStatus = 'Ukládání…';
     _requestId++;
     activeSheetId = project.pages.first.id;
     terminalStripId = null;
@@ -1461,8 +1587,8 @@ class EditorController extends ChangeNotifier {
       }
       if (!_isCurrentDocument(generation + 1)) return false;
       _resetDocumentView();
-      status = 'Obnovena místní pracovní kopie';
-      autosaveStatus = 'Obnoveno z tohoto zařízení';
+      status = 'Otevřen místně uložený projekt';
+      _scheduleAutosave();
       viewport.fit();
       return true;
     } catch (error) {
@@ -1474,36 +1600,61 @@ class EditorController extends ChangeNotifier {
     }
   }
 
-  Future<bool> saveProject() => _saveProject();
+  Future<bool> continueLocally() async {
+    final generation = _documentGeneration;
+    while (_autosaving != null) {
+      await _autosaving;
+    }
+    if (!_isCurrentDocument(generation) || ioBusy || !canContinueLocally) {
+      return false;
+    }
+    ioBusy = true;
+    notifyListeners();
+    try {
+      if (!await _session.continueLocally(
+        storageConflict: _autosaveFailure is ProjectStorageConflict,
+      )) {
+        return false;
+      }
+      _autosavedProject = project;
+      autosaveError = null;
+      autosaveWarning = null;
+      _autosaveFailure = null;
+      autosaveStatus = 'Uloženo místně';
+      status = 'Projekt uložen v tomto zařízení';
+      return true;
+    } catch (error) {
+      if (_isCurrentDocument(generation)) {
+        _autosaveFailure = error;
+        autosaveError = 'Místní kopii se nepodařilo uložit: $error';
+        status = autosaveError!;
+      }
+      return false;
+    } finally {
+      ioBusy = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
 
-  Future<bool> saveProjectAs() => _saveProject(saveAs: true);
-
-  Future<bool> _saveProject({bool saveAs = false}) async {
+  Future<bool> exportProjectCopy({
+    Iterable<String> Function()? protectedPaths,
+  }) async {
     if (_disposed || ioBusy) return false;
     final generation = _documentGeneration;
     ioBusy = true;
     notifyListeners();
     try {
-      final result = await _session.save(saveAs: saveAs);
+      final result = await _session.exportCopy(protectedPaths: protectedPaths);
       if (!_isCurrentDocument(generation)) return false;
-      if (result != DocumentIoResult.saved) {
-        if (_isCurrentDocument(generation) &&
-            result == DocumentIoResult.canceled) {
-          status = 'Uložení zrušeno';
-        }
-        return false;
-      }
       status =
-          dirty
-              ? 'Uložena dřívější verze; novější změny nejsou uložené'
-              : 'Projekt uložen';
-      // An immediate close must retain the file target and saved revision.
-      _autosaveTimer?.cancel();
-      autosaveStatus = 'Ukládání pracovní kopie…';
-      await _autosave();
-      return _isCurrentDocument(generation) && !dirty;
+          result == DocumentIoResult.saved
+              ? 'Kopie projektu vytvořena'
+              : 'Vytvoření kopie zrušeno';
+      return result == DocumentIoResult.saved;
     } catch (error) {
-      if (_isCurrentDocument(generation)) status = 'Uložení selhalo: $error';
+      if (_isCurrentDocument(generation)) {
+        status = 'Vytvoření kopie selhalo: $error';
+      }
       return false;
     } finally {
       ioBusy = false;
@@ -1730,7 +1881,6 @@ class EditorController extends ChangeNotifier {
     _disposed = true;
     _session.dispose();
     _requestId++;
-    _autosaveTimer?.cancel();
     viewport.dispose();
     super.dispose();
   }

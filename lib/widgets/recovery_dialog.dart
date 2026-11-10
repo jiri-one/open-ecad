@@ -8,78 +8,175 @@ Future<void> showRecoveryDialog(
 ) async {
   final selected = await showDialog<String>(
     context: context,
-    builder: (_) => _RecoveryDialog(workspace.active.persistence),
+    builder: (_) => _RecoveryDialog(workspace),
   );
   if (selected != null && context.mounted) await workspace.restore(selected);
 }
 
 class _RecoveryDialog extends StatefulWidget {
-  const _RecoveryDialog(this.persistence);
-  final ProjectPersistence persistence;
+  const _RecoveryDialog(this.workspace);
+  final WorkspaceController workspace;
   @override
   State<_RecoveryDialog> createState() => _RecoveryDialogState();
 }
 
 class _RecoveryDialogState extends State<_RecoveryDialog> {
-  late final copies = _load();
+  ProjectPersistence get persistence => widget.workspace.active.persistence;
+  late var copies = _load();
+  String? error;
 
-  Future<List<({String id, WorkingCopy? copy, String? error})>> _load() async {
-    final result = <({String id, WorkingCopy? copy, String? error})>[];
-    for (final id in await widget.persistence.listRecoveryIds()) {
+  Future<List<({String id, SavedProjectSummary? summary, String? error})>>
+  _load() async {
+    final result =
+        <({String id, SavedProjectSummary? summary, String? error})>[];
+    for (final id in await persistence.listRecoveryIds()) {
       try {
         result.add((
           id: id,
-          copy: await widget.persistence.loadAutosave(sessionId: id),
+          summary: await persistence.loadProjectSummary(id),
           error: null,
         ));
-      } catch (e) {
-        result.add((id: id, copy: null, error: '$e'));
+      } catch (error) {
+        result.add((id: id, summary: null, error: '$error'));
       }
     }
     return result;
   }
 
+  Future<void> remove(SavedProjectSummary summary) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: Text('Odstranit místní projekt „${summary.name}“?'),
+            content: SingleChildScrollView(
+              child: Text(
+                summary.currentFile == null
+                    ? 'Projekt a jeho místně uložené změny budou trvale odstraněny.'
+                    : 'Místní kopie a její změny budou trvale odstraněny. Zdrojový soubor zůstane na disku.',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Zrušit'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Odstranit'),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true || !mounted) return;
+    if (widget.workspace.document(summary.sessionId) != null) {
+      setState(() => error = 'Otevřený projekt nejprve zavřete.');
+      return;
+    }
+    try {
+      await persistence.removeWorkingCopy(
+        summary.sessionId,
+        expectedToken: summary.storageToken,
+      );
+      if (!mounted) return;
+      setState(() {
+        error = null;
+        copies = _load();
+      });
+    } catch (failure) {
+      if (mounted) {
+        setState(
+          () =>
+              error =
+                  failure is ProjectStorageConflict
+                      ? 'Projekt se mezitím změnil. Obnovte seznam a zkuste odstranění znovu.'
+                      : 'Projekt se nepodařilo odstranit: $failure',
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Obnovit pracovní kopii'),
+    title: Row(
+      children: [
+        const Expanded(child: Text('Místní projekty')),
+        IconButton(
+          tooltip: 'Obnovit seznam',
+          onPressed:
+              () => setState(() {
+                error = null;
+                copies = _load();
+              }),
+          icon: const Icon(Icons.refresh),
+        ),
+      ],
+    ),
     content: SizedBox(
       width: 600,
       height: 360,
-      child: FutureBuilder(
-        future: copies,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) return Text('${snapshot.error}');
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final rows = snapshot.data!;
-          if (rows.isEmpty) return const Text('Žádné pracovní kopie.');
-          return ListView(
-            children: [
-              const Text(
-                'Kopie jsou od nejnovější. Obnova přidá projekt do pracovního prostoru. Již otevřený projekt pouze aktivuje.',
-              ),
-              for (final row in rows)
-                ListTile(
-                  title: Text(row.copy?.project.name ?? 'Nedostupná kopie'),
-                  subtitle: Text(
-                    row.error ??
-                        '${row.copy?.fileName ?? 'Bez souboru'} · revize ${row.copy?.project.revision}${row.copy?.project.revision != row.copy?.savedRevision ? ' · neuložené změny' : ''}',
-                  ),
-                  onTap:
-                      row.copy == null
-                          ? null
-                          : () => Navigator.pop(context, row.id),
-                ),
-            ],
-          );
-        },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (error != null)
+            Text(error!, maxLines: 4, overflow: TextOverflow.ellipsis),
+          Expanded(
+            child: FutureBuilder(
+              future: copies,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) return Text('${snapshot.error}');
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final rows = snapshot.data!;
+                if (rows.isEmpty) {
+                  return const Text(
+                    'Zatím nemáte žádné místně uložené projekty.',
+                  );
+                }
+                return ListView(
+                  children: [
+                    const Text(
+                      'Výběrem projekt znovu otevřete. Zavřené projekty můžete odstranit a uvolnit místo.',
+                    ),
+                    for (final row in rows)
+                      ListTile(
+                        title: Text(row.summary?.name ?? 'Nedostupný projekt'),
+                        subtitle: Text(
+                          row.error ??
+                              '${row.summary?.currentFile?.path ?? 'Uloženo v tomto zařízení'}${row.summary?.hasPendingFileChanges == true ? '\nMístní změny čekají na zápis do souboru' : ''}',
+                        ),
+                        trailing:
+                            row.summary == null
+                                ? null
+                                : IconButton(
+                                  tooltip:
+                                      widget.workspace.document(row.id) == null
+                                          ? 'Odstranit místní projekt'
+                                          : 'Otevřený projekt nejprve zavřete',
+                                  onPressed:
+                                      widget.workspace.document(row.id) != null
+                                          ? null
+                                          : () => remove(row.summary!),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                        onTap:
+                            row.summary == null
+                                ? null
+                                : () => Navigator.pop(context, row.id),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     ),
     actions: [
       TextButton(
         onPressed: () => Navigator.pop(context),
-        child: const Text('Zrušit'),
+        child: const Text('Zavřít'),
       ),
     ],
   );

@@ -133,7 +133,7 @@ void main() {
         expect(foreground.dirty, isFalse);
         expect(foreground.undoHistory, isEmpty);
         expect(foreground.redoHistory, isEmpty);
-        expect(background.dirty, isTrue);
+        expect(background.changesSaved, isTrue);
         expect([
           for (final entry in background.undoHistory)
             (entry.label, entry.steps),

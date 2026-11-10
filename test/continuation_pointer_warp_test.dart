@@ -170,7 +170,7 @@ void main() {
             workspace.add(
               continuationController(app.project.copyWith(name: 'Other owner')),
             );
-            workspace.closeDocument(app);
+            await workspace.closeDocument(app);
           case 'new-follow':
             await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
         }

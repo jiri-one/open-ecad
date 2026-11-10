@@ -12,7 +12,10 @@ import '../packages/ecad_core/test/support.dart';
 
 class _MemoryPersistence extends ProjectPersistence {
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async => 'memory';
 }
 
 Device _block(String id, Vec2 at, PortSide side) => Device(

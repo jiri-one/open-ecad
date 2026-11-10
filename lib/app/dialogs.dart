@@ -238,48 +238,45 @@ class _NewSheetDialogState extends State<_NewSheetDialog> {
   );
 }
 
-Future<bool> confirmReplaceProject(
+Future<bool> confirmDiscardAfterSaveError(
   BuildContext context,
   EditorController controller, {
-  bool closingApplication = false,
+  required Future<bool> Function() exportCopy,
 }) async {
-  if (!controller.dirty) return true;
   final generation = controller.documentGeneration;
-  final revision = controller.project.revision;
-  final decision = await showDialog<String>(
+  final snapshot = controller.project;
+  final choice = await showDialog<String>(
     context: context,
     builder:
         (context) => AlertDialog(
-          title: Text('Neuložené změny · ${controller.project.name}'),
-          content: Text(
-            closingApplication
-                ? 'Před zavřením okna můžete změny uložit do souboru.'
-                : 'Před zavřením projektu můžete změny uložit do souboru. Pracovní kopie ostatních projektů zůstanou zachovány.',
+          title: const Text('Ukládání projektu selhalo'),
+          content: SingleChildScrollView(
+            child: Text(
+              'Automatické uložení projektu „${snapshot.name}“ se nepodařilo dokončit. Můžete pokračovat v úpravách nebo vytvořit kopii. Při zavření bez dalšího ukládání zůstanou úspěšně uložené místní kopie zachované; ostatní změny se ztratí.',
+            ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, 'cancel'),
-              child: const Text('Zrušit'),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Pokračovat v úpravách'),
             ),
             TextButton(
               onPressed: () => Navigator.pop(context, 'discard'),
-              child: Text(
-                closingApplication ? 'Zavřít bez uložení' : 'Zahodit změny',
-              ),
+              child: const Text('Přesto zavřít'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(context, 'save'),
-              child: const Text('Uložit'),
+              onPressed: () => Navigator.pop(context, 'copy'),
+              child: const Text('Vytvořit kopii a zavřít'),
             ),
           ],
         ),
   );
-  if (!controller.isDocumentCurrent(generation) ||
-      controller.project.revision != revision) {
-    return false;
-  }
-  if (decision == 'save') return controller.saveProject();
-  return decision == 'discard';
+  bool current() =>
+      controller.isDocumentCurrent(generation) &&
+      identical(controller.project, snapshot);
+  if (!current()) return false;
+  if (choice == 'copy') return await exportCopy() && current();
+  return choice == 'discard';
 }
 
 Future<void> showAiSettings(
@@ -417,6 +414,7 @@ Future<void> showCommandPalette(
   BuildContext context,
   EditorController app, {
   required VoidCallback openProject,
+  required VoidCallback exportProjectCopy,
   required VoidCallback focusAssistant,
   required ValueChanged<SheetType> addSheet,
   required VoidCallback addContinuation,
@@ -444,16 +442,10 @@ Future<void> showCommandPalette(
       shortcut: shortcuts.labelFor(EditorCommand.paste),
     ),
     PaletteCommand(
-      'Uložit projekt jako…',
-      Icons.save_as_outlined,
-      app.saveProjectAs,
-      shortcut: shortcuts.labelFor(EditorCommand.saveProjectAs),
-    ),
-    PaletteCommand(
-      'Uložit projekt',
-      Icons.save_outlined,
-      app.saveProject,
-      shortcut: shortcuts.labelFor(EditorCommand.saveProject),
+      'Vytvořit kopii projektu…',
+      Icons.copy_outlined,
+      exportProjectCopy,
+      shortcut: shortcuts.labelFor(EditorCommand.exportProjectCopy),
     ),
     PaletteCommand(
       'Otevřít projekt',

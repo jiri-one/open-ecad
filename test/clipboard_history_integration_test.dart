@@ -31,7 +31,14 @@ void main() {
       expect(find.text('Aktuální stav'), findsOneWidget);
       expect(find.text('Vrátit tyto 3 kroky'), findsOneWidget);
       var changes = 0;
-      void changed() => changes++;
+      var observed = app.project;
+      void changed() {
+        if (!identical(observed, app.project)) {
+          observed = app.project;
+          changes++;
+        }
+      }
+
       app.addListener(changed);
       await tester.tap(find.text('Vrátit tyto 3 kroky'));
       await tester.pumpAndSettle();
@@ -85,7 +92,7 @@ void main() {
           case 'revision':
             app.renameProject('Third');
           case 'close':
-            workspace.closeDocument(app);
+            await workspace.closeDocument(app);
         }
         final before = app.project, active = workspace.active.project;
         await tester.pumpAndSettle();

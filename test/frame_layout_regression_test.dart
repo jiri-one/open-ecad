@@ -194,9 +194,9 @@ void main() {
     final app = EditorController(startEmpty: true);
     addTearDown(app.dispose);
     app.addSheet(type: SheetType.cabinetLayout, name: 'Mounting');
-    expect(app.configureMounting(width: 600, height: 800, scale: 5), isTrue);
+    expect(app.configureMounting(width: 600, height: 800, scale: 10), isTrue);
     final view = app.sheet.mountingView!;
-    expect(view.scaleDenominator, 5);
+    expect(view.scaleDenominator, 10);
     expect(
       layoutDocument(app.project).firstPageFor(app.sheet.id).diagnostics,
       isEmpty,

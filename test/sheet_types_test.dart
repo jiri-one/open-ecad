@@ -56,6 +56,10 @@ void main() {
       expect(app.sheet.type, SheetType.cabinetLayout, reason: app.status);
       expect(app.sheet.name, 'Skříň B');
       expect(app.sheet.number, '04');
+      expect(app.sheet.paperSizeMm.width, 297);
+      expect(app.sheet.paperSizeMm.height, 210);
+      expect(app.sheet.frame.mode, FrameMode.inherit);
+      expect(resolveSheetFrame(app.project, app.sheet)?.border, isTrue);
 
       app.addSheet(type: SheetType.form, formStarter: true);
       expect(app.sheet.name, 'Nový formulář');
@@ -86,6 +90,37 @@ void main() {
         validateProject(app.project).where((d) => d.code == 'duplicate_id'),
         isEmpty,
       );
+    });
+
+    test('new sheets keep an inherited frame that needs larger paper', () {
+      final original = testDemoProject();
+      final frame = original.frameTemplates.single;
+      final project = EcadProject(
+        id: 'wide-frame-project',
+        name: 'Wide frame',
+        frameTemplates: [
+          frame.copyWith(titleBlock: frame.titleBlock.copyWith(widthMm: 300)),
+        ],
+        defaultFrame: FrameChoice.template(frame.id),
+        pages: [Sheet(id: 'first', name: 'First', number: '01')],
+      );
+      final app = EditorController(initialProject: project);
+      addTearDown(app.dispose);
+      for (final type in [
+        SheetType.multiLine,
+        SheetType.cabinetLayout,
+        SheetType.form,
+      ]) {
+        final count = app.project.pages.length;
+        app.addSheet(type: type, formStarter: type == SheetType.form);
+        expect(app.project.pages, hasLength(count + 1), reason: app.status);
+        expect(app.sheet.type, type);
+        expect(app.sheet.paperSizeMm.width, 420);
+        expect(app.sheet.paperSizeMm.height, 297);
+        expect(app.sheet.frame.mode, FrameMode.inherit);
+        expect(resolveSheetFrame(app.project, app.sheet)?.border, isTrue);
+        if (type == SheetType.form) expect(app.sheet.graphics, isNotEmpty);
+      }
     });
 
     test('changes the active sheet type with undo, redo and no-op', () {

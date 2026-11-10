@@ -41,7 +41,7 @@ class ProjectFileConflict implements Exception {
   @override
   String toString() =>
       'Soubor se změnil mimo aplikaci nebo již neexistuje: $path. '
-      'Otevřete jej znovu, nebo použijte Uložit jako do jiného souboru.';
+      'Místní projekt zůstává zachován. Vytvořte kopii projektu do jiného souboru.';
 }
 
 class DocumentOperationSuperseded implements Exception {
@@ -57,5 +57,6 @@ abstract class ProjectFiles {
     required bool Function() canCommit,
     DocumentFileHandle? target,
     DocumentFileHandle? currentFile,
+    Iterable<String> Function()? protectedPaths,
   });
 }

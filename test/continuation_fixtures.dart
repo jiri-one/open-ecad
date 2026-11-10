@@ -94,7 +94,10 @@ EcadProject continuationProject({
 
 class ContinuationMemoryPersistence extends ProjectPersistence {
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async => 'memory';
 }
 
 EditorController continuationController([EcadProject? project]) =>

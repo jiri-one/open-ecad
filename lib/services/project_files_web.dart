@@ -37,6 +37,7 @@ class PlatformProjectFiles implements ProjectFiles {
     required bool Function() canCommit,
     DocumentFileHandle? target,
     DocumentFileHandle? currentFile,
+    Iterable<String> Function()? protectedPaths,
   }) async {
     if (!canCommit()) throw const DocumentOperationSuperseded();
     final name = await saveFileBytes(

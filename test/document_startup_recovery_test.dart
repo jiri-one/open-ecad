@@ -255,15 +255,21 @@ void main() {
     test(
       'ordered autosaves retain newest revision and other sessions',
       () async {
+        final first = persistence.saveWorkingCopy(
+          WorkingCopy(_project('first'), sessionId: 'a'),
+        );
         await Future.wait([
-          persistence.saveWorkingCopy(
-            WorkingCopy(_project('first'), sessionId: 'a'),
-          ),
           persistence.saveWorkingCopy(
             WorkingCopy(_project('other'), sessionId: 'b'),
           ),
-          persistence.saveWorkingCopy(
-            WorkingCopy(_project('latest', revision: 2), sessionId: 'a'),
+          first.then(
+            (token) => persistence.saveWorkingCopy(
+              WorkingCopy(
+                _project('latest', revision: 2),
+                sessionId: 'a',
+                storageToken: token,
+              ),
+            ),
           ),
         ]);
         expect((await persistence.loadAutosave())!.project.name, 'latest');
@@ -272,7 +278,11 @@ void main() {
           'other',
         );
         expect(await persistence.listRecoveryIds(), ['a', 'b']);
-        await persistence.removeWorkingCopy('a');
+        await persistence.removeWorkingCopy(
+          'a',
+          expectedToken:
+              (await persistence.loadAutosave(sessionId: 'a'))!.storageToken,
+        );
         expect((await persistence.loadAutosave())!.project.name, 'other');
       },
     );

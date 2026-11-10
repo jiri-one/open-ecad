@@ -7,8 +7,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 enum EditorCommand {
   openProject('Otevřít projekt', 'Projekt', allowWhileEditingText: true),
-  saveProject('Uložit projekt', 'Projekt', allowWhileEditingText: true),
-  saveProjectAs('Uložit projekt jako…', 'Projekt', allowWhileEditingText: true),
+  exportProjectCopy(
+    'Vytvořit kopii projektu…',
+    'Projekt',
+    allowWhileEditingText: true,
+  ),
   commandPalette('Paleta příkazů', 'Projekt', allowWhileEditingText: true),
   focusAssistant('Psát asistentovi', 'Projekt', allowWhileEditingText: true),
   undo('Vrátit změnu', 'Úpravy'),
@@ -150,10 +153,7 @@ class KeyboardShortcuts {
     EditorCommand.openProject: [
       ShortcutBinding(key: LogicalKeyboardKey.keyO, control: true),
     ],
-    EditorCommand.saveProject: [
-      ShortcutBinding(key: LogicalKeyboardKey.keyS, control: true),
-    ],
-    EditorCommand.saveProjectAs: [
+    EditorCommand.exportProjectCopy: [
       ShortcutBinding(key: LogicalKeyboardKey.keyS, control: true, shift: true),
     ],
     EditorCommand.commandPalette: [

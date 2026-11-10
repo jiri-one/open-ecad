@@ -38,6 +38,8 @@ class _ControlledPersistence extends ProjectPersistence {
   Future<SavedProjectFile?> saveAs(
     EcadProject project, {
     DocumentFileHandle? currentFile,
+    Iterable<String> Function()? protectedPaths,
+    EncodedProject? encoded,
     required bool Function() canCommit,
   }) => _save(project, null, canCommit);
 
@@ -45,6 +47,7 @@ class _ControlledPersistence extends ProjectPersistence {
   Future<SavedProjectFile?> saveTo(
     EcadProject project,
     DocumentFileHandle target, {
+    EncodedProject? encoded,
     required bool Function() canCommit,
   }) => _save(project, target, canCommit);
 

@@ -68,7 +68,10 @@ EcadProject editingProject() {
 
 class MemoryPersistence extends ProjectPersistence {
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async => 'memory';
 }
 
 Finder field(String label) => find.byWidgetPredicate(

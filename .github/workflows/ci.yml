@@ -40,6 +40,8 @@ jobs:
           cache: true
       - name: Run static checks and unit/widget tests
         run: bash scripts/verify.sh
+      - name: Verify browser project storage
+        run: CHROME_EXECUTABLE="$(command -v google-chrome)" flutter test --no-pub --platform chrome test/browser_project_storage_test.dart
       - name: Verify optional offline PDF converter
         run: |
           python3 -m venv .venv-pdf

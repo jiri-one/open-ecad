@@ -17,9 +17,7 @@ enum DocumentIoResult {
 class DocumentSession {
   DocumentSession(EcadProject project, {required this.persistence})
     : _engine = ProjectEngine(project),
-      _savedRevision = project.revision {
-    persistence.retainRecoverySession(_sessionId);
-  }
+      _savedRevision = project.revision;
 
   final ProjectPersistence persistence;
   ProjectEngine _engine;
@@ -27,6 +25,9 @@ class DocumentSession {
   DocumentFileHandle? _currentFile;
   String? _fileName;
   int? _savedRevision;
+  String? _storageToken;
+  WorkingCopy? _checkpoint;
+  Object? checkpointWarning;
   int _generation = 0;
   int _loadRequest = 0;
   int _saveRequest = 0;
@@ -48,6 +49,7 @@ class DocumentSession {
     savedRevision: savedRevision,
     fileName: fileName,
     currentFile: currentFile,
+    storageToken: _storageToken,
   );
 
   bool _isCurrent(int generation) => !_disposed && generation == _generation;
@@ -61,16 +63,20 @@ class DocumentSession {
     LoadedProject loaded, {
     int? savedRevision,
     String? recoveryId,
+    String? storageToken,
+    ProjectEngine? engine,
+    WorkingCopy? checkpoint,
   }) {
-    final next = ProjectEngine(loaded.project);
-    persistence.releaseRecoverySession(_sessionId);
+    final next = engine ?? ProjectEngine(loaded.project);
     _engine = next;
     _generation++;
     _sessionId = recoveryId ?? newId('document');
-    persistence.retainRecoverySession(_sessionId);
     _currentFile = loaded.origin;
     _fileName = loaded.origin?.path ?? loaded.fileName;
     _savedRevision = savedRevision;
+    _storageToken = storageToken;
+    _checkpoint = checkpoint;
+    checkpointWarning = null;
     _nativeSave = null;
   }
 
@@ -84,6 +90,21 @@ class DocumentSession {
     if (startupError != null) throw FormatException(startupError);
     if (startupProjectPath != null) return open(path: startupProjectPath);
     if (!restoreAutosave) return DocumentIoResult.unchanged;
+    final generation = _generation, revision = project.revision;
+    final request = ++_loadRequest;
+    bool current() =>
+        _isCurrent(generation) &&
+        project.revision == revision &&
+        request == _loadRequest;
+    final startup = await persistence.loadStartupProject();
+    if (!current()) return DocumentIoResult.superseded;
+    if (startup != null) {
+      final summary = await persistence.loadProjectSummary(startup.sessionId);
+      if (!current()) return DocumentIoResult.superseded;
+      if (summary != null) return restore(recoveryId: startup.sessionId);
+      if (startup.filePath != null) return open(path: startup.filePath);
+      return DocumentIoResult.unchanged;
+    }
     return restore();
   }
 
@@ -100,14 +121,46 @@ class DocumentSession {
       final copy = await persistence.loadAutosave(sessionId: recoveryId);
       if (!current()) return DocumentIoResult.superseded;
       if (copy == null) return DocumentIoResult.unchanged;
+      var loaded = LoadedProject(
+        copy.project,
+        origin: copy.currentFile,
+        fileName: copy.fileName,
+      );
+      var savedRevision = copy.savedRevision;
+      final origin = copy.currentFile;
+      if (origin != null) {
+        try {
+          final disk = await persistence.loadPath(origin.path);
+          if (!current()) return DocumentIoResult.superseded;
+          if (copy.project.revision == copy.savedRevision) {
+            loaded = disk;
+            savedRevision = disk.project.revision;
+          } else if (await persistence.projectsMatch(
+            disk.project,
+            copy.project,
+          )) {
+            // The file may have committed just before its checkpoint was written.
+            loaded = LoadedProject(
+              copy.project,
+              origin: disk.origin,
+              fileName: disk.fileName,
+            );
+            savedRevision = copy.project.revision;
+          }
+        } catch (_) {
+          if (!current()) return DocumentIoResult.superseded;
+          savedRevision = null;
+        }
+      }
+      final engine = await persistence.prepareEngine(loaded.project);
+      if (!current()) return DocumentIoResult.superseded;
       _replace(
-        LoadedProject(
-          copy.project,
-          origin: copy.currentFile,
-          fileName: copy.fileName,
-        ),
-        savedRevision: copy.savedRevision,
+        loaded,
+        savedRevision: savedRevision,
         recoveryId: copy.sessionId,
+        storageToken: copy.storageToken,
+        engine: engine,
+        checkpoint: copy,
       );
       return DocumentIoResult.restored;
     } catch (_) {
@@ -141,9 +194,42 @@ class DocumentSession {
       }
       if (!current()) return DocumentIoResult.superseded;
       if (loaded == null) return DocumentIoResult.canceled;
+      String? recoveryId, storageToken;
+      if (loaded.origin != null) {
+        final id = persistence.fileSessionId(loaded.origin!.path);
+        try {
+          final summary = await persistence.loadProjectSummary(id);
+          if (!current()) return DocumentIoResult.superseded;
+          if (summary == null) {
+            recoveryId = id;
+          } else if (!summary.hasPendingFileChanges &&
+              summary.currentFile != null &&
+              persistence.fileSessionId(summary.currentFile!.path) == id) {
+            recoveryId = summary.sessionId;
+            storageToken = summary.storageToken;
+          }
+        } catch (_) {
+          if (!current()) return DocumentIoResult.superseded;
+        }
+      } else if (importProject == null && loaded.fileName != null) {
+        final encoded = await persistence.prepareProject(loaded.project);
+        if (!current()) return DocumentIoResult.superseded;
+        final reusable = await persistence.findMatchingLocalProject(
+          fileName: loaded.fileName!,
+          projectHash: encoded.hash,
+        );
+        recoveryId = reusable?.sessionId;
+        storageToken = reusable?.storageToken;
+        if (!current()) return DocumentIoResult.superseded;
+      }
+      final engine = await persistence.prepareEngine(loaded.project);
+      if (!current()) return DocumentIoResult.superseded;
       _replace(
         loaded,
         savedRevision: importProject != null ? null : loaded.project.revision,
+        recoveryId: recoveryId,
+        storageToken: storageToken,
+        engine: engine,
       );
       return DocumentIoResult.opened;
     } catch (_) {
@@ -152,9 +238,151 @@ class DocumentSession {
     }
   }
 
-  Future<DocumentIoResult> save({bool saveAs = false}) async {
+  bool _checkpointMatches(EcadProject snapshot) {
+    final copy = _checkpoint;
+    return _storageToken != null &&
+        copy != null &&
+        identical(copy.project, snapshot) &&
+        copy.savedRevision ==
+            (currentFile == null ? snapshot.revision : savedRevision) &&
+        copy.currentFile?.path == currentFile?.path &&
+        copy.currentFile?.version == currentFile?.version &&
+        copy.fileName == fileName;
+  }
+
+  Future<void> _writeCheckpoint(
+    EcadProject snapshot,
+    EncodedProject encoded,
+    int generation,
+  ) async {
+    final copy = WorkingCopy(
+      snapshot,
+      sessionId: sessionId,
+      storageToken: _storageToken,
+      savedRevision: currentFile == null ? snapshot.revision : savedRevision,
+      fileName: fileName,
+      currentFile: currentFile,
+    );
+    final token = await persistence.saveWorkingCopy(copy, encoded: encoded);
+    if (!_isCurrent(generation)) return;
+    _storageToken = token;
+    _checkpoint = copy;
+  }
+
+  Future<DocumentIoResult> autosave() async {
     if (_disposed) return DocumentIoResult.superseded;
+    final generation = _generation;
     final snapshot = project;
+    if (_checkpointMatches(snapshot) && !dirty) return DocumentIoResult.saved;
+    final encoded = await persistence.prepareProject(snapshot);
+    if (!_isCurrent(generation)) return DocumentIoResult.superseded;
+    Object? localFailure;
+    if (!_checkpointMatches(snapshot)) {
+      try {
+        await _writeCheckpoint(snapshot, encoded, generation);
+      } catch (error) {
+        if (currentFile == null ||
+            (error is ProjectStorageConflict &&
+                snapshot.revision != savedRevision)) {
+          rethrow;
+        }
+        localFailure = error;
+      }
+    }
+    if (!_isCurrent(generation)) return DocumentIoResult.superseded;
+    if (currentFile == null) {
+      _savedRevision = snapshot.revision;
+    } else {
+      final needsFileSave = snapshot.revision != savedRevision;
+      if (needsFileSave) {
+        final result = await _saveSnapshot(snapshot, encoded: encoded);
+        if (result != DocumentIoResult.saved || !_isCurrent(generation)) {
+          return DocumentIoResult.superseded;
+        }
+      }
+      if (needsFileSave || localFailure != null) {
+        try {
+          await _writeCheckpoint(snapshot, encoded, generation);
+          localFailure = null;
+        } catch (error) {
+          localFailure = error;
+        }
+      }
+    }
+    if (!_isCurrent(generation)) return DocumentIoResult.superseded;
+    checkpointWarning = localFailure;
+    return DocumentIoResult.saved;
+  }
+
+  Future<bool> continueLocally({required bool storageConflict}) async {
+    if (_disposed || (currentFile == null && !storageConflict)) return false;
+    final generation = _generation;
+    final snapshot = project;
+    final previousId = sessionId, previousToken = _storageToken;
+    final retirePrevious = currentFile != null && !storageConflict;
+    final id = newId('document');
+    final copy = WorkingCopy(
+      snapshot,
+      sessionId: id,
+      savedRevision: snapshot.revision,
+    );
+    final token = await persistence.saveWorkingCopy(copy);
+    if (!_isCurrent(generation) || !identical(project, snapshot)) return false;
+    _generation++;
+    _sessionId = id;
+    _currentFile = null;
+    _fileName = null;
+    _savedRevision = snapshot.revision;
+    _storageToken = token;
+    _checkpoint = copy;
+    checkpointWarning = null;
+    if (retirePrevious) {
+      try {
+        await persistence.removeWorkingCopy(
+          previousId,
+          expectedToken: previousToken,
+        );
+      } catch (_) {
+        // The new local copy is durable even if the previous cache changed.
+      }
+    }
+    return true;
+  }
+
+  Future<DocumentIoResult> exportCopy({
+    Iterable<String> Function()? protectedPaths,
+  }) async {
+    if (_disposed) return DocumentIoResult.superseded;
+    final generation = _generation;
+    bool current() => _isCurrent(generation);
+    try {
+      final result = await persistence.saveAs(
+        project,
+        canCommit: current,
+        protectedPaths:
+            () => {
+              ...?protectedPaths?.call(),
+              if (currentFile != null) currentFile!.path,
+            },
+      );
+      if (!current()) return DocumentIoResult.superseded;
+      return result == null
+          ? DocumentIoResult.canceled
+          : DocumentIoResult.saved;
+    } on DocumentOperationSuperseded {
+      return DocumentIoResult.superseded;
+    }
+  }
+
+  Future<DocumentIoResult> save({bool saveAs = false}) =>
+      _saveSnapshot(project, saveAs: saveAs);
+
+  Future<DocumentIoResult> _saveSnapshot(
+    EcadProject snapshot, {
+    bool saveAs = false,
+    EncodedProject? encoded,
+  }) async {
+    if (_disposed) return DocumentIoResult.superseded;
     final generation = _generation;
     final request = ++_saveRequest;
     bool current() => _isCurrent(generation) && request == _saveRequest;
@@ -171,9 +399,15 @@ class DocumentSession {
               ? await persistence.saveAs(
                 snapshot,
                 currentFile: file,
+                encoded: encoded,
                 canCommit: current,
               )
-              : await persistence.saveTo(snapshot, file, canCommit: current);
+              : await persistence.saveTo(
+                snapshot,
+                file,
+                canCommit: current,
+                encoded: encoded,
+              );
       if (!_isCurrent(generation) || (!current() && completion == null)) {
         return DocumentIoResult.superseded;
       }
@@ -200,9 +434,5 @@ class DocumentSession {
     }
   }
 
-  void dispose() {
-    if (_disposed) return;
-    _disposed = true;
-    persistence.releaseRecoverySession(_sessionId);
-  }
+  void dispose() => _disposed = true;
 }

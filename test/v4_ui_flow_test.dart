@@ -50,6 +50,7 @@ class MemoryFiles extends ProjectFiles {
     required bool Function() canCommit,
     DocumentFileHandle? target,
     DocumentFileHandle? currentFile,
+    Iterable<String> Function()? protectedPaths,
   }) async {
     if (!canCommit()) throw const DocumentOperationSuperseded();
     saves++;
@@ -77,11 +78,16 @@ Future<void> saveDialog(WidgetTester tester) async {
 class RecordingPersistence extends ProjectPersistence {
   final savedNames = <String>[];
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async => 'memory';
   @override
   Future<SavedProjectFile?> saveAs(
     EcadProject project, {
     DocumentFileHandle? currentFile,
+    Iterable<String> Function()? protectedPaths,
+    EncodedProject? encoded,
     required bool Function() canCommit,
   }) async {
     savedNames.add(project.name);
@@ -202,8 +208,10 @@ void main() {
       expect(app.bom.articles.single.requiredTotal.knownBaseUnits, 2);
       app.undo();
       expect(app.sheet.devices.single.id, first.id);
-      expect(await app.saveProject(), isTrue);
-      expect(app.dirty, isFalse);
+      expect(await app.exportProjectCopy(), isTrue);
+      expect(await app.flushWorkingCopy(), isTrue);
+      expect(app.changesSaved, isTrue);
+      expect(app.currentFile, isNull);
       final other = EditorController(
         startEmpty: true,
         persistence: ProjectPersistence(files: files),
@@ -241,18 +249,21 @@ void main() {
       a.undo();
       expect(a.project.name, 'A');
       expect(b.project.name, 'B edited');
-      expect(await a.saveProject(), isTrue);
+      expect(await a.exportProjectCopy(), isTrue);
       expect(files.saved[files.path]!.name, 'A');
-      expect(b.dirty, isTrue);
+      expect(await b.flushWorkingCopy(), isTrue);
+      expect(b.changesSaved, isTrue);
       workspace.closeTab(SheetTab(a.documentSessionId, 'same_sheet'));
       expect(workspace.documents, hasLength(2));
       expect(workspace.tabs, hasLength(3));
       expect(await workspace.open(path: files.path), isTrue);
-      expect(workspace.documents, hasLength(2));
-      expect(workspace.active, same(a));
+      expect(workspace.documents, hasLength(3));
+      final opened = workspace.active;
+      expect(opened.project.name, a.project.name);
+      await workspace.closeDocument(opened);
       workspace.closeTab(SheetTab(a.documentSessionId, 'second_sheet'));
       expect(workspace.documents, hasLength(2));
-      workspace.closeDocument(a);
+      await workspace.closeDocument(a);
       expect(workspace.documents, [b]);
       expect(
         workspace.tabs.every((t) => t.sessionId == b.documentSessionId),
@@ -293,7 +304,7 @@ void main() {
       expect(await workspace.restore(aId), isTrue);
       final restoredA = workspace.active;
       expect(restoredA.project.name, 'A upravený');
-      expect(restoredA.dirty, isTrue);
+      expect(restoredA.dirty, isFalse);
       expect(await workspace.restore(bId), isTrue);
       expect(workspace.active.project.name, 'B upravený');
       expect(workspace.documents, hasLength(3));
@@ -545,7 +556,7 @@ void main() {
     },
   );
   testWidgets(
-    'tabs switch properties and Save As to the active session; closing only a tab leaves documents intact',
+    'tabs switch properties and project copy to the active session; closing only a tab leaves documents intact',
     (tester) async {
       tester.view.physicalSize = const Size(1600, 1000);
       tester.view.devicePixelRatio = 1;
@@ -585,7 +596,7 @@ void main() {
       workspace.add(b);
       await tester.pumpAndSettle();
       expect(tester.widget<TextField>(field('Popis')).controller!.text, 'B');
-      await tester.tap(find.byTooltip('A ● · 01 První list'));
+      await tester.tap(find.byTooltip('A · 01 První list'));
       await tester.pumpAndSettle();
       expect(tester.widget<TextField>(field('Popis')).controller!.text, 'A');
       await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
@@ -596,7 +607,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(persistence.savedNames, ['A']);
       expect(a.dirty, isFalse);
-      expect(b.dirty, isTrue);
+      expect(b.dirty, isFalse);
       workspace.openSheet(b, 'second_sheet');
       workspace.openSheet(a, 'second_sheet');
       await tester.pumpAndSettle();
@@ -609,18 +620,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Soubor'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Zavřít aktivní projekt…'));
+      await tester.tap(find.text('Zavřít aktivní projekt'));
       await tester.pumpAndSettle();
-      expect(find.text('Neuložené změny · B'), findsOneWidget);
-      await tester.tap(find.text('Zrušit'));
-      await tester.pumpAndSettle();
-      expect(workspace.documents, hasLength(2));
-      await tester.tap(find.byTooltip('Soubor'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Zavřít aktivní projekt…'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Zahodit změny'));
-      await tester.pumpAndSettle();
+      expect(find.textContaining('Neuložené změny'), findsNothing);
       expect(workspace.documents, [a]);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());

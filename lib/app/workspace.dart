@@ -46,7 +46,7 @@ class OpenEcadApp extends StatefulWidget {
   State<OpenEcadApp> createState() => _OpenEcadAppState();
 }
 
-class _OpenEcadAppState extends State<OpenEcadApp> {
+class _OpenEcadAppState extends State<OpenEcadApp> with WindowListener {
   late final workspace = WorkspaceController(widget.controller);
   final interfacePreferences = InterfacePreferences();
   final systemTypography = SystemTypographyService();
@@ -59,16 +59,23 @@ class _OpenEcadAppState extends State<OpenEcadApp> {
   @override
   void initState() {
     super.initState();
+    if (DesktopWindow.enabled) windowManager.addListener(this);
     interfacePreferences.load().catchError((Object _) {});
     systemTypography.load().catchError((Object _) {});
   }
 
   @override
   void dispose() {
+    if (DesktopWindow.enabled) windowManager.removeListener(this);
     interfacePreferences.dispose();
     systemTypography.dispose();
     workspace.dispose();
     super.dispose();
+  }
+
+  @override
+  Future<void> onWindowClose() async {
+    if (widget.controller.initializing) await windowManager.destroy();
   }
 
   @override
@@ -99,10 +106,35 @@ class _OpenEcadAppState extends State<OpenEcadApp> {
                   child: DesktopWindowFrame(child: child!),
                 ),
               ),
-          home: EditorWorkspace(
-            controller: workspace.active,
-            workspace: workspace,
-          ),
+          home:
+              widget.controller.initializing
+                  ? Scaffold(
+                    body: Column(
+                      children: [
+                        DesktopWindow.dragArea(
+                          const Row(
+                            children: [Spacer(), DesktopWindowControls()],
+                          ),
+                        ),
+                        const Expanded(
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.hourglass_top, size: 32),
+                                SizedBox(height: 16),
+                                Text('Otevírám projekt…'),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                  : EditorWorkspace(
+                    controller: workspace.active,
+                    workspace: workspace,
+                  ),
         ),
   );
 }
@@ -184,41 +216,57 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
     _closingWindow = true;
     try {
       final documents = workspace.documents;
-      final approved = <EditorController, EcadProject>{};
-      for (final doc in documents) {
-        if (doc.ioBusy) {
-          doc.reportStatus(
-            'Probíhá práce se souborem. Zavřete okno po jejím dokončení.',
-          );
-          return;
-        }
-        final generation = doc.documentGeneration;
-        final revision = doc.project.revision;
-        if (!mounted ||
-            !await confirmReplaceProject(
-              context,
-              doc,
-              closingApplication: true,
-            )) {
-          return;
-        }
-        if (!doc.isDocumentCurrent(generation) ||
-            doc.project.revision != revision) {
-          return;
-        }
-        approved[doc] = doc.project;
-      }
-      await Future.wait(documents.map((doc) => doc.flushWorkingCopy()));
-      if (!mounted ||
-          workspace.documents.length != documents.length ||
-          documents.any(
-            (doc) =>
-                !workspace.documents.contains(doc) ||
-                doc.ioBusy ||
-                !identical(doc.project, approved[doc]),
-          )) {
+      final startup = workspace.active;
+      final generations = {
+        for (final doc in documents) doc: doc.documentGeneration,
+      };
+      final discarded = <EditorController, EcadProject>{};
+      if (documents.any((doc) => doc.ioBusy)) {
+        app.reportStatus(
+          'Probíhá práce se souborem. Okno zavřete po jejím dokončení.',
+        );
         return;
       }
+      final saved = await Future.wait(
+        documents.map((doc) => doc.flushWorkingCopy()),
+      );
+      if (!mounted) return;
+      for (var i = 0; i < documents.length; i++) {
+        if (saved[i]) continue;
+        final doc = documents[i];
+        if (!workspace.documents.contains(doc) ||
+            !doc.isDocumentCurrent(generations[doc]!) ||
+            doc.autosaveError == null) {
+          return;
+        }
+        workspace.openSheet(doc, doc.activeSheetId);
+        if (!await confirmDiscardAfterSaveError(
+          context,
+          doc,
+          exportCopy: () => workspace.exportProjectCopy(document: doc),
+        )) {
+          return;
+        }
+        discarded[doc] = doc.project;
+      }
+      bool ready() =>
+          mounted &&
+          workspace.documents.length == documents.length &&
+          documents.every(
+            (doc) =>
+                workspace.documents.contains(doc) &&
+                doc.isDocumentCurrent(generations[doc]!) &&
+                !doc.ioBusy &&
+                (doc.changesSaved || identical(doc.project, discarded[doc])),
+          );
+      if (!ready()) return;
+      if (startup.canRememberStartup) {
+        await startup.persistence.rememberStartupProject(
+          startup.documentSessionId,
+          filePath: startup.currentFile?.path,
+        );
+      }
+      if (!ready()) return;
       await windowManager.destroy();
     } catch (error) {
       if (mounted) app.reportStatus('Okno se nepodařilo zavřít: $error');
@@ -516,7 +564,26 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
   Future<void> newProject({bool demo = false}) async =>
       workspace.create(demo: demo);
   Future<void> closeProject(EditorController doc) async {
-    if (await confirmReplaceProject(context, doc)) workspace.closeDocument(doc);
+    if (await workspace.closeDocument(doc) ||
+        !mounted ||
+        !workspace.documents.contains(doc)) {
+      return;
+    }
+    workspace.openSheet(doc, doc.activeSheetId);
+    if (doc.ioBusy) {
+      doc.reportStatus(
+        'Probíhá práce se souborem. Projekt zavřete po jejím dokončení.',
+      );
+      return;
+    }
+    if (doc.autosaveError == null) return;
+    if (await confirmDiscardAfterSaveError(
+      context,
+      doc,
+      exportCopy: () => workspace.exportProjectCopy(document: doc),
+    )) {
+      await workspace.closeDocument(doc, discardChanges: true);
+    }
   }
 
   Future<void> renameProject() async {
@@ -585,6 +652,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
       context,
       app,
       openProject: openProject,
+      exportProjectCopy: workspace.exportProjectCopy,
       focusAssistant: focusAssistant,
       addSheet: addSheet,
       addContinuation: () => current(startContinuation),
@@ -714,10 +782,8 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
       }
     }
     switch (command) {
-      case EditorCommand.saveProject:
-        app.saveProject();
-      case EditorCommand.saveProjectAs:
-        app.saveProjectAs();
+      case EditorCommand.exportProjectCopy:
+        workspace.exportProjectCopy();
       case EditorCommand.openProject:
         openProject();
       case EditorCommand.commandPalette:
@@ -1217,15 +1283,6 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
         children: [
           const SizedBox(width: 4),
           _fileMenu(),
-          _barButton(
-            Icons.save_outlined,
-            actionLabel(
-              app.dirty ? 'Uložit · neuložené změny' : 'Uložit',
-              EditorCommand.saveProject,
-            ),
-            app.ioBusy ? null : app.saveProject,
-            selected: app.dirty,
-          ),
           if (width >= 680) ...[
             _barButton(
               Icons.undo,
@@ -1342,10 +1399,10 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
           showRecoveryDialog(context, workspace);
         case 'importPdf':
           importPdf();
-        case 'save':
-          app.saveProject();
-        case 'saveAs':
-          app.saveProjectAs();
+        case 'useLocal':
+          app.continueLocally();
+        case 'copyProject':
+          workspace.exportProjectCopy();
         case 'rename':
           renameProject();
         case 'close':
@@ -1365,7 +1422,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
           PopupMenuItem<String>(
             enabled: false,
             child: Tooltip(
-              message: app.fileName ?? 'Projekt bez souboru',
+              message: app.fileName ?? 'Projekt v tomto zařízení',
               child: Text(
                 app.project.name,
                 maxLines: 1,
@@ -1385,7 +1442,7 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
           ),
           const PopupMenuItem(
             value: 'recovery',
-            child: Text('Obnovit pracovní kopii…'),
+            child: Text('Místní projekty…'),
           ),
           PopupMenuItem(
             value: 'importPdf',
@@ -1393,26 +1450,27 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
             child: const Text('Importovat PDF jako grafiku…'),
           ),
           PopupMenuItem(
-            value: 'save',
+            value: 'copyProject',
             enabled: !app.ioBusy,
             child: Text(
-              actionLabel('Uložit projekt', EditorCommand.saveProject),
+              actionLabel(
+                'Vytvořit kopii projektu…',
+                EditorCommand.exportProjectCopy,
+              ),
             ),
           ),
-          PopupMenuItem(
-            value: 'saveAs',
-            enabled: !app.ioBusy,
-            child: Text(
-              actionLabel('Uložit jako…', EditorCommand.saveProjectAs),
+          if (app.autosaveError != null && app.canContinueLocally)
+            const PopupMenuItem(
+              value: 'useLocal',
+              child: Text('Pokračovat v místním projektu'),
             ),
-          ),
           const PopupMenuItem(
             value: 'rename',
             child: Text('Přejmenovat projekt…'),
           ),
           const PopupMenuItem(
             value: 'close',
-            child: Text('Zavřít aktivní projekt…'),
+            child: Text('Zavřít aktivní projekt'),
           ),
           const PopupMenuDivider(),
           PopupMenuItem(
@@ -1854,11 +1912,10 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
                                 final sheet =
                                     doc.project.sheetById(tab.sheetId)!;
                                 final title =
-                                    '${doc.project.name}${doc.dirty ? ' ●' : ''} · ${fullPageDesignation(sheet)} ${sheet.name}';
+                                    '${doc.project.name} · ${fullPageDesignation(sheet)} ${sheet.name}';
                                 final label =
                                     '${fullPageDesignation(sheet)} ${sheet.name}'
-                                    '${workspace.documents.length > 1 ? ' · ${doc.project.name}' : ''}'
-                                    '${doc.dirty ? ' ●' : ''}';
+                                    '${workspace.documents.length > 1 ? ' · ${doc.project.name}' : ''}';
                                 return SheetContextMenu(
                                   key:
                                       workspace.activeTab == tab
@@ -2049,14 +2106,50 @@ class _EditorWorkspaceState extends State<EditorWorkspace> with WindowListener {
             style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(width: 12),
-          Tooltip(
-            message: app.fileName ?? 'Projekt bez souboru',
-            child: Text(
-              app.autosaveStatus,
-              style: TextStyle(fontSize: 12, color: c.muted),
-            ),
-          ),
         ],
+        Tooltip(
+          message:
+              app.autosaveError ??
+              app.autosaveWarning ??
+              '${app.autosaveStatus}${app.fileName == null ? '' : '\n${app.fileName}'}',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                switch ((
+                  app.autosaveError,
+                  app.autosaveWarning,
+                  app.changesSaved,
+                )) {
+                  (String(), _, _) => Icons.error_outline,
+                  (_, String(), _) => Icons.warning_amber_outlined,
+                  (_, _, true) => Icons.check,
+                  _ => Icons.sync,
+                },
+                size: 14,
+                color:
+                    app.autosaveError != null || app.autosaveWarning != null
+                        ? Theme.of(context).colorScheme.error
+                        : c.muted,
+              ),
+              if (!compact) ...[
+                const SizedBox(width: 4),
+                Text(
+                  app.autosaveStatus,
+                  style: TextStyle(fontSize: 12, color: c.muted),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (app.autosaveError != null || app.autosaveWarning != null)
+          IconButton(
+            tooltip: 'Zkusit automatické uložení znovu',
+            visualDensity: VisualDensity.compact,
+            iconSize: 16,
+            onPressed: app.retryAutosave,
+            icon: const Icon(Icons.refresh),
+          ),
         const SizedBox(width: 8),
         _zoomControls(c),
       ],

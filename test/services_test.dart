@@ -658,15 +658,22 @@ void main() {
     test('queued autosave preserves the most recent revision', () async {
       final persistence = ProjectPersistence();
       final latest = project.copyWith(name: 'Poslední změna', revision: 4);
-      await Future.wait([
-        persistence.saveWorkingCopy(WorkingCopy(project, sessionId: 'test')),
-        persistence.saveWorkingCopy(WorkingCopy(latest, sessionId: 'test')),
-      ]);
+      final first = persistence.saveWorkingCopy(
+        WorkingCopy(project, sessionId: 'test'),
+      );
+      await first.then(
+        (token) => persistence.saveWorkingCopy(
+          WorkingCopy(latest, sessionId: 'test', storageToken: token),
+        ),
+      );
       expect(
         (await persistence.loadAutosave())?.project.toJson(),
         latest.toJson(),
       );
-      await persistence.removeWorkingCopy('test');
+      await persistence.removeWorkingCopy(
+        'test',
+        expectedToken: (await persistence.loadAutosave())!.storageToken,
+      );
       expect(await persistence.loadAutosave(), isNull);
     });
 
@@ -686,7 +693,11 @@ void main() {
       expect(restored.savedRevision, 2);
       expect(restored.fileName, 'Dílna.oecad');
       await persistence.saveWorkingCopy(
-        WorkingCopy(edited.copyWith(revision: 1), sessionId: 'test'),
+        WorkingCopy(
+          edited.copyWith(revision: 1),
+          sessionId: 'test',
+          storageToken: restored.storageToken,
+        ),
       );
       final unsaved = (await persistence.loadAutosave())!;
       expect(unsaved.savedRevision, isNull);

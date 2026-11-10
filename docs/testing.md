@@ -56,13 +56,19 @@ chování a škálování ověřte na cílovém počítači následujícím prů
    použít návrh a vrátit ho jediným undo. Esc zavře náhled, návrh ale zůstane
    v panelu asistenta. Vyzkoušet duplikaci vybraných přístrojů.
 6. V textovém poli napsat písmena V, W a R a mazat text; kreslicí zkratky nesmějí
-   při psaní měnit dokument. Vyzkoušet Ctrl+K, Ctrl+L, Ctrl+Z, Ctrl+Y a Ctrl+S.
+   při psaní měnit dokument. Vyzkoušet Ctrl+K, Ctrl+L, Ctrl+Z, Ctrl+Y a Ctrl+Shift+S.
    Ctrl+C/V zobrazí náhled; kliknutí jej vloží jako jediný krok historie, Esc
    ho zruší. V **Historii úprav** vrátit a obnovit více kroků.
-7. Uložit `.oecad` do cesty s mezerou a diakritikou, otevřít jiný projekt a načíst
-   uložený soubor. Zrušit souborový dialog a ověřit, že dokument zůstal zachovaný.
-8. Změnit projekt, počkat na uložení pracovní kopie, zavřít a znovu otevřít aplikaci.
-   Po uložení do souboru a restartu nesmí záhlaví hlásit neuložené změny.
+7. Vytvořit kopii `.oecad` do cesty s mezerou a diakritikou a otevřít ji.
+   Změna otevřeného projektu musí automaticky aktualizovat právě jeho soubor.
+   Zrušení dialogu pro kopii nesmí změnit aktivní dokument ani jeho umístění.
+8. Změnit projekt a ihned zavřít okno bez dotazu na uložení. Po restartu
+   ověřit poslední změnu. Zavřený projekt znovu otevřít přes **Místní projekty…**.
+   Při chybě zápisu ověřit viditelnou chybu a opakování zápisu. Při zavírání
+   vyzkoušet pokračování v úpravách, kopii i zavření bez dalšího ukládání. Při nedostupném
+   souboru lze pokračovat v místním projektu. Zavřenou místní kopii odstranit;
+   zdrojový soubor musí zůstat zachovaný. Otevřít tentýž projekt ve dvou oknech
+   a ověřit, že druhé okno nepřepíše novější změny prvního.
 9. Exportovat PDF a SVG. Ověřit všechny listy a odvozené reportové stránky,
    české texty, konce spojů při zoomu a měřítko montážního pohledu.
 10. Spustit `Zkontroluj projekt`; ukázka má otevřené body a neurčený materiál. Kliknutí

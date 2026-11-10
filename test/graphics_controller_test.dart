@@ -367,10 +367,10 @@ void main() {
   });
 
   test(
-    'oversized recovery preserves previous document and subsequent small autosave succeeds',
+    'large imported graphics are automatically saved without the old object limit',
     () async {
       final persistence = ProjectPersistence();
-      await persistence.saveWorkingCopy(
+      var token = await persistence.saveWorkingCopy(
         WorkingCopy(_project(), sessionId: 'test'),
       );
       final large = _project().copyWith(
@@ -380,13 +380,15 @@ void main() {
           ),
         ],
       );
-      await expectLater(
-        persistence.saveWorkingCopy(WorkingCopy(large, sessionId: 'test')),
-        throwsA(isA<AutosaveTooLargeException>()),
+      token = await persistence.saveWorkingCopy(
+        WorkingCopy(large, sessionId: 'test', storageToken: token),
       );
-      expect((await persistence.loadAutosave())!.project.name, 'Import');
+      expect(
+        (await persistence.loadAutosave())!.project.pages.single.graphics,
+        hasLength(15001),
+      );
       await persistence.saveWorkingCopy(
-        WorkingCopy(_project(), sessionId: 'test'),
+        WorkingCopy(_project(), sessionId: 'test', storageToken: token),
       );
       expect((await persistence.loadAutosave())!.project.name, 'Import');
     },

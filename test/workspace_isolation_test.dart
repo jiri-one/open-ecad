@@ -45,7 +45,10 @@ class MemoryPersistence extends ProjectPersistence {
   final recovery = Completer<WorkingCopy?>();
   int recoveryLoads = 0;
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async => 'memory';
   @override
   Future<LoadedProject> loadPath(String path) => opened.future;
   @override
@@ -281,7 +284,7 @@ void main() {
     await tester.tap(find.text('Přejmenovat projekt…'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'Closed owner');
-    workspace.closeDocument(a);
+    await workspace.closeDocument(a);
     final replacement = workspace.active;
     final before = replacement.project;
     await tester.tap(find.text('Uložit název'));

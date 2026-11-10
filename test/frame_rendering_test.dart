@@ -18,7 +18,10 @@ import 'package:open_ecad/widgets/report_view.dart';
 
 class _MemoryPersistence extends ProjectPersistence {
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async => 'memory';
 }
 
 EcadProject _project({SizeMm paper = SizeMm.a4Landscape, int rows = 85}) =>

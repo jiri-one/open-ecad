@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:ecad_core/ecad_core.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart' show compute;
 
 import 'project_file_types.dart';
 
@@ -60,6 +61,7 @@ class PlatformProjectFiles implements ProjectFiles {
     required bool Function() canCommit,
     DocumentFileHandle? target,
     DocumentFileHandle? currentFile,
+    Iterable<String> Function()? protectedPaths,
   }) async {
     void checkCurrent() {
       if (!canCommit()) throw const DocumentOperationSuperseded();
@@ -71,6 +73,20 @@ class PlatformProjectFiles implements ProjectFiles {
     checkCurrent();
     if (selected == null) return null;
     final path = await _canonicalSavePath(selected);
+    void checkDestination() {
+      if ((protectedPaths?.call() ?? const <String>[]).any(
+        (p) =>
+            Platform.isWindows
+                ? p.toLowerCase() == path.toLowerCase()
+                : p == path,
+      )) {
+        throw StateError(
+          'Tento soubor patří otevřenému projektu. Pro kopii vyberte jiný soubor.',
+        );
+      }
+    }
+
+    checkDestination();
     final file = File(path);
     final known = target ?? (currentFile?.path == path ? currentFile : null);
     final expected = known?.version ?? await _version(file);
@@ -101,9 +117,15 @@ class PlatformProjectFiles implements ProjectFiles {
           }
         }
       }
-      final writtenVersion = _token(await temporary.stat(), bytes);
+      final stat = await temporary.stat();
+      final writtenVersion = await compute(_tokenData, (
+        size: stat.size,
+        modified: stat.modified.microsecondsSinceEpoch,
+        bytes: bytes,
+      ));
       if (await _version(file) != expected) throw ProjectFileConflict(path);
       checkCurrent();
+      checkDestination();
       // Keep document replacement and the OS commit in the same event-loop turn.
       temporary.renameSync(path);
       return SavedProjectFile(
@@ -134,13 +156,16 @@ Future<String?> _version(File file) async {
   return (await _read(file)).$2;
 }
 
-Future<(Uint8List, String)> _read(File file) async {
-  final before = await file.stat();
+Future<(Uint8List, String)> _read(File file) => compute(_readPath, file.path);
+
+(Uint8List, String) _readPath(String path) {
+  final file = File(path);
+  final before = file.statSync();
   if (before.size > ProjectLimits.maxFileBytes) {
     throw const FormatException('Projekt je větší než povolených 128 MiB.');
   }
-  final bytes = await file.readAsBytes();
-  final after = await file.stat();
+  final bytes = file.readAsBytesSync();
+  final after = file.statSync();
   if (after.type != FileSystemEntityType.file ||
       before.size != after.size ||
       before.modified != after.modified ||
@@ -151,11 +176,17 @@ Future<(Uint8List, String)> _read(File file) async {
   return (bytes, _token(after, bytes));
 }
 
-String _token(FileStat stat, Uint8List bytes) {
+String _token(FileStat stat, Uint8List bytes) => _tokenData((
+  size: stat.size,
+  modified: stat.modified.microsecondsSinceEpoch,
+  bytes: bytes,
+));
+
+String _tokenData(({int size, int modified, Uint8List bytes}) data) {
   // A stable content checksum catches equal-size edits with preserved timestamps.
   var checksum = 0xcbf29ce484222325;
-  for (final byte in bytes) {
+  for (final byte in data.bytes) {
     checksum = (checksum ^ byte) * 0x100000001b3;
   }
-  return '${stat.size}:${stat.modified.microsecondsSinceEpoch}:${checksum.toRadixString(16)}';
+  return '${data.size}:${data.modified}:${checksum.toRadixString(16)}';
 }

@@ -142,7 +142,7 @@ void main() {
           .withBindings(EditorCommand.nextSheet, [
             const ShortcutBinding(key: LogicalKeyboardKey.keyN),
           ])
-          .withBindings(EditorCommand.saveProject, [
+          .withBindings(EditorCommand.openProject, [
             const ShortcutBinding(key: LogicalKeyboardKey.keyA, control: true),
           ])
           .withBindings(EditorCommand.selectAll, []);

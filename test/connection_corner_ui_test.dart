@@ -19,7 +19,10 @@ import 'wiring_fixtures.dart';
 
 class MemoryPersistence extends ProjectPersistence {
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async => 'memory';
 }
 
 void screen(WidgetTester tester) {

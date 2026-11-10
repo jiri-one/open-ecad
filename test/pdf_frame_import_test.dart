@@ -405,7 +405,7 @@ void main() {
             case 'edit':
               app.renameProject('Novější práce');
             case 'close':
-              workspace.closeDocument(app);
+              await workspace.closeDocument(app);
           }
           workspace.active.reportStatus('Aktuální zpráva');
           final count = workspace.documents.length;

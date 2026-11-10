@@ -14,7 +14,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class _Persistence extends ProjectPersistence {
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async => 'memory';
 }
 
 EcadProject navigationProject({bool ambiguous = false, bool missing = false}) {

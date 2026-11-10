@@ -33,8 +33,12 @@ class ClipboardMemoryPersistence extends ProjectPersistence {
   final saved = <WorkingCopy>[];
   WorkingCopy? loaded;
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async {
     saved.add(copy);
+    return 'memory';
   }
 
   @override
@@ -362,7 +366,7 @@ void main() {
         case 'revision':
           app.renameProject('Edited');
         case 'close':
-          workspace.closeDocument(app);
+          await workspace.closeDocument(app);
         case 'escape':
           await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       }
@@ -450,6 +454,8 @@ void main() {
         persistence: persistence,
       );
       await mountContinuations(tester, app);
+      expect(persistence.saved.single.project.revision, 0);
+      persistence.saved.clear();
       await selectContinuation(tester, app);
       final original = app.project, bom = app.bom;
       await shortcut(tester, LogicalKeyboardKey.keyC);

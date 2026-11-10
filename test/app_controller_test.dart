@@ -21,6 +21,8 @@ class _ControlledPersistence extends ProjectPersistence {
   Future<SavedProjectFile?> saveAs(
     EcadProject project, {
     DocumentFileHandle? currentFile,
+    Iterable<String> Function()? protectedPaths,
+    EncodedProject? encoded,
     required bool Function() canCommit,
   }) {
     savedProjects.add(project);
@@ -38,9 +40,11 @@ class _ControlledPersistence extends ProjectPersistence {
   }
 
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) {
+  Future<String> saveWorkingCopy(WorkingCopy copy, {EncodedProject? encoded}) {
     autosavedProjects.add(copy.project);
-    return autosaveResult?.future ?? Future.value();
+    return (autosaveResult?.future ?? Future<void>.value()).then(
+      (_) => 'memory',
+    );
   }
 
   @override
@@ -88,275 +92,162 @@ class _DelayedAssistant extends AssistantService {
   }
 }
 
-class _FilePersistence extends ProjectPersistence {
-  Completer<void>? saveGate;
-
-  @override
-  Future<SavedProjectFile?> saveAs(
-    EcadProject project, {
-    DocumentFileHandle? currentFile,
-    required bool Function() canCommit,
-  }) async {
-    await saveGate?.future;
-    return const SavedProjectFile(name: 'Rozvaděč A.oecad');
-  }
-}
-
 void main() {
-  group('document-bound persistence', () {
+  group('document-bound project copies', () {
     for (final sameDemoId in [false, true]) {
       test(
-        'old save cannot mark a replacement clean (same demo ID: $sameDemoId)',
+        'copy completion cannot affect a replacement (demo: $sameDemoId)',
         () async {
           final persistence =
               _ControlledPersistence()..saveResult = Completer<String?>();
           final app = EditorController(persistence: persistence);
           addTearDown(app.dispose);
-          final original = app.project;
-          final saving = app.saveProject();
+          final copying = app.exportProjectCopy();
           expect(app.ioBusy, isTrue);
           app.newProject(demo: sameDemoId);
           final replacement = app.project;
-          final replacementStatus = app.status;
-          expect(replacement.revision, original.revision);
-          if (sameDemoId) expect(replacement.id, original.id);
-          expect(app.dirty, isTrue);
-
-          persistence.saveResult!.complete('old-project.oecad');
-          await saving;
-
-          expect(identical(app.project, replacement), isTrue);
-          expect(app.dirty, isTrue);
+          final status = app.status;
+          persistence.saveResult!.complete('old.oecad');
+          expect(await copying, isFalse);
+          expect(app.project, same(replacement));
           expect(app.fileName, isNull);
-          expect(app.status, replacementStatus);
+          expect(app.status, status);
           expect(app.ioBusy, isFalse);
-          persistence.saveResult = null;
-          await app.saveProject();
-          expect(app.dirty, isFalse);
-          expect(app.fileName, 'current.oecad');
+          expect(await app.flushWorkingCopy(), isTrue);
+          expect(app.changesSaved, isTrue);
         },
       );
     }
 
-    test(
-      'a save error from a replaced document cannot overwrite its status',
-      () async {
-        final persistence =
-            _ControlledPersistence()..saveResult = Completer<String?>();
-        final app = EditorController(persistence: persistence);
-        addTearDown(app.dispose);
-        final saving = app.saveProject();
-        app.newProject();
-        final status = app.status;
-        persistence.saveResult!.completeError(StateError('old disk failure'));
-        await saving;
-        expect(app.status, status);
-        expect(app.dirty, isTrue);
-        expect(app.ioBusy, isFalse);
-      },
-    );
-
-    test(
-      'saving a snapshot preserves newer unsaved edits in the same document',
-      () async {
-        final persistence =
-            _ControlledPersistence()..saveResult = Completer<String?>();
-        final app = EditorController(persistence: persistence);
-        addTearDown(app.dispose);
-        final saving = app.saveProject();
-        app.renameProject('Changed while saving');
-        persistence.saveResult!.complete('snapshot.oecad');
-        await saving;
-        expect(app.project.name, 'Changed while saving');
-        expect(app.dirty, isTrue);
-        expect(app.fileName, 'snapshot.oecad');
-        expect(app.status, contains('novější změny nejsou uložené'));
-        expect(persistence.savedProjects.single.revision, 0);
-      },
-    );
-
-    test('an open operation prevents overlapping opens and saves', () async {
-      final persistence =
-          _ControlledPersistence()..openResult = Completer<EcadProject?>();
-      final app = EditorController(persistence: persistence);
-      addTearDown(app.dispose);
-      final opening = app.openProject();
-      await app.openProject();
-      await app.saveProject();
-      expect(persistence.openCalls, 1);
-      expect(persistence.savedProjects, isEmpty);
-      persistence.openResult!.complete(
-        DemoProject.create().copyWith(name: 'Imported'),
-      );
-      await opening;
-      expect(app.project.name, 'Imported');
-      expect(app.dirty, isFalse);
-      expect(app.ioBusy, isFalse);
-    });
-
-    test('an in-flight save prevents a second save or open', () async {
+    test('copying a snapshot leaves later edits automatically saved', () async {
       final persistence =
           _ControlledPersistence()..saveResult = Completer<String?>();
       final app = EditorController(persistence: persistence);
       addTearDown(app.dispose);
-      final saving = app.saveProject();
-      await app.openProject();
-      await app.saveProject();
-      expect(persistence.openCalls, 0);
-      expect(persistence.savedProjects, hasLength(1));
-      persistence.saveResult!.complete(null);
-      await saving;
-      expect(app.ioBusy, isFalse);
+      final copying = app.exportProjectCopy();
+      app.renameProject('Changed while copying');
+      persistence.saveResult!.complete('copy.oecad');
+      expect(await copying, isTrue);
+      expect(await app.flushWorkingCopy(), isTrue);
+      expect(app.project.name, 'Changed while copying');
+      expect(app.fileName, isNull);
+      expect(app.dirty, isFalse);
+      expect(persistence.savedProjects.single.revision, 0);
+      expect(persistence.autosavedProjects.last.revision, app.project.revision);
     });
 
-    test('a pending open cannot replace a newly created document', () async {
+    test('an open operation prevents overlapping pickers and copies', () async {
       final persistence =
           _ControlledPersistence()..openResult = Completer<EcadProject?>();
       final app = EditorController(persistence: persistence);
       addTearDown(app.dispose);
       final opening = app.openProject();
-      app.newProject(demo: true);
-      final replacement = app.project;
-      final status = app.status;
+      expect(await app.openProject(), isFalse);
+      expect(await app.exportProjectCopy(), isFalse);
+      expect(persistence.openCalls, 1);
+      expect(persistence.savedProjects, isEmpty);
       persistence.openResult!.complete(
-        DemoProject.create().copyWith(name: 'Too late'),
+        DemoProject.create().copyWith(name: 'Opened'),
       );
-      await opening;
-      expect(identical(app.project, replacement), isTrue);
-      expect(app.dirty, isTrue);
-      expect(app.status, status);
+      expect(await opening, isTrue);
+      expect(app.project.name, 'Opened');
       expect(app.ioBusy, isFalse);
     });
 
-    test(
-      'a pending open cannot discard edits made while the picker was open',
-      () async {
-        final persistence =
-            _ControlledPersistence()..openResult = Completer<EcadProject?>();
-        final app = EditorController(persistence: persistence);
-        addTearDown(app.dispose);
-        final opening = app.openProject();
-        app.renameProject('Keep my edit');
-        persistence.openResult!.complete(
-          DemoProject.create().copyWith(name: 'Late import'),
-        );
-        await opening;
-        expect(app.project.name, 'Keep my edit');
-        expect(app.dirty, isTrue);
-        expect(app.status, contains('Otevření odloženo'));
-        expect(app.canUndo, isTrue);
-      },
-    );
+    test('a pending open cannot replace newer work', () async {
+      final persistence =
+          _ControlledPersistence()..openResult = Completer<EcadProject?>();
+      final app = EditorController(persistence: persistence);
+      addTearDown(app.dispose);
+      final opening = app.openProject();
+      app.renameProject('Keep my edit');
+      persistence.openResult!.complete(
+        DemoProject.create().copyWith(name: 'Late'),
+      );
+      expect(await opening, isFalse);
+      expect(app.project.name, 'Keep my edit');
+      expect(app.status, contains('Otevření odloženo'));
+      expect(await app.flushWorkingCopy(), isTrue);
+    });
 
-    test(
-      'finishing a save after disposal does not publish a saved document',
-      () async {
-        final persistence =
-            _ControlledPersistence()..saveResult = Completer<String?>();
-        final app = EditorController(persistence: persistence);
-        final saving = app.saveProject();
-        app.dispose();
-        persistence.saveResult!.complete('disposed.oecad');
-        await saving;
-        expect(app.fileName, isNull);
-      },
-    );
+    test('a disposed controller ignores a late copy completion', () async {
+      final persistence =
+          _ControlledPersistence()..saveResult = Completer<String?>();
+      final app = EditorController(persistence: persistence);
+      final copying = app.exportProjectCopy();
+      app.dispose();
+      persistence.saveResult!.complete('disposed.oecad');
+      expect(await copying, isFalse);
+      expect(app.fileName, isNull);
+    });
 
-    testWidgets('old autosave completion cannot label a replacement as saved', (
+    testWidgets('old autosave cannot label a replacement as saved', (
       tester,
     ) async {
-      final persistence =
-          _ControlledPersistence()..autosaveResult = Completer<void>();
+      final oldSave = Completer<void>(), newSave = Completer<void>();
+      final persistence = _ControlledPersistence()..autosaveResult = oldSave;
       final app = EditorController(persistence: persistence);
-      try {
-        app.renameProject('Old revision one');
-        await tester.pump(const Duration(milliseconds: 401));
-        expect(persistence.autosavedProjects, hasLength(1));
-        app.newProject(demo: true);
-        app.renameProject('New revision one');
-        expect(
-          app.project.revision,
-          persistence.autosavedProjects.single.revision,
-        );
-        persistence.autosaveResult!.complete();
-        await tester.pump();
-        expect(app.autosaveStatus, 'Ukládání pracovní kopie…');
-      } finally {
-        app.dispose();
-      }
+      addTearDown(app.dispose);
+      app.renameProject('Old revision');
+      await tester.pump();
+      expect(persistence.autosavedProjects, hasLength(1));
+      persistence.autosaveResult = newSave;
+      app.newProject(demo: true);
+      app.renameProject('New revision');
+      await tester.pump();
+      oldSave.complete();
+      await tester.pump();
+      expect(app.autosaveStatus, 'Ukládání…');
+      expect(app.changesSaved, isFalse);
+      newSave.complete();
+      await tester.pump();
+      expect(app.autosaveStatus, 'Uloženo místně');
+      expect(app.changesSaved, isTrue);
     });
   });
 
-  group('restoring the working copy', () {
+  group('restoring automatically saved local projects', () {
     setUp(() => SharedPreferences.setMockInitialValues({}));
 
-    Future<void> autosave() =>
-        Future<void>.delayed(const Duration(milliseconds: 450));
-
     Future<EditorController> restart(EditorController previous) async {
+      expect(await previous.flushWorkingCopy(), isTrue);
       previous.dispose();
-      final app = EditorController(persistence: _FilePersistence());
+      final app = EditorController();
       addTearDown(app.dispose);
       await app.initialize();
-      expect(app.status, 'Obnovena místní pracovní kopie');
+      expect(app.status, 'Otevřen místně uložený projekt');
+      expect(await app.flushWorkingCopy(), isTrue);
       return app;
     }
 
-    test('an immediate restart after save preserves its file state', () async {
-      final first = EditorController(persistence: _FilePersistence());
+    test('new projects and later edits survive immediate restart', () async {
+      final first = EditorController();
       await first.initialize();
       first.renameProject('Rozvaděč A');
-      await autosave();
-      await first.saveProject();
       final second = await restart(first);
       expect(second.project.name, 'Rozvaděč A');
       expect(second.dirty, isFalse);
-      expect(second.fileName, 'Rozvaděč A.oecad');
-      await autosave();
-    });
-
-    test('edits after a save restore as unsaved', () async {
-      final first = EditorController(persistence: _FilePersistence());
-      await first.initialize();
-      await first.saveProject();
-      first.renameProject('Změna po uložení');
-      await autosave();
-      final second = await restart(first);
-      expect(second.project.name, 'Změna po uložení');
-      expect(second.dirty, isTrue);
-      expect(second.fileName, 'Rozvaděč A.oecad');
-      await autosave();
-    });
-
-    test('a save finishing after newer edits does not cover them', () async {
-      final persistence = _FilePersistence()..saveGate = Completer<void>();
-      final first = EditorController(persistence: persistence);
-      await first.initialize();
-      final saving = first.saveProject();
-      first.renameProject('Během ukládání');
-      persistence.saveGate!.complete();
-      await saving;
-      expect(first.dirty, isTrue);
-      final second = await restart(first);
-      expect(second.project.name, 'Během ukládání');
-      expect(second.dirty, isTrue);
-      await autosave();
-    });
-
-    test('a replacement does not inherit the previous file state', () async {
-      final first = EditorController(persistence: _FilePersistence());
-      await first.initialize();
-      first.renameProject('Původní');
-      await first.saveProject();
-      await autosave();
-      first.newProject(demo: true);
-      await autosave();
-      final second = await restart(first);
-      expect(second.project.toJson(), DemoProject.create().toJson());
-      expect(second.dirty, isTrue);
       expect(second.fileName, isNull);
-      await autosave();
+      second.renameProject('Změna po obnovení');
+      final third = await restart(second);
+      expect(third.project.name, 'Změna po obnovení');
+      expect(third.changesSaved, isTrue);
     });
+
+    test(
+      'an exported copy does not become the active file on restart',
+      () async {
+        final persistence = _ControlledPersistence();
+        final first = EditorController(persistence: persistence);
+        addTearDown(first.dispose);
+        first.renameProject('Original');
+        expect(await first.exportProjectCopy(), isTrue);
+        expect(first.currentFile, isNull);
+        expect(first.fileName, isNull);
+        expect(await first.flushWorkingCopy(), isTrue);
+        expect(first.dirty, isFalse);
+      },
+    );
   });
 
   test(

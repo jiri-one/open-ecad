@@ -97,9 +97,10 @@ identifikaci zdroje SHA-256 a upozornění na nepřevedené vlastnosti.
   Z delšího PDF lze přes `--pages` vybrat až 1 024 stránek s čísly do 1 000 000.
   Dokument i historie úprav jsou v paměti. Velké importy vyžadují dostatek RAM;
   úvodní načtení a export mohou trvat déle.
-- Automatická pracovní kopie v nastavení je jen pro malé projekty do 2 MiB
-  a 15 000 grafických objektů. Větší projekty **ukládejte ručně do souboru**;
-  aplikace tento stav ukazuje v liště. Explicitní uložení zachovává všechny listy.
+- Importované projekty se ukládají automaticky do místního úložiště včetně
+  velkých importů v mezích limitu dokumentu. Stav zápisu je ve spodní liště;
+  při chybě zůstane projekt otevřený. Soubor pro přenos vytvoříte přes
+  **Vytvořit kopii projektu…**; kopie zachovává všechny listy.
 
 Aplikace čte formáty v4, v5 a v6 a ukládá v6. PDF převodník vytváří v6.
 Starší formáty se odmítají bez automatické migrace. Schéma je popsáno v

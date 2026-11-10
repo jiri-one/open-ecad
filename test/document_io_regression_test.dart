@@ -41,11 +41,13 @@ class _ObservedFiles implements ProjectFiles {
     required bool Function() canCommit,
     DocumentFileHandle? target,
     DocumentFileHandle? currentFile,
+    Iterable<String> Function()? protectedPaths,
   }) => native.save(
     bytes,
     suggestedName: suggestedName,
     target: target,
     currentFile: currentFile,
+    protectedPaths: protectedPaths,
     canCommit: () {
       if (directory.listSync().whereType<Directory>().isNotEmpty) {
         final before = beforeCommit;

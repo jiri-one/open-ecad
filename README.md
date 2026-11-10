@@ -114,11 +114,21 @@ tohoto prototypu; pracovní plocha se ověřuje od šířky 1024 px.
 - Artikly a fyzické komponenty se sdílenými elektrickými a montážními zobrazeními.
   Kusovník počítá fyzický kus jednou. Výstavba používá rozměry a polohy v mm;
   přístroje se umísťují ručně do společného montážního prostoru.
-- Otevřený verzovaný JSON formát `.oecad`, otevření/uložení, místní pracovní kopie
-  a obnova po opětovném spuštění. Explicitní uložení zapisuje soubor; automatická
-  kopie obsahuje poslední stav každého otevřeného projektu po přibližně 400 ms
-  klidu. Uchovává se také deset posledních kopií z předchozích relací; výslovné
-  zavření projektu jeho kopii odstraní. Obnova zachová i stav uložení do souboru.
+- Otevřený verzovaný JSON formát `.oecad` a automatické ukládání každé změny,
+  včetně kroků Zpět a Znovu. Otevřený soubor se průběžně aktualizuje; nové
+  a importované projekty se ukládají místně bez výběru souboru. Při zavření
+  aplikace nebo projektu se dokončí probíhající zápisy bez dotazu na uložení.
+  **Místní projekty…** umožňuje znovu otevřít nebo odstranit zavřený projekt;
+  projekty se automaticky nepromazávají. Opětovné otevření stejného souboru
+  používá jeho dosavadní synchronizovanou místní kopii. Desktop ukládá projekty atomicky do
+  samostatných souborů v datovém adresáři aplikace, web do úložiště prohlížeče.
+  Stav zápisu je ve spodní liště. Při chybě lze zápis zopakovat; při zavírání
+  aplikace nabídne vytvoření kopie nebo zavření bez dalšího ukládání.
+  Při nedostupném souboru lze **Pokračovat v místním projektu**.
+  Pokud selže pouze místní záloha, změny se přesto uloží do dostupného zdrojového
+  souboru a lišta zobrazí upozornění.
+  Pro přenos slouží **Vytvořit kopii projektu…**.
+  Kopie `.oecad` zachycuje aktuální stav a nemění soubor právě upravovaného projektu.
 - Vektorový PDF export všech listů, SVG export aktuálního listu a CSV kusovníku,
   s českými texty a zachovaným měřítkem.
 - [Místní import PDF](docs/pdf-import.md) jako editovatelné vektory, texty a obrázky
@@ -236,7 +246,8 @@ zkratky. Následující tabulka uvádí výchozí nastavení.
 | --- | --- |
 | Ctrl/Cmd + K | Paleta příkazů |
 | Ctrl/Cmd + L | Zadání asistentovi |
-| Ctrl/Cmd + S / O | Uložit / otevřít projekt |
+| Ctrl/Cmd + O | Otevřít projekt |
+| Ctrl/Cmd + Shift + S | Vytvořit kopii projektu |
 | Ctrl/Cmd + Z / Shift + Z; Ctrl + Y | Undo / redo |
 | Ctrl/Cmd + C / V | Kopírovat výběr / vložit náhled kliknutím; Esc zruší |
 | Ctrl/Cmd + A / D | Vybrat vše / duplikovat výběr |
@@ -389,10 +400,10 @@ Schéma používá výkresové jednotky; fyzické rozměry a montážní polohy 
 a montážní pohled i export respektují nastavené měřítko.
 
 Kontrola ověřuje konzistenci dat a konektivitu, neposuzuje dimenzování, jištění ani
-soulad elektroinstalace s normami. Obnova uchovává pracovní stav po dokumentových
-relacích; historie undo ani chat se neukládají. Každá kopie je omezena na 2 MiB a 15 000
-grafických objektů; velké importy vyžadují ruční uložení do souboru. Používá se
-paměťový dokument a celoprojektová validace; rozsáhlé importy mohou blokovat UI.
+soulad elektroinstalace s normami. Automatické ukládání uchovává pracovní stav
+každého projektu; historie undo ani chat se neukládají. Limit uloženého projektu
+je 128 MiB. Používá se paměťový dokument a celoprojektová validace;
+rozsáhlé importy mohou blokovat UI.
 Formát se v této rané fázi může měnit bez zachování zpětné kompatibility.
 
 ## Licence

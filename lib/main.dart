@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -13,10 +15,11 @@ Future<void> main(List<String> args) async {
   await DesktopWindow.initialize();
   if (kIsWeb) _webSemantics ??= SemanticsBinding.instance.ensureSemantics();
   final options = StartupOptions.parse(args, isWeb: kIsWeb);
-  final controller = EditorController(startEmpty: options.explicitRequest);
-  await controller.initialize(
+  final controller = EditorController(startEmpty: true);
+  final initialization = controller.initialize(
     startupProjectPath: options.projectPath,
     startupError: options.error,
   );
   runApp(OpenEcadApp(controller: controller));
+  unawaited(initialization);
 }

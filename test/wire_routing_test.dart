@@ -58,7 +58,10 @@ Map<String, Device> _devices(Sheet sheet) => {
 
 class _MemoryPersistence extends ProjectPersistence {
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async => 'memory';
 }
 
 /// Painted unselected wires, as recorded from the canvas painter.

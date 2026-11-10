@@ -136,8 +136,7 @@ void main() {
   test('defaults preserve every command and its visible shortcut labels', () {
     const labels = {
       EditorCommand.openProject: 'Ctrl O',
-      EditorCommand.saveProject: 'Ctrl S',
-      EditorCommand.saveProjectAs: 'Ctrl Shift S',
+      EditorCommand.exportProjectCopy: 'Ctrl Shift S',
       EditorCommand.commandPalette: 'Ctrl K',
       EditorCommand.focusAssistant: 'Ctrl L',
       EditorCommand.undo: 'Ctrl Z',
@@ -172,8 +171,7 @@ void main() {
       EditorCommand.values.where((command) => command.allowWhileEditingText),
       [
         EditorCommand.openProject,
-        EditorCommand.saveProject,
-        EditorCommand.saveProjectAs,
+        EditorCommand.exportProjectCopy,
         EditorCommand.commandPalette,
         EditorCommand.focusAssistant,
       ],
@@ -184,14 +182,14 @@ void main() {
   test('binding lists are immutable and disabling survives a round trip', () {
     final input = [_custom, _custom];
     final changed = _defaults
-        .withBindings(EditorCommand.saveProject, input)
+        .withBindings(EditorCommand.openProject, input)
         .withBindings(EditorCommand.deleteSelection, []);
     input.clear();
-    expect(changed.bindings(EditorCommand.saveProject), [_custom]);
+    expect(changed.bindings(EditorCommand.openProject), [_custom]);
     expect(changed.labelFor(EditorCommand.deleteSelection), isEmpty);
-    expect(_defaults.labelFor(EditorCommand.saveProject), 'Ctrl S');
+    expect(_defaults.labelFor(EditorCommand.openProject), 'Ctrl O');
     expect(
-      () => changed.bindings(EditorCommand.saveProject).clear(),
+      () => changed.bindings(EditorCommand.openProject).clear(),
       throwsUnsupportedError,
     );
     expect(
@@ -204,8 +202,8 @@ void main() {
     expect(
       changed
           .withBindings(
-            EditorCommand.saveProject,
-            _defaults.bindings(EditorCommand.saveProject),
+            EditorCommand.openProject,
+            _defaults.bindings(EditorCommand.openProject),
           )
           .withBindings(
             EditorCommand.deleteSelection,
@@ -248,7 +246,6 @@ void main() {
         .withBindings(EditorCommand.textTool, [chord]);
     expect(changed.hasConflicts, isTrue);
     expect(changed.conflicts[chord], [
-      EditorCommand.saveProject,
       EditorCommand.lineTool,
       EditorCommand.textTool,
     ]);
@@ -294,13 +291,13 @@ void main() {
     );
     await tester.pump();
     await _chord(tester, LogicalKeyboardKey.keyS, control: true);
-    expect(command, EditorCommand.saveProject);
+    expect(command, isNull);
     expect(captured!.label, 'Ctrl S');
     await _chord(tester, LogicalKeyboardKey.keyS, meta: true);
-    expect(command, EditorCommand.saveProject);
+    expect(command, isNull);
     expect(captured!.label, 'Ctrl S');
     await _chord(tester, LogicalKeyboardKey.keyS, control: true, shift: true);
-    expect(command, EditorCommand.saveProjectAs);
+    expect(command, EditorCommand.exportProjectCopy);
     await _chord(tester, LogicalKeyboardKey.keyS, control: true, alt: true);
     expect(command, isNull);
     await _chord(tester, LogicalKeyboardKey.keyS);
@@ -406,7 +403,7 @@ void main() {
       expect(loads, 1);
       expect(notifications, 0);
       final changed = _defaults
-          .withBindings(EditorCommand.saveProject, [_custom])
+          .withBindings(EditorCommand.openProject, [_custom])
           .withBindings(EditorCommand.cancelTool, []);
       await preferences.save(changed);
       expect(notifications, 1);
@@ -461,11 +458,11 @@ void main() {
         '[]',
         'null',
         '{"unknown":[]}',
-        '{"saveProject":{}}',
+        '{"openProject":{}}',
         for (final binding in corruptBindings)
           jsonEncode({
             'lineTool': [],
-            'saveProject': [binding],
+            'openProject': [binding],
           }),
       ]) {
         SharedPreferences.setMockInitialValues({
@@ -477,8 +474,8 @@ void main() {
         preferences.dispose();
       }
       expect(
-        KeyboardShortcuts.decode('{"saveProject":[]}'),
-        _defaults.withBindings(EditorCommand.saveProject, []),
+        KeyboardShortcuts.decode('{"openProject":[]}'),
+        _defaults.withBindings(EditorCommand.openProject, []),
       );
     },
   );
@@ -493,7 +490,7 @@ void main() {
         loadPreferences: () => ready.future,
       );
       addTearDown(preferences.dispose);
-      final first = _defaults.withBindings(EditorCommand.saveProject, [
+      final first = _defaults.withBindings(EditorCommand.openProject, [
         _custom,
       ]);
       final last = _defaults.withBindings(EditorCommand.lineTool, []);
@@ -532,7 +529,7 @@ void main() {
       await preferences.load();
       expect(loads, 2);
       final first = _defaults.withBindings(EditorCommand.lineTool, []);
-      final last = _defaults.withBindings(EditorCommand.saveProject, [_custom]);
+      final last = _defaults.withBindings(EditorCommand.openProject, [_custom]);
       await preferences.save(first);
       var notifications = 0;
       preferences.addListener(() => notifications++);
@@ -598,10 +595,10 @@ void main() {
       await _open(tester);
       expect(find.textContaining('Cmd na macOS'), findsOneWidget);
       await _search(tester, 'Ctrl Shift S');
-      expect(find.text(EditorCommand.saveProjectAs.label), findsOneWidget);
+      expect(find.text(EditorCommand.exportProjectCopy.label), findsOneWidget);
       expect(find.text(EditorCommand.selectTool.label), findsNothing);
-      await _tap(tester, _control('clear', EditorCommand.saveProjectAs));
-      await _search(tester, EditorCommand.saveProjectAs.label);
+      await _tap(tester, _control('clear', EditorCommand.exportProjectCopy));
+      await _search(tester, EditorCommand.exportProjectCopy.label);
       expect(find.text('Bez zkratky'), findsOneWidget);
       expect(preferences.value, _defaults);
       await tester.tap(find.text('Zrušit'));
@@ -622,8 +619,8 @@ void main() {
       addTearDown(preferences.dispose);
       await _mount(tester, preferences);
       await _open(tester);
-      await _search(tester, EditorCommand.saveProject.label);
-      await _tap(tester, _binding(EditorCommand.saveProject));
+      await _search(tester, EditorCommand.openProject.label);
+      await _tap(tester, _binding(EditorCommand.openProject));
       await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
       await tester.pump();
       expect(find.text('Zrušit zadávání'), findsOneWidget);
@@ -633,17 +630,17 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       await tester.pumpAndSettle();
       expect(find.text('Ctrl Alt Q'), findsOneWidget);
-      await _tap(tester, _control('add', EditorCommand.saveProject));
+      await _tap(tester, _control('add', EditorCommand.openProject));
       await _chord(tester, LogicalKeyboardKey.f8);
       expect(find.text('F8'), findsOneWidget);
-      await _tap(tester, _control('add', EditorCommand.saveProject));
+      await _tap(tester, _control('add', EditorCommand.openProject));
       await tester.tap(find.text('Zrušit zadávání'));
       await tester.pumpAndSettle();
       expect(find.text('Ctrl Alt Q'), findsOneWidget);
       await _tap(
         tester,
         find.descendant(
-          of: _binding(EditorCommand.saveProject, 1),
+          of: _binding(EditorCommand.openProject, 1),
           matching: find.byTooltip('Odebrat zkratku'),
         ),
       );
@@ -652,7 +649,7 @@ void main() {
       await tester.tap(find.text('Uložit'));
       await tester.pumpAndSettle();
       expect(find.byType(KeyboardShortcutsDialog), findsNothing);
-      expect(preferences.value.bindings(EditorCommand.saveProject), [_custom]);
+      expect(preferences.value.bindings(EditorCommand.openProject), [_custom]);
       final restored = KeyboardShortcutPreferences();
       addTearDown(restored.dispose);
       await restored.load();
@@ -667,8 +664,8 @@ void main() {
       addTearDown(preferences.dispose);
       await _mount(tester, preferences);
       await _open(tester);
-      await _search(tester, EditorCommand.saveProject.label);
-      await _tap(tester, _binding(EditorCommand.saveProject));
+      await _search(tester, EditorCommand.openProject.label);
+      await _tap(tester, _binding(EditorCommand.openProject));
       await _chord(tester, LogicalKeyboardKey.escape);
       expect(find.byType(KeyboardShortcutsDialog), findsOneWidget);
       expect(find.text('Esc'), findsOneWidget);
@@ -680,8 +677,8 @@ void main() {
       await _search(tester, EditorCommand.cancelTool.label);
       await _tap(tester, _control('clear', EditorCommand.cancelTool));
       expect(_canSave(tester), isTrue);
-      await _search(tester, EditorCommand.saveProject.label);
-      await _tap(tester, _control('add', EditorCommand.saveProject));
+      await _search(tester, EditorCommand.openProject.label);
+      await _tap(tester, _control('add', EditorCommand.openProject));
       await _chord(tester, LogicalKeyboardKey.space);
       expect(find.text('Space'), findsOneWidget);
       expect(
@@ -700,7 +697,7 @@ void main() {
       await tester.tap(find.text('Uložit'));
       await tester.pumpAndSettle();
       expect(
-        preferences.value.labelFor(EditorCommand.saveProject),
+        preferences.value.labelFor(EditorCommand.openProject),
         'Esc / Space',
       );
       expect(preferences.value.bindings(EditorCommand.cancelTool), isEmpty);
@@ -712,7 +709,7 @@ void main() {
     tester,
   ) async {
     final changed = _defaults
-        .withBindings(EditorCommand.saveProject, [_custom])
+        .withBindings(EditorCommand.openProject, [_custom])
         .withBindings(EditorCommand.lineTool, []);
     SharedPreferences.setMockInitialValues({
       KeyboardShortcutPreferences.storageKey: changed.encode(),
@@ -721,10 +718,10 @@ void main() {
     addTearDown(preferences.dispose);
     await _mount(tester, preferences);
     await _open(tester);
-    await _search(tester, EditorCommand.saveProject.label);
+    await _search(tester, EditorCommand.openProject.label);
     expect(find.text('Ctrl Alt Q'), findsOneWidget);
-    await _tap(tester, _control('default', EditorCommand.saveProject));
-    expect(find.text('Ctrl S'), findsOneWidget);
+    await _tap(tester, _control('default', EditorCommand.openProject));
+    expect(find.text('Ctrl O'), findsOneWidget);
     expect(preferences.value, changed);
     await _search(tester, EditorCommand.lineTool.label);
     expect(find.text('Bez zkratky'), findsOneWidget);
@@ -740,7 +737,7 @@ void main() {
   testWidgets('dialog waits for an in-flight load before reading its draft', (
     tester,
   ) async {
-    final changed = _defaults.withBindings(EditorCommand.saveProject, [
+    final changed = _defaults.withBindings(EditorCommand.openProject, [
       _custom,
     ]);
     SharedPreferences.setMockInitialValues({
@@ -762,7 +759,7 @@ void main() {
     ready.complete(store);
     await tester.pumpAndSettle();
     await startup;
-    await _search(tester, EditorCommand.saveProject.label);
+    await _search(tester, EditorCommand.openProject.label);
     expect(find.text('Ctrl Alt Q'), findsOneWidget);
     await tester.tap(find.text('Uložit'));
     await tester.pumpAndSettle();
@@ -790,8 +787,8 @@ void main() {
       expect(_canSave(tester), isFalse);
       await tester.tap(find.text('Zkusit znovu'));
       await tester.pumpAndSettle();
-      await _search(tester, EditorCommand.saveProject.label);
-      await _tap(tester, _control('clear', EditorCommand.saveProject));
+      await _search(tester, EditorCommand.openProject.label);
+      await _tap(tester, _control('clear', EditorCommand.openProject));
       store.failWrites = true;
       await tester.tap(find.text('Uložit'));
       await tester.pumpAndSettle();
@@ -805,7 +802,7 @@ void main() {
       await tester.tap(find.text('Uložit'));
       await tester.pumpAndSettle();
       expect(find.byType(KeyboardShortcutsDialog), findsNothing);
-      expect(preferences.value.bindings(EditorCommand.saveProject), isEmpty);
+      expect(preferences.value.bindings(EditorCommand.openProject), isEmpty);
     },
   );
 
@@ -820,8 +817,8 @@ void main() {
     addTearDown(preferences.dispose);
     await _mount(tester, preferences);
     await _open(tester);
-    await _search(tester, EditorCommand.saveProject.label);
-    await _tap(tester, _control('clear', EditorCommand.saveProject));
+    await _search(tester, EditorCommand.openProject.label);
+    await _tap(tester, _control('clear', EditorCommand.openProject));
     store.nextWrite = writing;
     await tester.tap(find.text('Uložit'));
     await tester.pumpAndSettle();

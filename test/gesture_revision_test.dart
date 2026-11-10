@@ -9,7 +9,10 @@ import 'package:open_ecad/services/project_persistence.dart';
 
 class _Persistence extends ProjectPersistence {
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async => 'memory';
 }
 
 void main() {

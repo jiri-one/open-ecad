@@ -13,14 +13,32 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
 class _Persistence extends ProjectPersistence {
-  bool allowSave = false;
+  bool fail = false;
+  String? failName;
+  bool allowCopy = false;
+  EcadProject? exported;
+
+  @override
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async {
+    if (fail || copy.project.name == failName) throw StateError('Disk full');
+    return super.saveWorkingCopy(copy, encoded: encoded);
+  }
 
   @override
   Future<SavedProjectFile?> saveAs(
     EcadProject project, {
     DocumentFileHandle? currentFile,
+    Iterable<String> Function()? protectedPaths,
+    EncodedProject? encoded,
     required bool Function() canCommit,
-  }) async => allowSave ? const SavedProjectFile(name: 'memory.oecad') : null;
+  }) async {
+    if (!allowCopy) throw StateError('Copy unavailable');
+    exported = project;
+    return const SavedProjectFile(name: 'copy.oecad');
+  }
 }
 
 void main() {
@@ -85,7 +103,9 @@ void main() {
           (_) {},
         );
         await tester.pumpAndSettle();
-        expect(tester.element(find.byType(SchematicCanvas)), same(canvas));
+        if (name != 'close') {
+          expect(tester.element(find.byType(SchematicCanvas)), same(canvas));
+        }
         expect(find.byType(ProjectPanel), findsNothing);
         expect(tester.takeException(), isNull);
       }
@@ -122,29 +142,25 @@ void main() {
       );
       fullScreen = false;
       await event('leave-full-screen');
+      persistence.fail = true;
       app.renameProject('Edited window test');
       await tester.pump();
       await tester.tap(find.byTooltip('Zavřít okno'));
       expect(calls.last.method, 'close');
-      expect(app.dirty, isTrue);
+      await event('close');
+      expect(find.textContaining('Neuložené změny'), findsNothing);
+      expect(app.autosaveError, contains('Disk full'));
+      expect(calls.where((c) => c.method == 'destroy'), isEmpty);
+      await tester.tap(find.text('Pokračovat v úpravách'));
+      await tester.pumpAndSettle();
       expect(
-        ModalRoute.of(tester.element(find.byType(EditorWorkspace)))?.isCurrent,
-        isTrue,
+        find.byTooltip('Zkusit automatické uložení znovu'),
+        findsOneWidget,
       );
-      await event('close');
-      expect(app.status, isNot(startsWith('Okno se nepodařilo')));
-      expect(find.text('Neuložené změny · Edited window test'), findsOneWidget);
-      expect(calls.where((c) => c.method == 'destroy'), isEmpty);
-      await tester.tap(find.text('Uložit'));
+      persistence.fail = false;
+      await tester.tap(find.byTooltip('Zkusit automatické uložení znovu'));
       await tester.pumpAndSettle();
-      expect(app.status, 'Uložení zrušeno');
-      expect(calls.where((c) => c.method == 'destroy'), isEmpty);
-      await event('close');
-      await event('close');
-      expect(find.text('Neuložené změny · Edited window test'), findsOneWidget);
-      await tester.tap(find.text('Zrušit'));
-      await tester.pumpAndSettle();
-      expect(calls.where((c) => c.method == 'destroy'), isEmpty);
+      expect(app.changesSaved, isTrue);
       final workspace =
           tester
               .widget<EditorWorkspace>(find.byType(EditorWorkspace))
@@ -155,38 +171,69 @@ void main() {
       );
       workspace.add(other);
       workspace.openSheet(app, app.activeSheetId);
+      persistence.failName = 'Other edited';
       other.renameProject('Other edited');
       app.renameProject('Changed immediately before close');
       await event('close');
-      persistence.allowSave = true;
-      await tester.tap(find.text('Uložit'));
-      await tester.pumpAndSettle();
-      expect(app.dirty, isFalse);
-      expect(find.text('Neuložené změny · Other edited'), findsOneWidget);
+      expect(workspace.active, same(other));
       expect(calls.where((c) => c.method == 'destroy'), isEmpty);
-      other.renameProject('Other changed while confirming');
-      await tester.tap(find.text('Zavřít bez uložení'));
+      await tester.tap(find.text('Pokračovat v úpravách'));
       await tester.pumpAndSettle();
-      expect(calls.where((c) => c.method == 'destroy'), isEmpty);
+      persistence.failName = null;
       await event('close');
-      expect(
-        find.text('Neuložené změny · Other changed while confirming'),
-        findsOneWidget,
-      );
-      await tester.tap(find.text('Zavřít bez uložení'));
-      await tester.pumpAndSettle();
+      expect(find.textContaining('Neuložené změny'), findsNothing);
       expect(calls.where((c) => c.method == 'destroy'), hasLength(1));
-      final recovered = await app.persistence.loadAutosave(
-        sessionId: app.documentSessionId,
+      expect(
+        (await persistence.loadAutosave(
+          sessionId: app.documentSessionId,
+        ))!.project.name,
+        'Changed immediately before close',
       );
-      expect(recovered!.project.name, 'Changed immediately before close');
-      expect(recovered.savedRevision, app.project.revision);
       expect(
         (await persistence.loadAutosave(
           sessionId: other.documentSessionId,
         ))!.project.name,
-        'Other changed while confirming',
+        'Other edited',
       );
+      workspace.openSheet(app, app.activeSheetId);
+      final before = await persistence.loadProjectSummary(
+        app.documentSessionId,
+      );
+      await event('close');
+      expect(calls.where((c) => c.method == 'destroy'), hasLength(2));
+      expect(
+        (await persistence.loadStartupProject())!.sessionId,
+        app.documentSessionId,
+      );
+      expect(
+        (await persistence.loadProjectSummary(
+          app.documentSessionId,
+        ))!.storageToken,
+        before!.storageToken,
+      );
+      persistence.fail = true;
+      app.renameProject('Cannot save');
+      await event('close');
+      await tester.tap(find.text('Vytvořit kopii a zavřít'));
+      await tester.pumpAndSettle();
+      expect(calls.where((c) => c.method == 'destroy'), hasLength(2));
+      await event('close');
+      await tester.tap(find.text('Přesto zavřít'));
+      await tester.pumpAndSettle();
+      expect(calls.where((c) => c.method == 'destroy'), hasLength(3));
+      expect(
+        (await persistence.loadAutosave(
+          sessionId: app.documentSessionId,
+        ))!.project.name,
+        'Changed immediately before close',
+      );
+      app.renameProject('Rescued copy');
+      persistence.allowCopy = true;
+      await event('close');
+      await tester.tap(find.text('Vytvořit kopii a zavřít'));
+      await tester.pumpAndSettle();
+      expect(persistence.exported!.name, 'Rescued copy');
+      expect(calls.where((c) => c.method == 'destroy'), hasLength(4));
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 500));
       debugDefaultTargetPlatformOverride = null;

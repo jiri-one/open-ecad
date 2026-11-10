@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:ecad_core/ecad_core.dart';
 import 'package:flutter/foundation.dart';
 import '../services/sheet_navigation.dart';
@@ -67,6 +65,7 @@ class WorkspaceController extends ChangeNotifier {
     _listeners[document] = changed;
     document.addListener(changed);
     openSheet(document, document.activeSheetId);
+    document.enableAutosave();
   }
 
   void openSheet(
@@ -145,10 +144,20 @@ class WorkspaceController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // The caller resolves unsaved changes before removing a document.
-  void closeDocument(EditorController doc) {
-    if (!_documents.contains(doc)) return;
-    final sessionId = doc.documentSessionId;
+  Future<bool> closeDocument(
+    EditorController doc, {
+    bool discardChanges = false,
+  }) async {
+    if (!_documents.contains(doc) || doc.ioBusy) return false;
+    final generation = doc.documentGeneration;
+    if ((!discardChanges && !await doc.flushWorkingCopy()) ||
+        _disposed ||
+        !_documents.contains(doc) ||
+        !doc.isDocumentCurrent(generation) ||
+        (!discardChanges && !doc.changesSaved) ||
+        doc.ioBusy) {
+      return false;
+    }
     _tabs.removeWhere((t) => t.sessionId == doc.documentSessionId);
     doc.removeListener(_listeners.remove(doc)!);
     _lastSheets.remove(doc);
@@ -167,17 +176,18 @@ class WorkspaceController extends ChangeNotifier {
       }
     }
     notifyListeners();
-    final owner = active, statusGeneration = active.statusGeneration;
-    unawaited(
-      doc.persistence.removeWorkingCopy(sessionId).catchError((Object _) {
-        if (!_disposed &&
-            active == owner &&
-            active.statusGeneration == statusGeneration) {
-          active.reportStatus(
-            'Pracovní kopii zavřeného projektu se nepodařilo odstranit.',
-          );
-        }
-      }),
+    return true;
+  }
+
+  Future<bool> exportProjectCopy({EditorController? document}) {
+    final doc = document ?? active;
+    if (_disposed || !_documents.contains(doc)) return Future.value(false);
+    return doc.exportProjectCopy(
+      protectedPaths:
+          () => {
+            for (final other in _documents)
+              if (other.currentFile != null) other.currentFile!.path,
+          },
     );
   }
 
@@ -257,10 +267,10 @@ class WorkspaceController extends ChangeNotifier {
       candidate.dispose();
       return false;
     }
-    return _adopt(candidate);
+    return _adopt(candidate, restoring: true);
   }
 
-  bool _adopt(EditorController candidate) {
+  bool _adopt(EditorController candidate, {bool restoring = false}) {
     if (_disposed) {
       candidate.dispose();
       return false;
@@ -271,12 +281,27 @@ class WorkspaceController extends ChangeNotifier {
             .where(
               (d) =>
                   d.documentSessionId == candidate.documentSessionId ||
-                  (canonical != null && d.currentFile?.path == canonical),
+                  (canonical != null &&
+                      d.currentFile != null &&
+                      candidate.persistence.fileSessionId(
+                            d.currentFile!.path,
+                          ) ==
+                          candidate.persistence.fileSessionId(canonical)),
             )
             .firstOrNull;
     if (existing != null) {
+      final pendingRecovery =
+          restoring &&
+          existing.documentSessionId != candidate.documentSessionId &&
+          candidate.dirty;
       candidate.dispose();
       openSheet(existing, existing.activeSheetId);
+      if (pendingRecovery) {
+        existing.reportStatus(
+          'Místní změny nebyly obnoveny: soubor je již otevřený. Nejprve tento projekt zavřete a pak obnovte místní změny.',
+        );
+        return false;
+      }
     } else {
       add(candidate);
     }
@@ -289,6 +314,7 @@ class WorkspaceController extends ChangeNotifier {
   }) {
     final doc = EditorController(
       startEmpty: !demo,
+      autosaveEnabled: false,
       persistence: active.persistence,
       importer: importer ?? active.importer.source,
     );
@@ -298,9 +324,7 @@ class WorkspaceController extends ChangeNotifier {
     return doc;
   }
 
-  void create({bool demo = false}) {
-    add(_createDocument(demo: demo));
-  }
+  void create({bool demo = false}) => add(_createDocument(demo: demo));
 
   @override
   void dispose() {

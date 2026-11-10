@@ -159,16 +159,36 @@ si zachovávají krátké přechody; režim nebyl fyzicky měřen na e-ink panel
 `ProjectPersistence` odděluje JSON dokument od platformních dialogů a prohlížečového
 stahování. `.oecad` a `.ecad.json` jsou dvě přípony stejného formátu. Vstup se
 kontroluje při dekódování i podle integrity grafu. GUI i CLI omezují soubor na
-128 MiB. Pracovní kopie jsou oddělené podle relace a zápisy
-jsou řazené, aby pomalejší zápis nepřepsal novější stav. Každá je omezená na
-2 MiB a 15 000 grafických objektů; velké importy vyžadují explicitní uložení.
-Uchovává se deset nejnovějších kopií mimo otevřené relace. Otevřené dokumenty
-mají samostatně počítané držitele, takže ani souběžná obnova neumožní promazat
-jejich kopie. Výslovné zavření po vyřešení změn odstraní kopii až za jejími
-rozpracovanými zápisy; zavření celého okna vyřeší neuložené změny všech projektů
-a dokončí zápis pracovních kopií, které zachová pro další spuštění.
-Ve stejném záznamu nese revizi naposledy uloženou do souboru a jeho název, takže
-obnova neoznačí uloženou práci za neuloženou ani novější změny za uložené.
+128 MiB. Každá potvrzená změna okamžitě požádá o uložení, včetně undo/redo.
+Řadič projektu řadí zápisy; změny vzniklé během ukládání následně dopíše.
+Nejprve vzniká místní checkpoint, u projektu se souborem následuje atomický zápis
+téhož snímku přes stávající verzovaný handle a checkpoint nového tokenu. Konflikt
+s cizí změnou se nepřepisuje. Uživatel může zápis zopakovat nebo pokračovat místně;
+odpojení souboru nastane až po úspěšném zápisu nové místní kopie. Při chybě místní
+zálohy se dostupný zdrojový soubor dále ukládá a rozhraní zobrazí upozornění.
+`FileProjectStorage` ukládá jednotlivé projekty přes dočasný soubor a rename
+v datovém adresáři aplikace. Porovnání obsahového tokenu a zápis chrání zámek
+mezi procesy. Web používá úložiště prohlížeče s Web Locks a při čtení znovu
+načítá skutečné klíče záznamů. Zastaralý index nezakryje projekty z jiné karty.
+Místní projekty se automaticky nepromazávají, ani při zavření; zavřené projekty
+lze odstranit v jejich seznamu. Synchronizovaný soubor používá stejnou místní
+kopii při opakovaném otevření. Web znovu používá import se stejným názvem a obsahem.
+Nedotčená prázdná pracovní plocha žádný záznam nevytváří.
+Zavření projektu i okna čeká na dokončení zápisů bez přepisování čistých kopií.
+Pouze při chybě nabídne vytvoření kopie nebo výslovné zavření bez dalšího ukládání;
+úspěšně uložené místní kopie zachová i v tomto případě.
+Poslední aktivní projekt se pamatuje zvlášť od pořadí uložených kopií.
+Obnova synchronizovaného projektu načte aktuální soubor. Nedopsané místní změny
+zachová a ověří původní token; shoda celého obsahu zachytí i pád mezi zápisem
+souboru a jeho checkpointem. Dočasní kandidáti začínají ukládat až po přijetí
+do pracovního prostoru. Export kopie nemění cíl projektu a odmítá cesty
+souborů jiných otevřených projektů i vlastního zdroje, ověřené znovu těsně před
+zápisem. Pokud je zdroj obnovovaného projektu již otevřený, místní čekající změny
+zůstanou zachované a rozhraní vysvětlí, proč je nelze právě obnovit.
+Seznam místních projektů čte jen malé hlavičky. Velké dokumenty se kódují,
+kontrolují a obnovují na desktopu přes `compute`; připravený JSON, bajty a hash
+se během jednoho ukládání používají opakovaně. Limit 128 MiB platí pro samotný
+projekt bez obálky místní kopie. Při úvodním načítání se zobrazí stav otevření.
 Na desktopu probíhá převod PDF v odděleném procesu a JSON kódování/dekódování přes
 `compute`. Převodník se hledá ve složce `scripts` vedle aplikace, při vývojovém
 spuštění také přímo v pracovní složce, nikdy v jejích nadřazených složkách.

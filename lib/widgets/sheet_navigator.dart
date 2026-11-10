@@ -156,7 +156,7 @@ class _SheetNavigatorState extends State<SheetNavigator> {
     title: Tooltip(
       message: doc.project.name,
       child: Text(
-        '${_singleLine(doc.project.name)}${doc.dirty ? ' ●' : ''}',
+        _singleLine(doc.project.name),
         maxLines: 1,
         softWrap: false,
         overflow: TextOverflow.ellipsis,

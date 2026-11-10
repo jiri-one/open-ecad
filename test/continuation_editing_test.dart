@@ -285,7 +285,7 @@ void main() {
             b.dispose();
           case 'close':
             workspace.add(b);
-            workspace.closeDocument(app);
+            await workspace.closeDocument(app);
         }
         await tester.pumpAndSettle();
         final active = workspace.active;

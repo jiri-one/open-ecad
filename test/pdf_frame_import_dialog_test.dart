@@ -127,7 +127,8 @@ void main() {
         expect(workspace.documents, hasLength(cancel ? 1 : 2));
       }
       expect(workspace.active.project.id, 'pdf-import-test');
-      expect(workspace.active.dirty, isTrue);
+      expect(workspace.active.changesSaved, isTrue);
+      expect(await app.persistence.listRecoveryIds(), hasLength(1));
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 500));
       expect(tester.takeException(), isNull);

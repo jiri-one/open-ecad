@@ -41,7 +41,10 @@ class _Persistence extends ProjectPersistence {
   Future<LoadedProject> loadPath(String path) async =>
       LoadedProject(_project());
   @override
-  Future<void> saveWorkingCopy(WorkingCopy copy) async {}
+  Future<String> saveWorkingCopy(
+    WorkingCopy copy, {
+    EncodedProject? encoded,
+  }) async => 'memory';
 }
 
 void main() {
