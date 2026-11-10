@@ -28,6 +28,10 @@ chování a škálování ověřte na cílovém počítači následujícím prů
    V seznamu listů ověřit dlouhé názvy na jednom řádku, celé názvy v bublinách
    a společný vodorovný posuvník včetně tažení myší. Vyzkoušet rozsáhlý projekt,
    skok na poslední list, sbalování větví a filtrování po posunutí seznamu.
+   Pod ikonou filtru kombinovat název, typ, strukturovaná označení a papír;
+   ověřit počet výsledků, více typů najednou, použití, zrušení náhledu a vymazání
+   kritérií. Při nulovém výsledku musí zůstat dostupné zrušení filtru. Ověřit také
+   přepnutí na knihovnu a zpět a více otevřených projektů.
 3. Na ukázce vybrat a přesunout symbol, otočit jej a vrátit změny.
    V každém typu pohledu přiblížit a oddálit kolečkem, posunout výkres a dvojklikem
    kolečka vrátit celý list doprostřed. Vyzkoušet také okraj plochy mimo papír,

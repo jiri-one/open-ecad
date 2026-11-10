@@ -42,16 +42,6 @@ String foldForSearch(String value) {
   return result;
 }
 
-bool sheetMatchesSearch(Sheet sheet, String query) {
-  final needle = foldForSearch(query.trim());
-  return needle.isEmpty ||
-      foldForSearch(
-        // 1P is the customary short name of single-line pages.
-        '${sheet.number} ${sheet.name} ${sheet.type.label}'
-        '${sheet.type == SheetType.singleLine ? ' 1P' : ''}',
-      ).contains(needle);
-}
-
 class SheetTypeSelector extends StatelessWidget {
   const SheetTypeSelector({
     super.key,

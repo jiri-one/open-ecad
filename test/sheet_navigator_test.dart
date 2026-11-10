@@ -10,6 +10,7 @@ import 'package:open_ecad/app/typography.dart';
 import 'package:open_ecad/app/workspace_controller.dart';
 import 'package:open_ecad/services/export_fonts.dart';
 import 'package:open_ecad/widgets/sheet_context_menu.dart';
+import 'package:open_ecad/widgets/sheet_filter.dart';
 import 'package:open_ecad/widgets/sheet_navigator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -89,7 +90,7 @@ Future<void> _pumpNavigator(
                   (context, _) => SheetNavigator(
                     controller: workspace?.active ?? controller,
                     workspace: workspace,
-                    query: query,
+                    filter: SheetFilter(query: query),
                     onAddSheet: () {},
                     onRenameSheet: () {},
                   ),

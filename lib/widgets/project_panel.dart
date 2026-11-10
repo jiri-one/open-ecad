@@ -5,6 +5,8 @@ import '../app/workspace_controller.dart';
 import '../services/keyboard_shortcuts.dart';
 import 'inventory.dart';
 import 'sheet_navigator.dart';
+import 'sheet_filter.dart';
+import 'sheet_filter_dialog.dart';
 import '../app/theme.dart';
 import '../app/typography.dart';
 import '../editor/schematic_canvas.dart';
@@ -31,11 +33,67 @@ class ProjectPanel extends StatefulWidget {
 
 class _ProjectPanelState extends State<ProjectPanel> {
   String search = '';
-  String sheetSearch = '';
   final searchController = TextEditingController();
   final sheetSearchController = TextEditingController();
+  ValueNotifier<SheetFilter>? _filterState;
+  bool _changingQuery = false;
+
+  Object get _filterOwner => widget.workspace ?? widget.controller;
+  SheetFilter get sheetFilter => _filterState?.value ?? SheetFilter.empty;
+
+  void _bindSheetFilter() {
+    _filterState?.removeListener(_filterChanged);
+    final bucket = PageStorage.maybeOf(context);
+    final key = ('sheet-filter', _filterOwner);
+    final saved = bucket?.readState(context, identifier: key);
+    final state =
+        saved is ValueNotifier<SheetFilter>
+            ? saved
+            : ValueNotifier(SheetFilter.empty);
+    bucket?.writeState(context, state, identifier: key);
+    _filterState = state;
+    sheetSearchController.text = state.value.query;
+    state.addListener(_filterChanged);
+  }
+
+  void _filterChanged() {
+    if (!mounted) return;
+    final query = sheetFilter.query;
+    if (!_changingQuery && sheetSearchController.text != query) {
+      sheetSearchController.value = TextEditingValue(
+        text: query,
+        selection: TextSelection.collapsed(offset: query.length),
+      );
+    }
+    setState(() {});
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_filterState == null) _bindSheetFilter();
+  }
+
+  @override
+  void didUpdateWidget(covariant ProjectPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.workspace ?? oldWidget.controller, _filterOwner)) {
+      _bindSheetFilter();
+    }
+  }
+
+  void _setSheetFilter(SheetFilter filter, {bool fromQuery = false}) {
+    _changingQuery = fromQuery;
+    try {
+      _filterState!.value = filter;
+    } finally {
+      _changingQuery = false;
+    }
+  }
+
   @override
   void dispose() {
+    _filterState?.removeListener(_filterChanged);
     searchController.dispose();
     sheetSearchController.dispose();
     super.dispose();
@@ -92,7 +150,7 @@ class _ProjectPanelState extends State<ProjectPanel> {
                     listenable: tabs,
                     builder:
                         (context, _) => switch (tabs.index) {
-                          0 => _buildSheets(app, c),
+                          0 => _buildSheets(app),
                           1 => _buildLibrary(app, c),
                           2 => InventoryPanel(app: app),
                           _ => InventoryPanel(app: app, articles: true),
@@ -107,24 +165,68 @@ class _ProjectPanelState extends State<ProjectPanel> {
     );
   }
 
-  Widget _buildSheets(EditorController app, EcadColors c) => Column(
+  Future<void> _editSheetFilter() async {
+    final state = _filterState!;
+    final workspace = widget.workspace;
+    final controller = widget.controller;
+    final result = await showSheetFilterDialog(
+      context,
+      initial: state.value,
+      changes: workspace ?? controller,
+      sheets:
+          () => (workspace?.documents ?? [controller]).expand(
+            (doc) => doc.project.pages,
+          ),
+    );
+    if (result != null) state.value = result;
+  }
+
+  void _clearSheetFilter() {
+    sheetSearchController.clear();
+    _setSheetFilter(SheetFilter.empty);
+  }
+
+  Widget _buildSheets(EditorController app) => Column(
     children: [
       Padding(
         padding: const EdgeInsets.all(10),
         child: TextField(
           controller: sheetSearchController,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             hintText: 'Najít list nebo typ…',
-            prefixIcon: Icon(Icons.search),
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (sheetFilter.isActive)
+                  IconButton(
+                    tooltip: 'Zrušit filtr listů',
+                    onPressed: _clearSheetFilter,
+                    icon: const Icon(Icons.close, size: 18),
+                  ),
+                IconButton(
+                  key: const ValueKey('sheet-filter-button'),
+                  tooltip:
+                      sheetFilter.isActive
+                          ? 'Upravit filtr listů…'
+                          : 'Filtrovat listy…',
+                  onPressed: _editSheetFilter,
+                  isSelected: sheetFilter.isActive,
+                  selectedIcon: const Icon(Icons.filter_alt, size: 20),
+                  icon: const Icon(Icons.filter_alt_outlined, size: 20),
+                ),
+              ],
+            ),
           ),
-          onChanged: (v) => setState(() => sheetSearch = v),
+          onChanged:
+              (v) => _setSheetFilter(sheetFilter.withQuery(v), fromQuery: true),
         ),
       ),
       Expanded(
         child: SheetNavigator(
           controller: app,
           workspace: widget.workspace,
-          query: sheetSearch,
+          filter: sheetFilter,
           onAddSheet: widget.onAddSheet,
           onRenameSheet: widget.onRenameSheet,
           onCloseProject: widget.onCloseProject,

@@ -27,7 +27,6 @@ class SheetContextMenu extends StatelessWidget {
   final String? tooltip;
 
   List<PopupMenuEntry<String>> _items() {
-    final index = controller.project.pages.indexWhere((s) => s.id == sheet.id);
     return [
       const PopupMenuItem(value: 'open', child: Text('Otevřít list')),
       if (workspace != null)
@@ -49,16 +48,6 @@ class SheetContextMenu extends StatelessWidget {
       const PopupMenuItem(
         value: 'frame',
         child: Text('Rámeček a údaje listu…'),
-      ),
-      PopupMenuItem(
-        value: 'up',
-        enabled: index > 0,
-        child: const Text('Posunout výše'),
-      ),
-      PopupMenuItem(
-        value: 'down',
-        enabled: index >= 0 && index < controller.project.pages.length - 1,
-        child: const Text('Posunout níže'),
       ),
       PopupMenuItem(
         value: 'delete',
@@ -101,10 +90,6 @@ class SheetContextMenu extends StatelessWidget {
         editSheetSettings(context, controller);
       case 'frame':
         editFrameSettings(context, controller, sheetId: sheet.id);
-      case 'up':
-        controller.reorderSheet(-1);
-      case 'down':
-        controller.reorderSheet(1);
       case 'delete':
         confirmDeleteSheet(context, controller);
       default:

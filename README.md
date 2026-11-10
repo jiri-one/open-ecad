@@ -217,6 +217,13 @@ prostor pro výkres. Dvojklik na úchyt obnoví výchozí šířku daného panel
 Názvy listů zůstávají na jednom řádku. Po najetí myší se zobrazí celé označení
 a název; společný vodorovný posuvník umožňuje posouvat celý strom listů.
 
+Ikona filtru vedle vyhledávání otevře **Filtr listů**: název, číslo, více typů,
+označení funkce (=), umístění (+), produktu (-), kód dokumentu (&), formát papíru
+a orientaci. Vyplněná kritéria se kombinují; mezi vybranými typy stačí jedna shoda.
+Text lze hledat částečně a bez diakritiky. Dialog ukazuje počet odpovídajících listů;
+**Použít filtr** přenese výsledek do stromu, **Zrušit** ponechá původní filtr.
+Křížek vedle aktivní ikony filtru zruší všechna kritéria včetně rychlého hledání.
+
 ## Klávesnice
 
 Zkratky se mění přes **Nastavení programu → Klávesové zkratky…**. Příkaz

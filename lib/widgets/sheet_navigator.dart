@@ -13,6 +13,7 @@ import 'components.dart';
 import 'frame_settings.dart';
 import 'frame_settings_draft.dart';
 import 'sheet_context_menu.dart';
+import 'sheet_filter.dart';
 import 'sheet_types.dart';
 import 'structure_tree.dart';
 
@@ -27,25 +28,17 @@ typedef _TextMetrics =
     ({TextStyle style, TextScaler scaler, TextDirection direction});
 
 class _SheetTreeData {
-  _SheetTreeData(this.project, this.query, {_SheetTreeData? previous})
+  _SheetTreeData(this.project, this.filter, {_SheetTreeData? previous})
     : items =
-          query.isEmpty
+          !filter.isActive
               ? project.pages
-              : project.pages
-                  .where(
-                    (sheet) =>
-                        sheetMatchesSearch(sheet, query) ||
-                        foldForSearch(
-                          fullPageDesignation(sheet),
-                        ).contains(foldForSearch(query)),
-                  )
-                  .toList() {
+              : project.pages.where(filter.matches).toList() {
     _metrics = previous?._metrics;
     _widths = previous?._widths ?? {};
   }
 
   final EcadProject project;
-  final String query;
+  final SheetFilter filter;
   final List<Sheet> items;
   _TextMetrics? _metrics;
   Map<(String, double), double> _widths = {};
@@ -100,13 +93,13 @@ class SheetNavigator extends StatefulWidget {
     required this.onAddSheet,
     required this.onRenameSheet,
     this.workspace,
-    this.query = '',
+    this.filter,
     this.onCloseProject,
   });
 
   final EditorController controller;
   final WorkspaceController? workspace;
-  final String query;
+  final SheetFilter? filter;
   final VoidCallback onAddSheet, onRenameSheet;
   final ValueChanged<EditorController>? onCloseProject;
 
@@ -127,17 +120,13 @@ class _SheetNavigatorState extends State<SheetNavigator> {
     super.dispose();
   }
 
-  _SheetTreeData _items(EditorController doc) {
+  _SheetTreeData _items(EditorController doc, SheetFilter filter) {
     final previous = _data[doc];
     if (identical(previous?.project, doc.project) &&
-        previous?.query == widget.query) {
+        previous?.filter == filter) {
       return previous!;
     }
-    return _data[doc] = _SheetTreeData(
-      doc.project,
-      widget.query,
-      previous: previous,
-    );
+    return _data[doc] = _SheetTreeData(doc.project, filter, previous: previous);
   }
 
   bool _isExpanded(EditorController doc) =>
@@ -283,6 +272,7 @@ class _SheetNavigatorState extends State<SheetNavigator> {
   @override
   Widget build(BuildContext context) {
     final docs = widget.workspace?.documents ?? [widget.controller];
+    final filter = widget.filter ?? SheetFilter.empty;
     _data.removeWhere((doc, _) => !docs.contains(doc));
     _expanded.removeWhere(
       (id, _) => !docs.any((doc) => doc.documentSessionId == id),
@@ -296,7 +286,7 @@ class _SheetNavigatorState extends State<SheetNavigator> {
       builder: (context, bounds) {
         var width = bounds.maxWidth;
         for (final doc in docs) {
-          width = math.max(width, _items(doc).width(metrics));
+          width = math.max(width, _items(doc, filter).width(metrics));
         }
         final overflow = width > bounds.maxWidth + .5;
         final footer = overflow ? 12.0 : 0.0;
@@ -377,7 +367,7 @@ class _SheetNavigatorState extends State<SheetNavigator> {
                                       doc,
                                     ) ??
                                     StructureAspect.function,
-                                items: _items(doc).items,
+                                items: _items(doc, filter).items,
                                 contextFor: _sheetStructure,
                                 keyFor: _sheetKey,
                                 compare: compareSheetDesignations,
@@ -393,6 +383,23 @@ class _SheetNavigatorState extends State<SheetNavigator> {
                                           path,
                                         ),
                                 leaf: (sheet) => _sheet(doc, sheet),
+                              ),
+                            ),
+                          if (_isExpanded(doc) &&
+                              filter.isActive &&
+                              _items(doc, filter).items.isEmpty)
+                            SliverToBoxAdapter(
+                              child: Align(
+                                alignment: AlignmentDirectional.centerStart,
+                                child: SizedBox(
+                                  width: bounds.maxWidth,
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(16),
+                                    child: Text(
+                                      'Žádný list neodpovídá filtru.',
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                         ],
